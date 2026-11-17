@@ -1,4 +1,5 @@
 pub mod api;
+pub mod status;
 pub mod store;
 
 use std::io::{Read, Write};

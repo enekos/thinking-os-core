@@ -683,6 +683,78 @@ pResults.addEventListener("click", (ev) => {
 });
 palette.addEventListener("mousedown", (ev) => { if (ev.target === palette) closePalette(); });
 
+/* ------------------------------------------------------------------- status */
+
+const PRIORITY = ["", "urgent", "high", "medium", "low"];
+
+// "2026-11-17T09:13:21Z" → "today", "3d", "5w"; a bare day when that is all there is.
+function ago(stamp) {
+  if (!stamp) return "";
+  const then = new Date(stamp.length === 10 ? stamp + "T12:00:00Z" : stamp);
+  if (isNaN(then)) return stamp;
+  const days = Math.floor((Date.now() - then) / 864e5);
+  if (days <= 0) return "today";
+  if (days < 14) return days + "d";
+  if (days < 70) return Math.floor(days / 7) + "w";
+  return Math.floor(days / 30) + "mo";
+}
+
+const pill = (text, cls) => text ? `<span class="pill ${cls ?? pillClass(text)}">${esc(text)}</span>` : "";
+
+function boardRow(row, kind) {
+  const known = state.ids.has(row.id);
+  const pills = kind === "pr"
+    ? [row.draft ? pill("draft") : "", pill(row.review, row.review === "approved" ? "ok" : "bad"),
+       row.checks === "red" ? `<span class="pill bad" title="${esc((row.failing || []).join(", "))}">red</span>` : ""]
+    : [pill(row.state), pill(PRIORITY[row.priority], row.priority === 1 ? "bad" : row.priority === 2 ? "warn" : ""),
+       row.blocked_by?.length ? `<span class="pill bad" title="${esc(row.blocked_by.join(", "))}">blocked</span>` : "",
+       row.prs?.length ? `<span class="pill">${row.prs.length} PR${row.prs.length > 1 ? "s" : ""}</span>` : ""];
+  const where = kind === "pr" ? row.slug : [row.id, row.project].filter(Boolean).join(" · ");
+  const when = row.created ? `opened ${ago(row.created)}` : `updated ${ago(row.updated)}`;
+  return `<li class="b-row">
+    <a class="b-title" href="${esc(row.url)}" target="_blank" rel="noopener">${esc(row.title)}</a>
+    <div class="b-sub"><span class="mono">${esc(where)}</span><span title="${esc(row.created || row.updated)}">${esc(when)}</span>${pills.join("")}
+      ${known ? `<button class="b-graph" data-node="${esc(row.id)}" title="Show in the graph">graph</button>` : ""}</div>
+  </li>`;
+}
+
+function boardList(title, hint, list, kind) {
+  const more = list.total > list.rows.length ? ` of ${list.total}` : "";
+  const body = list.rows.length
+    ? `<ul>${list.rows.map((r) => boardRow(r, kind)).join("")}</ul>`
+    : `<p class="muted">Nothing here.</p>`;
+  return `<section class="b-col"><h2>${esc(title)} <span class="muted tabular">${list.rows.length}${more}</span></h2>
+    <p class="muted b-hint">${esc(hint)}</p>${body}</section>`;
+}
+
+async function showBoard() {
+  const board = $("board");
+  let data;
+  try {
+    data = await api("/api/status");
+  } catch (e) {
+    board.innerHTML = `<p class="muted b-empty">${esc(e.message)}</p>`;
+    return;
+  }
+  const linear = data.linear
+    ? boardList("Working on", "Linear issues assigned to me, in a started state", data.doing, "issue") +
+      boardList("Pick up next", "assigned to me, not started — newest first", data.next, "issue")
+    : `<section class="b-col"><h2>Linear</h2><p class="muted">Not watched. Add a <code>linear:</code> key to <code>os.yaml</code>.</p></section>`;
+  board.innerHTML = `<div class="b-head"><h1>status</h1>
+      <span class="muted">${esc(data.login)} · polled <span title="${esc(data.taken_at)}">${esc(ago(data.taken_at))}</span>
+      ${data.taken_at ? "at " + esc(new Date(data.taken_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })) : ""}</span></div>
+    <div class="b-grid">
+      ${boardList("Latest PRs I opened", "open, newest first", data.opened, "pr")}
+      ${boardList("Waiting on my review", "open, review requested of me", data.review, "pr")}
+      ${linear}
+    </div>`;
+}
+
+$("board").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-node]");
+  if (b) go(b.dataset.node);
+});
+
 /* ------------------------------------------------------------------ routing */
 
 function go(id) {
@@ -692,6 +764,10 @@ function go(id) {
 }
 
 async function route() {
+  const onBoard = location.hash === "#/status";
+  $("board").hidden = !onBoard;
+  $("open-board").setAttribute("aria-current", String(onBoard));
+  if (onBoard) return showBoard();
   const m = location.hash.match(/^#\/n\/(.+)$/);
   if (!m) {
     state.focus = null;
@@ -832,6 +908,7 @@ document.addEventListener("keydown", (ev) => {
   }
   if (ev.key === "[") return history.back();
   if (ev.key === "]") return history.forward();
+  if (ev.key === "s") { location.hash = location.hash === "#/status" ? "" : "#/status"; return; }
   if (ev.key === "f") return fitVisible();
   if (ev.key === "g") return $("mode").querySelector(`[data-mode="${state.mode === "all" ? "focus" : "all"}"]`).click();
   if (["1", "2", "3"].includes(ev.key)) return $("depth").querySelector(`[data-depth="${ev.key}"]`)?.click();
@@ -855,12 +932,13 @@ window.addEventListener("resize", () => { if (state.scene) fitVisible(); });
   api("/api/ids").then((d) => { state.ids = new Set(d.ids); }).catch(() => {});
 
   await route();
-  if (!state.focus) openPalette("");
+  if (!state.focus && location.hash !== "#/status") openPalette("");
 
   // The server re-reads the TSVs when they change; poll the load stamp so a
   // `sare build` in another window lands here instead of going stale.
   setInterval(async () => {
     try {
+      if (location.hash === "#/status") showBoard();
       const m = await api("/api/meta");
       if (m.loaded_at !== state.meta.loaded_at) {
         state.meta = m;

@@ -50,6 +50,9 @@ pub struct Pr {
     pub head: String,
     pub base: String,
     pub updated: String,
+    /// Full `createdAt` timestamp. Empty in state written before it was read.
+    #[serde(default)]
+    pub created: String,
     pub merged_at: String,
     pub merged_by: String,
     pub review: Review,
@@ -100,6 +103,9 @@ pub struct Issue {
     pub project: String,
     pub project_name: String,
     pub updated: String,
+    /// Full `createdAt` timestamp. Empty in state written before it was read.
+    #[serde(default)]
+    pub created: String,
     pub blocked_by: Vec<String>,
     pub comment_at: String,
     /// Empty when the latest comment is my own or an integration's.
@@ -117,6 +123,9 @@ impl Issue {
 /// A snapshot from a narrower window is re-seeded rather than diffed: every
 /// PR that was merely out of sight would otherwise arrive as a fresh event.
 pub const WINDOW: u32 = 2;
+
+/// Where the poller keeps its last snapshot, relative to the wiki root.
+pub const STATE_FILE: &str = "scripts/.gh-watch-state.json";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Snapshot {

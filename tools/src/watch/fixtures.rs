@@ -15,6 +15,7 @@ pub fn pr(nwo: &str, number: u64, title: &str) -> Pr {
         head: "feat-branch".into(),
         base: "master".into(),
         updated: "2026-09-16".into(),
+        created: String::new(),
         merged_at: String::new(),
         merged_by: String::new(),
         review: Review::None,

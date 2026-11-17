@@ -33,6 +33,12 @@ Four things it does that a rendered file cannot:
 Keys: `⌘K`/`Ctrl-K` search, `↩` focus, `⌘↩` open the source, `⌘E` open the page
 locally, `[` / `]` walk history, `1` / `2` / `3` depth, `g` whole graph, `?` help.
 
+**Status** (`s`, or `/#/status`): the latest open PRs I opened, the ones waiting
+on my review, and my Linear issues split into started and not started — newest
+first. It reads zaindu's snapshot (`scripts/.gh-watch-state.json`), not the
+graph, so it is as fresh as the last poll. `GET /api/status?limit=N` is the same
+data as JSON.
+
 `sare viz` writes `graph/views/graph.html` — one self-contained page, no network,
 no server — and `--dot` a graphviz file. Gitignored: rebuild it, don't diff it.
 

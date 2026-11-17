@@ -29,7 +29,7 @@ query($after: String, $since: DateTimeOrDuration) {
       ] }) {
       pageInfo { hasNextPage endCursor }
       nodes {
-        identifier title priority updatedAt url
+        identifier title priority createdAt updatedAt url
         state { name type }
         project { id name state health url }
         cycle { id number startsAt endsAt team { key } }
@@ -181,6 +181,7 @@ pub fn parse(nodes: &[Value]) -> Vec<Issue> {
             project: project.map(|p| milestone_id(&text(p, "/id"))).unwrap_or_default(),
             project_name: project.map(|p| text(p, "/name")).unwrap_or_default(),
             updated: text(node, "/updatedAt").chars().take(10).collect(),
+            created: text(node, "/createdAt"),
             blocked_by,
             comment_at: text(&comment, "/createdAt"),
             comment_by: author,

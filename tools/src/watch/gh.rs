@@ -13,7 +13,7 @@ query($q:String!, $after:String) {
   }
 }
 fragment pr on PullRequest {
-  number title url state isDraft updatedAt mergedAt reviewDecision
+  number title url state isDraft createdAt updatedAt mergedAt reviewDecision
   headRefName baseRefName
   repository { nameWithOwner }
   author { login }
@@ -334,6 +334,7 @@ pub fn parse_partial(payload: &Value, login: &str) -> Result<(Vec<Pr>, Vec<&'sta
                     .chars()
                     .take(10)
                     .collect(),
+                created: node.get("createdAt").and_then(Value::as_str).unwrap_or("").to_string(),
                 merged_at: node
                     .get("mergedAt")
                     .and_then(Value::as_str)
