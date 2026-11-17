@@ -83,6 +83,10 @@ sources:
 `concepts/library.md` is the engineering shelf — read the page **before** the task:
 
 - Rust → `concepts/rust-style-guide.md` · TypeScript/Svelte → `concepts/ts-architecture.md`
+- Rust types/API → `concepts/rust-type-driven-design.md` · Rust resources/concurrency → `concepts/rust-resource-and-concurrency-patterns.md`
+- TypeScript domain → `concepts/typescript-domain-patterns.md` · async/resilience → `concepts/typescript-async-and-resilience-patterns.md`
+- Test design or a bug fix → `concepts/verification-patterns.md`
+- Code review, architecture checks, or quality gates → `concepts/architecture-fitness-and-quality-gates.md`
 - LLM feature, agent harness, benchmark, or agent findings → `concepts/eval-methods.md`
 - **New app or service → `concepts/stack-defaults.md`**: a sutegi server
   (Rust, std-only, SQLite → Postgres) serving a SvelteKit SPA built on the
@@ -93,8 +97,9 @@ sources:
 ## Operations — each is a skill
 
 `/graph` (build, query, health, retype) · `/ingest` · `/today` · `/lint` ·
-`/fan` · `/synthesis` · `/setup`. The skill holds the steps.
+`/quality-gate` · `/fan` · `/synthesis` · `/setup`. The skill holds the steps.
 `/lint` reads `graph/views/health.md` first and never recomputes it.
+`/quality-gate` checks product code and exact-commit test evidence, not wiki health.
 
 ## Log format
 

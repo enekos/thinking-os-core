@@ -61,10 +61,8 @@ impl Paths {
             return Paths { root: PathBuf::from(p) };
         }
         for var in ["THINKING_OS_ROOT", "ZAINDU_ROOT"] {
-            if let Ok(p) = std::env::var(var) {
-                if !p.is_empty() {
-                    return Paths { root: PathBuf::from(p) };
-                }
+            if let Some(p) = std::env::var(var).ok().filter(|p| !p.is_empty()) {
+                return Paths { root: PathBuf::from(p) };
             }
         }
         let mut here = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));

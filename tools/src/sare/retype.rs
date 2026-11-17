@@ -51,7 +51,7 @@ pub fn rule(src_id: &str, src_type: &str, dst_id: &str, dst_type: &str, nodes: &
                 .get(dst_id)
                 .map(|n| kg::get(n, "status").to_string())
                 .unwrap_or_default();
-            let same_subject = date_suffix().replace(dst_id, "").to_string() == stem;
+            let same_subject = date_suffix().replace(dst_id, "") == stem;
             let dst_date = page_date(dst_id);
             let newer = !dst_date.is_empty() && page_date(src_id) > dst_date;
             if target_status.starts_with("superseded") && same_subject && newer {
@@ -99,10 +99,8 @@ pub fn run(paths: &Paths, _ont: &Ontology, only: Option<&str>, apply: bool) -> i
     let mut changed_pages = 0;
 
     for (nid, ntype, path) in kg::wiki_pages(&paths.root) {
-        if let Some(target) = only {
-            if nid != target {
-                continue;
-            }
+        if only.is_some_and(|target| nid != target) {
+            continue;
         }
         let fm = kg::frontmatter(&path);
         let links = fm.list("links");

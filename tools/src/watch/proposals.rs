@@ -270,7 +270,7 @@ mod tests {
             "- 10:05Z green join-com/data#7280 — checks recovered".to_string(),
         ];
         append(&root, "2026-09-16", &lines).unwrap();
-        append(&root, "2026-09-16", &lines[..1].to_vec()).unwrap();
+        append(&root, "2026-09-16", &lines[..1]).unwrap();
         let text = fs::read_to_string(path_for(&root, "2026-09-16")).unwrap();
         assert_eq!(text.matches("# events — 2026-09-16").count(), 1);
         assert_eq!(open_items(&root, "2026-09-16").len(), 2);

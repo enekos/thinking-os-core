@@ -335,10 +335,8 @@ impl Graph {
                 Some(d) => format!("{last} ({d}d)"),
                 None => if repos.is_empty() { "—".to_string() } else { last.clone() },
             };
-            if let Some(d) = d {
-                if d > stale_days && g(n, "status") == "active" {
-                    age = format!("**{age} stale**");
-                }
+            if d.is_some_and(|d| d > stale_days && g(n, "status") == "active") {
+                age = format!("**{age} stale**");
             }
             let prs: usize = repos.iter().map(|r| open_prs.get(r)).sum();
             let prs = if prs == 0 { String::new() } else { prs.to_string() };
@@ -470,10 +468,8 @@ impl Graph {
             if last.is_empty() {
                 continue;
             }
-            if let Some(d) = self.days_since(&last) {
-                if d > stale_days {
-                    stale.push((id.to_string(), last, d));
-                }
+            if let Some(d) = self.days_since(&last).filter(|d| *d > stale_days) {
+                stale.push((id.to_string(), last, d));
             }
         }
         l.push(format!("## 4 · Active but stale ({})", stale.len()));

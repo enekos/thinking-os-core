@@ -14,6 +14,11 @@ edges:
 
 Opinionated defaults for Rust across your projects, written against the failure modes LLM agents produce. A crate's own `clippy.toml` / `rustfmt.toml` / `[lints]` win on conflict. Toolchain: latest stable, **edition 2024** for new crates (MSRV ≥ 1.85).
 
+Deep design guides: [[rust-type-driven-design]] for validated types, state and
+public APIs; [[rust-resource-and-concurrency-patterns]] for lifecycle, resource,
+backpressure and shutdown design; [[verification-patterns]] for test oracles.
+Apply them through [[architecture-fitness-and-quality-gates]] / `/quality-gate`.
+
 Order of priorities when they collide: **sound → secure → correct → maintainable → fast**. Never trade a level for the one below it without a measurement and a written reason.
 
 **Contents:** [Checklist](#before-you-say-done--the-agent-checklist) · [Architecture](#architecture-defaults) · [Memory](#memory-management) · [Threads](#thread-safety) · [Async](#async--the-agent-landmine-field) · [`unsafe`](#unsafe-policy) · [Security](#security) · [Performance](#performance) · [Errors](#errors) · [Types & API](#types--api) · [Testing](#testing-for-memory-and-thread-bugs) · [Lint baseline](#lint-baseline--paste-into-every-workspace) · [Agent mistakes](#things-agents-reliably-get-wrong) · [Reference shelf](#reference-shelf--where-these-rules-come-from) · [Pattern fit](#pattern-fit)

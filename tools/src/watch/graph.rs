@@ -41,11 +41,8 @@ pub fn index(root: &Path) -> Index {
     for row in read_tsv(&root.join("graph/nodes.tsv")) {
         let (id, kind) = (row.get("id").cloned().unwrap_or_default(), row.get("type").cloned().unwrap_or_default());
         let title = row.get("title").cloned().unwrap_or_default();
-        match kind.as_str() {
-            "project" => {
-                idx.project_title.insert(id, title);
-            }
-            _ => {}
+        if kind == "project" {
+            idx.project_title.insert(id, title);
         }
     }
     for row in read_tsv(&root.join("graph/edges.tsv")) {

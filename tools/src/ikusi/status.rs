@@ -13,7 +13,7 @@ pub fn load(root: &Path) -> Option<Snapshot> {
 
 /// Newest first. State written before `created` was read has only the day of
 /// the last update to go on.
-fn newest<'a, T>(mut rows: Vec<&'a T>, created: impl Fn(&T) -> &str, updated: impl Fn(&T) -> &str, id: impl Fn(&T) -> &str) -> Vec<&'a T> {
+fn newest<T>(mut rows: Vec<&T>, created: impl Fn(&T) -> &str, updated: impl Fn(&T) -> &str, id: impl Fn(&T) -> &str) -> Vec<&T> {
     let when = |row: &T| -> String {
         let at = created(row);
         if at.is_empty() { updated(row).to_string() } else { at.to_string() }

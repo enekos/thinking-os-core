@@ -20,6 +20,7 @@ files, links and rebuilds.
 | `/ingest <url\|paste\|file>` | file new material onto the right pages |
 | `/graph` | rebuild, query (`sare hop <node>`), health |
 | `/lint` | contradictions and drift the graph can't see |
+| `/quality-gate` | risk-led code review, tests, and exact-commit evidence |
 | `/synthesis` | compact the log and project pages |
 | `/fan <work>` | split work across agents — only where it splits |
 

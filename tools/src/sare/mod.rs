@@ -108,7 +108,7 @@ impl Counter {
     pub fn most_common(&self) -> Vec<(String, usize)> {
         let mut rows: Vec<(String, usize)> =
             self.inner.iter().map(|(k, v)| (k.clone(), *v)).collect();
-        rows.sort_by(|a, b| b.1.cmp(&a.1));
+        rows.sort_by_key(|a| std::cmp::Reverse(a.1));
         rows
     }
 }

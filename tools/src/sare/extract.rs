@@ -306,7 +306,7 @@ pub fn git(paths: &Paths, ont: &Ontology) -> Pull {
             let since = kg::clean(last.as_deref().unwrap_or(""));
             if seen_repos.insert(rid.clone()) {
                 let mut n = Node::new(&rid, "repo");
-                n.title = rid.splitn(2, ':').nth(1).unwrap_or("").to_string();
+                n.title = rid.split_once(':').map(|x| x.1).unwrap_or("").to_string();
                 n.updated = since.clone();
                 n.path = abs.clone();
                 nodes.push(n);
@@ -359,7 +359,7 @@ pub fn git(paths: &Paths, ont: &Ontology) -> Pull {
                 }
                 references.push(CommitRef {
                     revision: test_fm.text("commit"),
-                    wiki_id: ont.canon(&test_id),
+                    wiki_id: ont.canon(test_id),
                     evidence: paths.rel(test_path),
                     since: test_fm.text("ran_at"),
                     test: true,
@@ -566,17 +566,17 @@ const PR_FIELDS: &str = "number,title,state,isDraft,url,updatedAt,headRefName,ba
 
 fn repos_of_interest(known: &[String]) -> Vec<String> {
     let mut repos: HashSet<String> = known.iter().filter(|r| r.starts_with("gh:")).cloned().collect();
-    if let Some(out) = kg::run(
+    let rows = kg::run(
         &["gh", "search", "prs", "--author=@me", "--state=open", "--limit=100", "--json", "repository"],
         None,
         90,
-    ) {
-        if let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(&out) {
-            for row in rows {
-                let name = row.pointer("/repository/nameWithOwner").and_then(Value::as_str).unwrap_or("");
-                if !name.is_empty() {
-                    repos.insert(format!("gh:{name}"));
-                }
+    )
+    .and_then(|out| serde_json::from_str::<Value>(&out).ok());
+    if let Some(Value::Array(rows)) = rows {
+        for row in rows {
+            let name = row.pointer("/repository/nameWithOwner").and_then(Value::as_str).unwrap_or("");
+            if !name.is_empty() {
+                repos.insert(format!("gh:{name}"));
             }
         }
     }

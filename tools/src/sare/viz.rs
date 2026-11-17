@@ -69,7 +69,7 @@ const FRAME: f32 = 1600.0;
 
 fn components(count: usize, links: &[(usize, usize)]) -> Vec<Vec<usize>> {
     let mut parent: Vec<usize> = (0..count).collect();
-    fn find(parent: &mut Vec<usize>, mut x: usize) -> usize {
+    fn find(parent: &mut [usize], mut x: usize) -> usize {
         while parent[x] != x {
             parent[x] = parent[parent[x]];
             x = parent[x];
@@ -313,7 +313,7 @@ pub fn run(paths: &Paths, out: Option<&str>, dot: bool, iterations: usize) -> i3
                 }
                 counter.into_iter().collect()
             };
-            kinds.sort_by(|a, b| b.1.cmp(&a.1));
+            kinds.sort_by_key(|a| std::cmp::Reverse(a.1));
             println!(
                 "wrote {} — {} nodes, {} edges, {} types, {} KB",
                 paths.rel(&target),

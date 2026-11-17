@@ -33,10 +33,8 @@ const WAITING: [&str; 5] = ["PENDING", "IN_PROGRESS", "QUEUED", "EXPECTED", "WAI
 pub use crate::kg::run_capture;
 
 pub fn login() -> Result<String, String> {
-    if let Ok(l) = std::env::var("ZAINDU_LOGIN") {
-        if !l.trim().is_empty() {
-            return Ok(l.trim().to_string());
-        }
+    if let Some(l) = std::env::var("ZAINDU_LOGIN").ok().filter(|l| !l.trim().is_empty()) {
+        return Ok(l.trim().to_string());
     }
     let out = run_capture(
         Command::new("gh").args(["api", "user", "--jq", ".login"]),
@@ -192,7 +190,7 @@ pub fn grade_checks(rollup_state: Option<&str>, rows: &[(String, String)]) -> (C
     let mut failing = Vec::new();
     let mut waiting = false;
     for (name, verdicts) in &by_name {
-        let superseded = verdicts.iter().any(|v| *v == "SUCCESS");
+        let superseded = verdicts.contains(&"SUCCESS");
         if verdicts.iter().any(|v| RED.contains(v)) && !superseded {
             failing.push((*name).to_string());
         } else if verdicts.iter().any(|v| WAITING.contains(v)) && !superseded {

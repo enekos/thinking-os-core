@@ -1,6 +1,6 @@
 ---
 title: Engineering library
-summary: "start here: the curated engineering pages this wiki ships with — stack defaults, Rust and TypeScript practice, evaluation, agentic coding, systems — and when to read each"
+summary: "start here: the curated engineering pages this wiki ships with — stack defaults, Rust and TypeScript patterns, verification and quality gates, evaluation, agentic coding, systems — and when to read each"
 type: concept
 updated: 2026-11-17
 ---
@@ -17,14 +17,19 @@ exists. **Read the page before the task**, not after the review.
 |---|---|
 | start a new app or service | [[stack-defaults]] |
 | write or review any Rust | [[rust-style-guide]] |
+| design Rust domain types, states, or a public API | [[rust-type-driven-design]] |
+| design Rust ownership, resources, concurrency, or shutdown | [[rust-resource-and-concurrency-patterns]] |
 | write or review TypeScript / Svelte | [[ts-architecture]] |
+| design TypeScript domain types, errors, or state transitions | [[typescript-domain-patterns]] |
+| design cancellation, retries, bounded fan-out, or idempotency | [[typescript-async-and-resilience-patterns]] |
+| choose test oracles, prove a regression fix, or assess test quality | [[verification-patterns]] |
+| define architecture checks, review a diff, or run `/quality-gate` | [[architecture-fitness-and-quality-gates]] |
 | ship an LLM feature, agent, benchmark, or trust agent findings | [[eval-methods]] |
 | set up an optimisation or discovery loop | [[autoresearch]] |
 | plan agent-heavy work, fan out, or design a prompt/skill | [[augmented-coding-patterns]] · [[graph-engineering]] |
 | decide what to build next with no PM | [[inventing-work]] |
 | build anything incremental (compiler, build tool, reactive cache) | [[query-system-design]] |
 | deploy Rust to the edge | [[rust-on-workers]] |
-| debug where an HTTP request's time goes | [[go-httptrace]] |
 | change how this wiki works | [[llm-wiki]] · [[graph-engineering]] |
 
 ## By shelf
@@ -36,11 +41,16 @@ exists. **Read the page before the task**, not after the review.
 
 **Language practice**
 - [[rust-style-guide]] — ownership, threads, `unsafe`, security, perf, lint baseline, agent mistakes.
+- [[rust-type-driven-design]] — validated newtypes, enum states, typestate, capabilities, traits, dispatch, compile-fail API tests.
+- [[rust-resource-and-concurrency-patterns]] — RAII, structured lifecycles, bounded actors, backpressure, cancellation, atomics.
 - [[ts-architecture]] — feature modules, ports/fakes, parse at the edge, strict config, agent mistakes.
+- [[typescript-domain-patterns]] — branded IDs, discriminated states, typed errors, narrow ports, type-level tests.
+- [[typescript-async-and-resilience-patterns]] — structured cancellation, bounded fan-out, retries, idempotency, outbox, disposal.
 - [[rust-on-workers]] — workers-rs vs a raw Wasm ABI.
-- [[go-httptrace]] — per-phase HTTP timing in Go.
 
 **Measuring**
+- [[verification-patterns]] — regression proofs, properties, models, fuzzing, mutation, conformance, compile-fail, E2E, perf.
+- [[architecture-fitness-and-quality-gates]] — executable architecture rules, exception debt, fast/merge/deep gates, exact evidence.
 - [[eval-methods]] — fixtures, layered scoring, judge calibration, trajectories, refute-first, perf stats.
 - [[autoresearch]] — the keep/revert loop and its read-only discovery variant.
 

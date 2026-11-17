@@ -14,6 +14,11 @@ agents produce. A repo's own conventions win: **match the surrounding code
 first**, apply this page where the repo is silent or new. Rust counterpart:
 [[rust-style-guide]]. Which stack to pick at all: [[stack-defaults]].
 
+Deep design guides: [[typescript-domain-patterns]] for types, state, errors and
+ports; [[typescript-async-and-resilience-patterns]] for cancellation, bounds,
+retries and idempotency; [[verification-patterns]] for test oracles. Apply them
+through [[architecture-fitness-and-quality-gates]] / `/quality-gate`.
+
 Priority when rules collide: **correct → secure → readable → consistent with
 the codebase → fast.**
 

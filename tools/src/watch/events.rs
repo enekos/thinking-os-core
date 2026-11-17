@@ -369,7 +369,7 @@ mod tests {
         red.checks = Checks::Red;
         red.failing = vec!["ci/circleci: test".into()];
 
-        let down = diff(&snapshot(&[green.clone()]), &snapshot(&[red.clone()]), &window());
+        let down = diff(&snapshot(std::slice::from_ref(&green)), &snapshot(std::slice::from_ref(&red)), &window());
         assert_eq!(kinds(&down), vec![Kind::ChecksRed]);
         assert_eq!(down[0].detail, "ci/circleci: test");
 
@@ -393,7 +393,7 @@ mod tests {
     #[test]
     fn a_pr_that_vanishes_from_an_otherwise_complete_poll_was_closed() {
         let open = pr("join-com/data", 7100, "chore: obsolete");
-        let events = diff(&snapshot(&[open.clone()]), &snapshot(&[]), &window());
+        let events = diff(&snapshot(std::slice::from_ref(&open)), &snapshot(&[]), &window());
         assert_eq!(kinds(&events), vec![Kind::Closed]);
 
         let mut stale = open;

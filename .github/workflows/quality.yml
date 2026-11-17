@@ -1,0 +1,24 @@
+name: quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --manifest-path tools/Cargo.toml --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --manifest-path tools/Cargo.toml --workspace --all-features
+      - run: cargo install cargo-machete --locked
+      - run: cargo machete tools

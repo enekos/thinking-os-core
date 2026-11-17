@@ -17,7 +17,7 @@ tools/       one Rust crate, three binaries
                ikusi   graph viewer on 127.0.0.1:4747
 template/    the wiki skeleton: CLAUDE.md, ontology, coding-memory examples, scripts/,
                and the engineering library (below)
-skills/      Claude Code skills: setup, graph, today, ingest, lint, synthesis, fan
+skills/      Claude Code skills: setup, graph, today, ingest, lint, quality-gate, synthesis, fan
 deploy/      systemd user units (Linux), launchd plist (macOS) for the 5-min poll
 install.sh   build, create/upgrade the wiki, link skills, enable the timer
 ```
@@ -51,14 +51,15 @@ Every wiki starts with a curated shelf in `template/concepts/`, hub
 | Shelf | Pages |
 |---|---|
 | Stack | `stack-defaults` — sutegi + SvelteKit + osagai, when to deviate · `projects/sutegi`, `projects/osagai` |
-| Language practice | `rust-style-guide` · `ts-architecture` · `rust-on-workers` · `go-httptrace` |
-| Measuring | `eval-methods` · `autoresearch` |
+| Language practice | `rust-style-guide` · `rust-type-driven-design` · `rust-resource-and-concurrency-patterns` · `ts-architecture` · `typescript-domain-patterns` · `typescript-async-and-resilience-patterns` · `rust-on-workers` |
+| Measuring and checks | `verification-patterns` · `architecture-fitness-and-quality-gates` · `eval-methods` · `autoresearch` |
 | Working with agents | `augmented-coding-patterns` · `graph-engineering` · `llm-wiki` |
 | Choosing work | `inventing-work` |
 | Systems design | `query-system-design` |
 
 The template `CLAUDE.md` points every session at the right page: Rust edits →
-the style guide, new apps → stack defaults. On upgrade, `install.sh` adds any
+the style guide, API/state design → the pattern guides, new apps → stack defaults,
+and code review → `/quality-gate`. On upgrade, `install.sh` adds any
 library page the wiki is missing and never overwrites one you already have.
 
 ## Linear (opt-in)
@@ -92,6 +93,16 @@ there (mode 600) if the CLI is not logged in on its own. The details are in
 cargo test --manifest-path tools/Cargo.toml
 bash tools/e2e-zaindu.sh      # offline event chains (GitHub, Linear), then a live GitHub leg
 ```
+
+The PR quality gate also runs strict Clippy and `cargo machete`:
+
+```bash
+cargo clippy --manifest-path tools/Cargo.toml --workspace --all-targets --all-features -- -D warnings
+cargo machete tools
+```
+
+`/quality-gate` applies the engineering library's risk-specific checks to other
+repositories and records exact-commit evidence when the wiki supports it.
 
 ## Left out, compared to the original
 
