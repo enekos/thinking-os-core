@@ -410,6 +410,93 @@ fn the_views_read_the_graph_the_way_a_human_would() {
     assert!(projects.contains("| [bai](projects/bai.md) | active | — | — |  |"));
 }
 
+fn linear_issue(id: &str, title: &str, state: &str, kind: &str) -> serde_json::Value {
+    serde_json::json!({
+        "identifier": id, "title": title, "priority": 2,
+        "updatedAt": "2026-09-16T09:13:21.000Z",
+        "url": format!("https://linear.app/acme/issue/{id}"),
+        "state": {"name": state, "type": kind},
+        "project": {"id": "aaaa-bbbb-76ed37275476", "name": "Importer", "state": "started",
+                    "health": "onTrack", "url": "https://linear.app/acme/project/importer"},
+        "cycle": {"id": "c1", "number": 12, "startsAt": "2026-09-14T00:00:00.000Z",
+                  "endsAt": "2026-09-28T00:00:00.000Z", "team": {"key": "APP"}},
+        "assignee": {"displayName": "octo.cat", "name": "Octo Cat"},
+        "parent": null,
+        "attachments": {"nodes": []}, "relations": {"nodes": []},
+        "inverseRelations": {"nodes": []}, "comments": {"nodes": []}
+    })
+}
+
+#[test]
+fn linear_issues_fuse_into_the_graph_and_reach_the_views() {
+    let paths = scratch("linear");
+    let o = ont(&paths);
+    assert!(o.relations["IMPLEMENTS"].accepts_domain("pr"));
+    assert!(o.relations["IMPLEMENTS"].accepts_range("issue"));
+    assert!(o.relations["TRACKS"].accepts_range("milestone"));
+
+    let mut doing = linear_issue("APP-12", "Fix the anchor", "In Progress", "started");
+    doing["parent"] = serde_json::json!({"identifier": "APP-1", "title": "Importer epic"});
+    doing["attachments"]["nodes"] = serde_json::json!([{"url": "https://github.com/acme/app/pull/41", "sourceType": "github"}]);
+    doing["relations"]["nodes"] = serde_json::json!([
+        {"type": "blocks", "relatedIssue": {"identifier": "APP-13", "title": "Ship it"}},
+        {"type": "related", "relatedIssue": {"identifier": "APP-99", "title": "Unrelated"}}
+    ]);
+    let todo = linear_issue("APP-13", "Ship it", "Todo", "unstarted");
+    let done = linear_issue("APP-9", "Old work", "Done", "completed");
+
+    let (nodes, edges) = extract::linear_graph(&[doing, todo, done], Some("octocat"), &o);
+    let kind_of = |id: &str| nodes.iter().find(|n| n.id == id).map(|n| n.kind.clone());
+    assert_eq!(kind_of("APP-12").as_deref(), Some("issue"));
+    assert_eq!(kind_of("APP-1").as_deref(), Some("issue"), "a parent outside my list still gets a node");
+    assert_eq!(kind_of("lin:project:76ed37275476").as_deref(), Some("milestone"));
+    assert_eq!(kind_of("lin:cycle:APP-12").as_deref(), Some("cycle"));
+    assert!(kind_of("APP-99").is_none(), "only a blocking relation is an edge");
+    assert!(kind_of("octo-cat").is_none(), "the viewer is the owner, not a second person");
+    assert_eq!(nodes.iter().filter(|n| n.id == "APP-13").count(), 1);
+
+    put_raw(&paths, "linear", nodes, edges);
+    put_raw(
+        &paths,
+        "pages",
+        vec![{
+            let mut n = Node::new("importer", "project");
+            n.status = "active".into();
+            n.path = "projects/importer.md".into();
+            n
+        }],
+        vec![Edge::new("importer", "TRACKS", "lin:project:76ed37275476", "", "page", 1.0, "projects/importer.md")],
+    );
+    let fused = fuse::fuse(&paths, &o);
+    assert!(fused.rejected.is_empty(), "rejected: {:?}", fused.rejected);
+    let has = |src: &str, rel: &str, dst: &str| {
+        fused.edges.values().any(|e| e.src == src && e.rel == rel && e.dst == dst)
+    };
+    assert!(has("APP-12", "SCOPED_TO", "lin:project:76ed37275476"));
+    assert!(has("APP-12", "PLANNED_IN", "lin:cycle:APP-12"));
+    assert!(has("APP-12", "ASSIGNED_TO", "octocat"));
+    assert!(has("APP-12", "SUBTASK_OF", "APP-1"));
+    assert!(has("APP-12", "BLOCKS", "APP-13"));
+    assert!(has("gh:acme/app#41", "IMPLEMENTS", "APP-12"));
+    assert_eq!(fused.nodes.get("gh:acme/app#41").map(|n| n.kind.as_str()), Some("pr"));
+
+    fuse::write(&paths, &fused).unwrap();
+    let graph = serve::Graph::load(&paths);
+
+    let work = graph.view_work(Some("octocat"));
+    assert!(work.contains("## Tickets (2)"), "{work}");
+    let doing_at = work.find("### In Progress").unwrap();
+    let todo_at = work.find("### Todo").unwrap();
+    assert!(doing_at < todo_at, "started work sorts above unstarted");
+    assert!(work.contains("- [APP-12](https://linear.app/acme/issue/APP-12) (high) — Fix the anchor\n  - acme/app#41"));
+    assert!(!work.contains("APP-9"), "a finished issue is not work");
+
+    let projects = graph.view_projects(&o);
+    assert!(projects.contains("| tracks | my open tickets |"));
+    assert!(projects.contains("| [importer](projects/importer.md) | active | — | — |  | Importer | 2 |"), "{projects}");
+    assert!(graph.view_index().contains("- **Linear issues** — 4"));
+}
+
 #[test]
 fn retype_only_converts_what_a_stated_rule_covers() {
     let nodes = std::collections::HashMap::new();

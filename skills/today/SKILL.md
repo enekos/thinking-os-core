@@ -1,6 +1,6 @@
 ---
 name: today
-description: Generate today's prioritized briefing from the thinking-os — ranked by what should actually get done today. Reads the generated work/projects views, zaindu's GitHub proposals, active project pages and live git state. Triggers on "/today", "what should I do today", "what was I doing?".
+description: Generate today's prioritized briefing from the thinking-os — ranked by what should actually get done today. Reads the generated work/projects views, zaindu's GitHub and Linear proposals, active project pages and live git state. Triggers on "/today", "what should I do today", "what was I doing?".
 ---
 
 # /today
@@ -15,26 +15,31 @@ Treat this as bookkeeping, not chat. Terse, decisive.
 ### 1. Rebuild and reload
 
 ```bash
-sare build          # pages + git + GitHub, then the views
+sare build          # pages + git + GitHub (+ Linear when enabled), then the views
 ```
 
 Read, in order:
 
 1. `<wiki>/CLAUDE.md` — conventions, if changed.
 2. `graph/views/work.md` — your open PRs, review requests waiting on you, red
-   checks named. This replaces opening GitHub.
+   checks named. This replaces opening GitHub. With Linear enabled it ends in
+   **Tickets**: your open issues by state, each with the PRs attached to it —
+   this replaces opening Linear.
 3. `graph/views/projects.md` — status per project against **real git activity**;
    an active page whose repo has not moved in 45 days is flagged stale.
 4. `graph/views/health.md` — anything the gate flagged. A stale active belongs in
    the briefing, not in a lint run.
-5. `zaindu proposals` — the open boxes in `inbox/events/`: what GitHub did while
-   you were away. A merged PR whose project's **Next up** is still unticked is a
-   briefing item.
+5. `zaindu proposals` — the open boxes in `inbox/events/`: what GitHub and
+   Linear did while you were away. A merged PR whose project's **Next up** is
+   still unticked is a briefing item; so is a merge whose ticket is still in a
+   pre-merge state (`check APP-12 (Code Review)`), a newly assigned or
+   unblocked ticket, a priority raised to high/urgent, and a comment waiting on
+   you.
 6. Each `status: active` project page — its **Next up**.
 7. Last 5 log entries: `grep "^## \[" log.md | tail -5`.
 8. The most recent file in `briefings/` — what yesterday said, what's still open.
 
-Do **not** re-derive from `gh` what these views already hold.
+Do **not** re-derive from `gh` or Linear what these views already hold.
 
 ### 2. Probe live git, in one call
 
@@ -86,6 +91,10 @@ date: YYYY-MM-DD
 
 ## GitHub
 - <from work.md + zaindu proposals: what's red, what's waiting on you, what merged>
+
+## Tickets
+- <only with Linear enabled — from work.md Tickets + zaindu proposals: newly
+  assigned, unblocked, raised, commented; in-progress tickets with no PR>
 
 ## Watch list
 - Not action-required today, worth watching.

@@ -13,7 +13,29 @@ pub enum Kind {
     ChecksGreen,
     Closed,
     ReviewRequested,
+    IssueAssigned,
+    IssueState,
+    IssueDone,
+    IssueUnblocked,
+    IssuePriority,
+    IssueCommented,
 }
+
+const KINDS: [Kind; 13] = [
+    Kind::Merged,
+    Kind::Approved,
+    Kind::ChangesRequested,
+    Kind::ChecksRed,
+    Kind::ChecksGreen,
+    Kind::Closed,
+    Kind::ReviewRequested,
+    Kind::IssueAssigned,
+    Kind::IssueState,
+    Kind::IssueDone,
+    Kind::IssueUnblocked,
+    Kind::IssuePriority,
+    Kind::IssueCommented,
+];
 
 impl Kind {
     pub fn tag(self) -> &'static str {
@@ -25,25 +47,28 @@ impl Kind {
             Kind::ChecksGreen => "pr.checks_green",
             Kind::Closed => "pr.closed",
             Kind::ReviewRequested => "pr.review_requested",
+            Kind::IssueAssigned => "issue.assigned",
+            Kind::IssueState => "issue.state_changed",
+            Kind::IssueDone => "issue.done",
+            Kind::IssueUnblocked => "issue.unblocked",
+            Kind::IssuePriority => "issue.priority_raised",
+            Kind::IssueCommented => "issue.commented",
         }
     }
 
     pub fn parse(tag: &str) -> Option<Kind> {
-        [
-            Kind::Merged,
-            Kind::Approved,
-            Kind::ChangesRequested,
-            Kind::ChecksRed,
-            Kind::ChecksGreen,
-            Kind::Closed,
-            Kind::ReviewRequested,
-        ]
-        .into_iter()
-        .find(|k| k.tag() == tag || k.tag().trim_start_matches("pr.") == tag)
+        KINDS
+            .into_iter()
+            .find(|k| k.tag() == tag || k.tag().split_once('.').is_some_and(|(_, short)| short == tag))
     }
 
+    /// A recovery and a plain state move are timeline, not work.
     pub fn actionable(self) -> bool {
-        !matches!(self, Kind::ChecksGreen)
+        !matches!(self, Kind::ChecksGreen | Kind::IssueState)
+    }
+
+    pub fn is_issue(self) -> bool {
+        self.tag().starts_with("issue.")
     }
 }
 

@@ -7,7 +7,20 @@ use std::path::{Path, PathBuf};
 
 fn action(e: &Event) -> String {
     match e.kind {
-        Kind::Merged => "tick Next up, add a Recent log bullet".into(),
+        Kind::Merged => {
+            // Anything after "merged by @x" is a ticket the watcher tied to
+            // this PR, with the state Linear still has it in.
+            let tickets: Vec<&str> = e
+                .detail
+                .split(" · ")
+                .filter(|part| !part.is_empty() && !part.starts_with("merged by"))
+                .collect();
+            if tickets.is_empty() {
+                "tick Next up, add a Recent log bullet".into()
+            } else {
+                format!("tick Next up, add a Recent log bullet, check {}", tickets.join(", "))
+            }
+        }
         Kind::Approved => {
             let who = if e.detail.is_empty() { String::new() } else { format!(" by {}", e.detail) };
             format!("approved{who} — ready to merge")
@@ -26,6 +39,12 @@ fn action(e: &Event) -> String {
         Kind::ChecksGreen => "checks recovered".into(),
         Kind::Closed => "closed unmerged — does a project page still claim it?".into(),
         Kind::ReviewRequested => format!("you are blocking {}", e.detail),
+        Kind::IssueAssigned => format!("new ticket ({}): {}", e.detail, e.title),
+        Kind::IssueState => format!("{}: {}", e.detail, e.title),
+        Kind::IssueDone => format!("{} — close it out on the project page: {}", e.detail, e.title),
+        Kind::IssueUnblocked => format!("{} — ready to start: {}", e.detail, e.title),
+        Kind::IssuePriority => format!("now {}: {}", e.detail, e.title),
+        Kind::IssueCommented => format!("{} commented — reply or act: {}", e.detail, e.title),
     }
 }
 
@@ -38,13 +57,21 @@ fn verb(kind: Kind) -> &'static str {
         Kind::ChecksGreen => "green",
         Kind::Closed => "closed",
         Kind::ReviewRequested => "review",
+        Kind::IssueAssigned => "assigned",
+        Kind::IssueState => "moved",
+        Kind::IssueDone => "done",
+        Kind::IssueUnblocked => "unblocked",
+        Kind::IssuePriority => "priority",
+        Kind::IssueCommented => "comment",
     }
 }
 
 pub fn render(events: &[Event], idx: &Index) -> Vec<String> {
     let mut out = Vec::new();
     for e in events {
-        let repo_id = format!("gh:{}", e.repo);
+        // An issue event carries its Linear project where a PR carries its
+        // repo; a project page claims either one by id.
+        let repo_id = if e.kind.is_issue() { e.repo.clone() } else { format!("gh:{}", e.repo) };
         let mut context: Vec<String> = Vec::new();
         // A busy monorepo is claimed by several wiki pages; naming them all
         // buries the event under its own links.
@@ -87,7 +114,7 @@ pub fn append(root: &Path, date: &str, lines: &[String]) -> std::io::Result<Path
     if fresh {
         writeln!(
             fh,
-            "# events — {date}\n\nProposals from GitHub state changes, written by zaindu. Each unchecked box is work /today can rank; nothing here has been done.\n"
+            "# events — {date}\n\nProposals from watched state changes, written by zaindu. Each unchecked box is work /today can rank; nothing here has been done.\n"
         )?;
     }
     for line in lines {
@@ -111,7 +138,8 @@ pub fn open_items(root: &Path, date: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::watch::events::{Kind, diff};
-    use crate::watch::fixtures::{pr, snapshot};
+    use crate::watch::fixtures::{issue, pr, snapshot, with_issues};
+    use crate::watch::linear;
     use crate::watch::graph::Index;
     use crate::watch::model::{Checks, Lifecycle, Review};
 
@@ -143,6 +171,53 @@ mod tests {
         assert_eq!(
             lines[0],
             "- [ ] 10:04Z merged join-com/data#7276 · [[meta-data-service]] — tick Next up, add a Recent log bullet"
+        );
+    }
+
+    #[test]
+    fn a_merge_with_a_ticket_asks_for_the_ticket_to_be_checked() {
+        let mut e = Event {
+            ts: "2026-09-16T10:04:00Z".into(),
+            kind: Kind::Merged,
+            subject: "gh:acme/app#41".into(),
+            repo: "acme/app".into(),
+            title: "fix: APP-12 anchor".into(),
+            url: String::new(),
+            detail: "merged by @mergequeue · APP-12 (Code Review)".into(),
+        };
+        let lines = render(std::slice::from_ref(&e), &Index::default());
+        assert_eq!(
+            lines[0],
+            "- [ ] 10:04Z merged acme/app#41 — tick Next up, add a Recent log bullet, check APP-12 (Code Review)"
+        );
+        e.detail = "APP-12 (Done)".into();
+        assert!(render(&[e], &Index::default())[0].ends_with("check APP-12 (Done)"));
+    }
+
+    #[test]
+    fn an_issue_event_names_the_page_that_tracks_its_linear_project() {
+        let mut idx = Index::default();
+        idx.project_of_repo.insert("lin:project:76ed37275476".into(), vec!["importer".into()]);
+        let mut fresh = issue("APP-12", "Todo", "unstarted");
+        fresh.project = "lin:project:76ed37275476".into();
+        fresh.priority = 2;
+        let events = linear::diff(&snapshot(&[]), &with_issues(snapshot(&[]), &[fresh.clone()]), "2026-09-16T10:04:00Z");
+        assert_eq!(
+            render(&events, &idx)[0],
+            "- [ ] 10:04Z assigned APP-12 · [[importer]] — new ticket (Todo · high): APP-12 title"
+        );
+
+        let mut moved = fresh.clone();
+        moved.state = "In Progress".into();
+        moved.state_type = "started".into();
+        let events = linear::diff(
+            &with_issues(snapshot(&[]), &[fresh]),
+            &with_issues(snapshot(&[]), &[moved]),
+            "2026-09-16T10:09:00Z",
+        );
+        assert_eq!(
+            render(&events, &Index::default())[0],
+            "- 10:09Z moved APP-12 — Todo → In Progress: APP-12 title"
         );
     }
 

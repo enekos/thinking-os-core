@@ -127,8 +127,9 @@ tool calls and transcripts stay out of the graph.
 - [references/pipeline.md](references/pipeline.md) — the 9 stages as implemented: what each extractor reads, how fusion resolves conflicts.
 - [references/code-memory.md](references/code-memory.md) — tasks, attempts, exact-commit tests, and bounded commit/path history.
 - [references/integrations.md](references/integrations.md) — GitHub as a graph: the queries, stacked PRs, failure modes.
+- [references/linear.md](references/linear.md) — Linear, opt-in: the `linear:` key, issue/milestone/cycle nodes, `TRACKS`, the issue events.
 - [references/ikusi.md](references/ikusi.md) — the viewer on `127.0.0.1:4747`, and `sare viz` for a static file.
-- [references/zaindu.md](references/zaindu.md) — the GitHub event watcher: searches, ledger, inbox proposals, the two fields it re-derives.
+- [references/zaindu.md](references/zaindu.md) — the GitHub and Linear event watcher: searches, ledger, inbox proposals, the two fields it re-derives.
 - [references/code.md](references/code.md) — the crate, its three binaries, install and test commands.
 
 ## Credits

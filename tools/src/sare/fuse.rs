@@ -2,7 +2,7 @@ use crate::kg::{self, Edge, Node, Ontology, Paths};
 use crate::sare::{Counter, Ordered};
 use std::collections::HashMap;
 
-pub const SOURCES: [&str; 4] = ["pages", "git", "github", "watch"];
+pub const SOURCES: [&str; 5] = ["pages", "git", "github", "linear", "watch"];
 
 pub fn infer_type(id: &str) -> &'static str {
     if id.starts_with("commit:") {
@@ -16,6 +16,12 @@ pub fn infer_type(id: &str) -> &'static str {
     }
     if id.starts_with("gh:") || id.starts_with("local:") {
         return "repo";
+    }
+    if id.starts_with("lin:project:") {
+        return "milestone";
+    }
+    if id.starts_with("lin:cycle:") {
+        return "cycle";
     }
     if id.starts_with("svc:") {
         return "service";

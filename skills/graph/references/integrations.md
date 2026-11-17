@@ -1,5 +1,7 @@
 # GitHub as a graph
 
+Linear, the optional second integration, has its own page: `linear.md`.
+
 GitHub is already a graph. The job is projection, not scraping: `gh --json`
 returns typed fields, so no stage parses rendered text.
 

@@ -5,7 +5,7 @@ const USAGE: &str = "\
 sare — the thinking-os graph pipeline
 
   sare build [pages|local]        extract + fuse + serve (local: pages + git, no network)
-  sare extract [all|pages|git|github]
+  sare extract [all|pages|git|github|linear]   (linear joins `all` once os.yaml has a `linear:` key)
   sare fuse [--strict]
   sare serve
   sare hop <node> [-d N]
@@ -16,7 +16,12 @@ sare — the thinking-os graph pipeline
 
 fn extract_all(paths: &Paths, ont: &Ontology, which: &str) -> i32 {
     let order: Vec<&str> = if which == "all" {
-        vec!["pages", "git", "github"]
+        // Linear is opt-in (`linear:` in os.yaml); naming it explicitly always runs it.
+        let mut all = vec!["pages", "git", "github"];
+        if paths.linear().is_some() {
+            all.push("linear");
+        }
+        all
     } else if which == "local" {
         vec!["pages", "git"]
     } else {
@@ -39,6 +44,7 @@ fn extract_all(paths: &Paths, ont: &Ontology, which: &str) -> i32 {
                 }
                 extract::github(paths, ont, &repo_ids)
             }
+            "linear" => extract::linear(paths, ont),
             other => {
                 eprintln!("sare: unknown extractor: {other}");
                 return 1;
