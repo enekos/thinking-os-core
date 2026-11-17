@@ -10,8 +10,8 @@
 #    missing, and reports — never applies — template changes to CLAUDE.md and
 #    graph/ontology.yaml
 # 4. symlinks each skills/<name> into the skills dir
-# 5. installs + enables the 5-minute zaindu timer (systemd user / launchd)
-# 6. seeds zaindu, builds the graph, prints a summary
+# 5. seeds zaindu, builds the graph
+# 6. installs + enables the 5-minute zaindu timer (systemd user / launchd), prints a summary
 #
 # Never deletes or overwrites a wiki page.
 set -euo pipefail
@@ -107,6 +107,7 @@ fi
 step "skills → $SKILLS"
 mkdir -p "$SKILLS"
 linked=0
+skipped=()
 for dir in "$CORE"/skills/*/; do
   name="$(basename "$dir")"
   target="$SKILLS/$name"
@@ -115,12 +116,44 @@ for dir in "$CORE"/skills/*/; do
     linked=$((linked + 1))
   else
     note "skipped $name: $target exists and is not a symlink"
+    skipped+=("$name")
   fi
 done
 note "$linked skills linked"
-SUMMARY+=("skills       ok   $linked linked into $SKILLS")
+if [ ${#skipped[@]} -eq 0 ]; then
+  SUMMARY+=("skills       ok   $linked linked into $SKILLS")
+else
+  # a real directory under the same name shadows the core's skill: say so where it is read
+  SUMMARY+=("skills       !!   $linked linked; not replaced (your own copy wins): ${skipped[*]}")
+fi
+
+# ----------------------------------------------------------------- first run
+step "first run"
+# stop a timer that is already running: its poll and the one below would both
+# see the same transition and ledger it twice. The timer step re-enables it.
+if [ "$TIMER" = 1 ]; then
+  if [ "$(uname -s)" = "Darwin" ]; then
+    launchctl unload "$HOME/Library/LaunchAgents/com.thinking-os.zaindu.plist" 2>/dev/null || true
+  else
+    systemctl --user stop thinking-os-zaindu.timer 2>/dev/null || true
+  fi
+fi
+export THINKING_OS_ROOT="$WIKI"
+# seed only the first time: on an upgrade a seed would swallow real transitions
+if [ -f "$WIKI/scripts/.gh-watch-state.json" ]; then
+  zaindu poll --root "$WIKI" | tail -1 || note "zaindu poll failed — see above"
+else
+  zaindu poll --root "$WIKI" --seed | tail -1 || note "zaindu seed failed — see above"
+fi
+sare build >/dev/null 2>&1 || sare build pages >/dev/null
+note "$(sare fuse --root "$WIKI" 2>/dev/null | head -1)"
+sare serve --root "$WIKI" >/dev/null
+rm -f "$WIKI/scripts/.autocommit-stamp"
+"$WIKI/scripts/autocommit.sh" && note "$(git -C "$WIKI" log -1 --format=%s)"
+SUMMARY+=("graph        ok   $(wc -l < "$WIKI/graph/nodes.tsv" | tr -d ' ') node rows, views in graph/views/")
 
 # ----------------------------------------------------------------- timer
+# after the first run, so the timer's own first poll finds nothing left to report
 step "timer"
 render() { sed "s#@WIKI@#$WIKI#g" "$1" > "$2"; }
 if [ "$TIMER" = 0 ]; then
@@ -133,6 +166,15 @@ elif [ "$(uname -s)" = "Darwin" ]; then
   launchctl unload "$plist" 2>/dev/null || true
   launchctl load "$plist"
   SUMMARY+=("timer        ok   launchd com.thinking-os.zaindu, every 5 min")
+  # an agent left over from an older setup that drives the same wiki double-polls it
+  for other in "$HOME"/Library/LaunchAgents/*.plist; do
+    [ "$other" = "$plist" ] && continue
+    if grep -q -F "$WIKI/" "$other" 2>/dev/null; then
+      note "also points at this wiki: $other"
+      note "if it is an old poller, remove it: launchctl unload $other"
+      SUMMARY+=("timer        !!   another launchd agent uses this wiki: $(basename "$other")")
+    fi
+  done
 elif systemctl --user show-environment >/dev/null 2>&1; then
   units="$HOME/.config/systemd/user"
   mkdir -p "$units"
@@ -151,22 +193,6 @@ else
   note "*/5 * * * * $WIKI/scripts/zaindu-poll.sh"
   SUMMARY+=("timer        !!   no systemd user session; use cron")
 fi
-
-# ----------------------------------------------------------------- first run
-step "first run"
-export THINKING_OS_ROOT="$WIKI"
-# seed only the first time: on an upgrade a seed would swallow real transitions
-if [ -f "$WIKI/scripts/.gh-watch-state.json" ]; then
-  zaindu poll --root "$WIKI" | tail -1 || note "zaindu poll failed — see above"
-else
-  zaindu poll --root "$WIKI" --seed | tail -1 || note "zaindu seed failed — see above"
-fi
-sare build >/dev/null 2>&1 || sare build pages >/dev/null
-note "$(sare fuse --root "$WIKI" 2>/dev/null | head -1)"
-sare serve --root "$WIKI" >/dev/null
-rm -f "$WIKI/scripts/.autocommit-stamp"
-"$WIKI/scripts/autocommit.sh" && note "$(git -C "$WIKI" log -1 --format=%s)"
-SUMMARY+=("graph        ok   $(wc -l < "$WIKI/graph/nodes.tsv" | tr -d ' ') node rows, views in graph/views/")
 
 step "summary"
 printf '   %s\n' "${SUMMARY[@]}"
