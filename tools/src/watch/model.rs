@@ -113,10 +113,18 @@ impl Issue {
     }
 }
 
+/// Bumped whenever a poll starts seeing PRs the previous version could not.
+/// A snapshot from a narrower window is re-seeded rather than diffed: every
+/// PR that was merely out of sight would otherwise arrive as a fresh event.
+pub const WINDOW: u32 = 2;
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     pub taken_at: String,
     pub login: String,
+    /// Which [`WINDOW`] this snapshot was read through. Absent in older state.
+    #[serde(default)]
+    pub window: u32,
     pub prs: BTreeMap<String, Pr>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub issues: BTreeMap<String, Issue>,
