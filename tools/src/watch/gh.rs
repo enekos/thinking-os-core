@@ -6,8 +6,11 @@ use std::thread;
 use std::time::Duration;
 
 const QUERY: &str = r#"
-query($q:String!) {
-  hits: search(query:$q, type:ISSUE, first:40) { nodes { ...pr } }
+query($q:String!, $after:String) {
+  hits: search(query:$q, type:ISSUE, first:40, after:$after) {
+    pageInfo { hasNextPage endCursor }
+    nodes { ...pr }
+  }
 }
 fragment pr on PullRequest {
   number title url state isDraft updatedAt mergedAt reviewDecision
@@ -59,24 +62,28 @@ fn query_for(bucket: &str, login: &str, since_days: i64) -> String {
     }
 }
 
-fn fetch_bucket(query: &str) -> Result<Value, String> {
+/// GitHub search stops at 1000 results; 25 pages of 40 reaches it.
+const MAX_PAGES: usize = 25;
+
+fn fetch_page(query: &str, after: Option<&str>) -> Result<Value, String> {
     let mut last = String::new();
     for attempt in 0..3 {
         if attempt > 0 {
             thread::sleep(Duration::from_secs(3 * attempt));
         }
-        let call = run_capture(
-            Command::new("gh").args([
-                "api",
-                "graphql",
-                "-f",
-                &format!("query={QUERY}"),
-                "-f",
-                &format!("q={query}"),
-            ]),
-            Duration::from_secs(90),
-        );
-        match call {
+        let mut cmd = Command::new("gh");
+        cmd.args([
+            "api",
+            "graphql",
+            "-f",
+            &format!("query={QUERY}"),
+            "-f",
+            &format!("q={query}"),
+        ]);
+        if let Some(cursor) = after {
+            cmd.args(["-f", &format!("after={cursor}")]);
+        }
+        match run_capture(&mut cmd, Duration::from_secs(90)) {
             Ok(body) => match serde_json::from_str::<Value>(&body) {
                 Ok(v) if v.pointer("/data/hits/nodes").is_some() => return Ok(v),
                 Ok(v) => {
@@ -94,13 +101,43 @@ fn fetch_bucket(query: &str) -> Result<Value, String> {
     Err(last)
 }
 
+/// Every page of one search. A bucket read short of its end is an error, not
+/// a shorter list: a PR missing from the window reads as "closed unmerged".
+fn collect_pages(
+    mut page: impl FnMut(Option<&str>) -> Result<Value, String>,
+) -> Result<Vec<Value>, String> {
+    let mut nodes = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..MAX_PAGES {
+        let v = page(cursor.as_deref())?;
+        if let Some(Value::Array(batch)) = v.pointer("/data/hits/nodes") {
+            nodes.extend(batch.iter().cloned());
+        }
+        let more = v
+            .pointer("/data/hits/pageInfo/hasNextPage")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !more {
+            return Ok(nodes);
+        }
+        cursor = v
+            .pointer("/data/hits/pageInfo/endCursor")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        if cursor.is_none() {
+            return Err("more pages promised but no cursor given".into());
+        }
+    }
+    Err(format!("more than {} results; window truncated", MAX_PAGES * 40))
+}
+
 pub fn fetch(login: &str, since_days: i64) -> Result<(Value, Vec<String>), String> {
     let mut buckets = serde_json::Map::new();
     let mut warnings = Vec::new();
     for bucket in BUCKETS {
-        match fetch_bucket(&query_for(bucket, login, since_days)) {
-            Ok(v) => {
-                let nodes = v.pointer("/data/hits/nodes").cloned().unwrap_or(json!([]));
+        let query = query_for(bucket, login, since_days);
+        match collect_pages(|after| fetch_page(&query, after)) {
+            Ok(nodes) => {
                 buckets.insert(bucket.to_string(), json!({ "nodes": nodes }));
             }
             Err(e) => warnings.push(format!("{bucket}: {e}")),
@@ -331,6 +368,45 @@ mod tests {
     use super::*;
     use crate::watch::fixtures::*;
     use crate::watch::model::Lifecycle;
+
+    fn page(n: usize, next: Option<&str>) -> Value {
+        json!({ "data": { "hits": {
+            "pageInfo": { "hasNextPage": next.is_some(), "endCursor": next },
+            "nodes": (0..n).map(|i| json!({ "number": i })).collect::<Vec<_>>(),
+        } } })
+    }
+
+    #[test]
+    fn every_page_of_a_search_is_read() {
+        let mut asked = Vec::new();
+        let nodes = collect_pages(|after| {
+            asked.push(after.map(str::to_string));
+            Ok(match after {
+                None => page(40, Some("c1")),
+                Some("c1") => page(40, Some("c2")),
+                _ => page(3, None),
+            })
+        })
+        .unwrap();
+        assert_eq!(nodes.len(), 83);
+        assert_eq!(asked, vec![None, Some("c1".into()), Some("c2".into())]);
+    }
+
+    #[test]
+    fn a_search_that_never_ends_is_an_error_not_a_short_list() {
+        let err = collect_pages(|_| Ok(page(40, Some("again")))).unwrap_err();
+        assert!(err.contains("truncated"), "{err}");
+    }
+
+    #[test]
+    fn a_failed_page_fails_the_bucket() {
+        let err = collect_pages(|after| match after {
+            None => Ok(page(40, Some("c1"))),
+            _ => Err("rate limited".into()),
+        })
+        .unwrap_err();
+        assert_eq!(err, "rate limited");
+    }
 
     #[test]
     fn a_rerun_that_passed_clears_the_earlier_failure() {
