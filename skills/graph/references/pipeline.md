@@ -70,11 +70,16 @@ and none touches the TSVs, so fusion has exactly one place to validate.
 | Extractor | Reads | Emits |
 |---|---|---|
 | `pages` | wiki frontmatter: `edges:`, `parent:`, `sources:`, `links:` | every wiki node; declared edges at conf 1.0; legacy links as MENTIONS at 0.5 |
-| `git` | `path:` on each project page → `git remote`, `git log -1` | repo nodes, `LIVES_IN`, last-commit date (the staleness input) |
+| `git` | `path:` and `history:` on projects; task `commits`; test `commit` | repos and `LIVES_IN`; bounded timestamped commits and changed paths; `CONTAINS`, `TOUCHES`, declared `IMPLEMENTS`, `TESTS`, `VERIFIES` |
 | `github` | `gh search prs` then `gh pr list --json` per repo | PR nodes with check status; `OPENED_IN`, `AUTHORED_BY`, `REVIEWS`, `DEPENDS_ON` for stacks |
 
 Plus `graph/raw/watch.json`, written by `zaindu poll` — the only source that
 still sees a PR after it merges.
+
+Git history is selective: 20 recent non-merge commits per project by default,
+plus older commits explicitly named by tasks and test results. Commit bodies,
+diffs, file contents, tool calls and transcripts are never extracted. See
+[code-memory.md](code-memory.md).
 
 **An extractor that cannot reach its source emits nothing and says so.** It
 never crashes the pipeline and never invents a node. A missing extractor makes

@@ -108,7 +108,11 @@ impl Graph {
             "".into(),
         ];
 
-        for (kind, label) in [("project", "Projects"), ("concept", "Concepts"), ("decision", "Decisions"), ("person", "People")] {
+        for (kind, label) in [
+            ("project", "Projects"), ("task", "Tasks"), ("attempt", "Attempts"),
+            ("test", "Tests"), ("concept", "Concepts"), ("decision", "Decisions"),
+            ("person", "People"),
+        ] {
             let rows = self.by_type(kind);
             if rows.is_empty() {
                 continue;
@@ -146,6 +150,7 @@ impl Graph {
         l.push(String::new());
         for (kind, label) in [
             ("pr", "GitHub PRs"), ("repo", "Repos"), ("service", "Services"),
+            ("commit", "Commits"), ("path", "Changed paths"),
         ] {
             let c = self.by_type(kind).len();
             if c > 0 {

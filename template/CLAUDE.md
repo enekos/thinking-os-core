@@ -21,7 +21,8 @@ CLAUDE.md  README.md  os.yaml (me.github)  log.md (append-only)  index.md (GENER
 graph/      ontology.yaml · services.tsv (hand-kept) · wiki-{nodes,edges}.tsv (GENERATED, tracked)
             nodes.tsv/edges.tsv (GENERATED, gitignored — full graph incl. GitHub)
             events/YYYY-MM.tsv (zaindu ledger) · raw/ (gitignored) · views/ (GENERATED)
-projects/ concepts/ decisions/ people/   node bodies
+projects/ tasks/ attempts/ tests/       project + coding-memory node bodies
+concepts/ decisions/ people/            curated knowledge node bodies
 briefings/  past /today output       sources/  IMMUTABLE ingested material
 inbox/      capture; inbox/events/ = zaindu proposals
 scripts/    zaindu-poll.sh (timer, every 5 min), autocommit.sh (hourly)
@@ -45,7 +46,7 @@ into a page, not the evidence.
 ---
 title: <human-readable title>
 summary: "<one line — the ONLY copy; index.md is generated from it>"
-type: project | concept | decision | person | source | briefing
+type: project | task | attempt | test | concept | decision | person | source | briefing
 status: active | blocked | dormant | done | unknown   # projects
 updated: YYYY-MM-DD
 path: <local repo path>                                # projects
@@ -66,6 +67,16 @@ sources:
 3. **`MENTIONS` is deprecated.** Never create one.
 4. **Decisions are immutable.** A revision is a new decision that `SUPERSEDES`.
 5. **Sources are immutable.** The provenance floor.
+
+### Code memory
+
+- Copy `tasks/_example.md`, `attempts/_example.md`, `tests/_example.md`; never
+  edit the underscore examples into real records.
+- Projects keep the latest 20 non-merge commits by default (`history: N`).
+  Task `commits` and test `commit` SHAs retain older relevant commits.
+- `TESTS` records an execution; only `passed` + `exit_code: 0` earns `VERIFIES`.
+  Rejected attempts need a concise `rejection:`.
+- No diffs, commit bodies, tool calls, or transcripts. Run `sare build local`.
 
 ## Library and stack
 

@@ -5,6 +5,12 @@ use std::collections::HashMap;
 pub const SOURCES: [&str; 4] = ["pages", "git", "github", "watch"];
 
 pub fn infer_type(id: &str) -> &'static str {
+    if id.starts_with("commit:") {
+        return "commit";
+    }
+    if id.starts_with("path:") {
+        return "path";
+    }
     if id.starts_with("gh:") && id.contains('#') {
         return "pr";
     }

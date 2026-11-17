@@ -1,5 +1,5 @@
 use os::kg::{self, Edge, Node, Ontology, Paths};
-use os::sare::{fuse, retype, serve};
+use os::sare::{extract, fuse, retype, serve};
 use std::fs;
 use std::path::PathBuf;
 
@@ -21,6 +21,36 @@ fn put_raw(paths: &Paths, name: &str, nodes: Vec<Node>, edges: Vec<Edge>) {
     kg::dump_raw(paths, name, &nodes, &edges).unwrap();
 }
 
+fn git(repo: &std::path::Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+fn commit_file(repo: &std::path::Path, name: &str, contents: &str, date: &str) -> String {
+    let file = repo.join(name);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, contents).unwrap();
+    git(repo, &["add", "--", name]);
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["commit", "-q", "-m"])
+        .arg(format!("change {name}"))
+        .args(["-m", "commit bodies, diffs and transcripts are not graph memory"])
+        .env("GIT_AUTHOR_DATE", date)
+        .env("GIT_COMMITTER_DATE", date)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "commit: {}", String::from_utf8_lossy(&output.stderr));
+    git(repo, &["rev-parse", "HEAD"])
+}
+
 #[test]
 fn the_real_ontology_parses_into_typed_rules() {
     let paths = scratch("ontology");
@@ -28,7 +58,10 @@ fn the_real_ontology_parses_into_typed_rules() {
     assert!(o.has_relation("DEPENDS_ON"));
     assert!(!o.has_relation("RELATED_TO"));
     assert_eq!(o.relations["OPENED_IN"].card, "many-to-one");
-    assert!(!o.has_relation("IMPLEMENTS"), "Linear relations are gone");
+    assert!(o.relations["IMPLEMENTS"].accepts_domain("commit"));
+    assert!(o.relations["IMPLEMENTS"].accepts_range("task"));
+    assert!(!o.relations["IMPLEMENTS"].accepts_domain("project"));
+    assert!(o.relations["VERIFIES"].accepts_domain("test"));
     assert!(o.relations["MENTIONS"].deprecated);
     assert!(o.relations["MENTIONS"].accepts_domain("project"));
     assert!(!o.relations["DECIDES"].accepts_domain("project"));
@@ -60,8 +93,149 @@ fn an_external_id_carries_its_own_type() {
     assert_eq!(fuse::infer_type("gh:join-com/data"), "repo");
     assert_eq!(fuse::infer_type("local:/Users/x/src"), "repo");
     assert_eq!(fuse::infer_type("svc:bai.hirusta.io"), "service");
+    assert_eq!(fuse::infer_type("commit:gh:acme/app@abcdef1234567"), "commit");
+    assert_eq!(fuse::infer_type("path:gh:acme/app:src/lib.rs"), "path");
     assert_eq!(fuse::infer_type("ABC-3461"), "", "ticket-shaped ids are not a type here");
     assert_eq!(fuse::infer_type("sutegi"), "");
+}
+
+#[test]
+fn code_memory_is_bounded_temporal_and_evidence_based() {
+    let paths = scratch("code-memory");
+    let repo = paths.root.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "user.name", "Thinking OS Test"]);
+    git(&repo, &["config", "user.email", "thinking-os@example.invalid"]);
+    let first = commit_file(&repo, "src/first.rs", "first\n", "2026-01-01T10:00:00+00:00");
+    let second = commit_file(&repo, "tests/verified.rs", "verified\n", "2026-01-02T10:00:00+02:00");
+    let third = commit_file(&repo, "output/transcript.jsonl", "not memory\n", "2026-01-03T10:00:00+00:00");
+    let fourth = commit_file(&repo, "src/latest.rs", "latest\n", "2026-01-04T10:00:00+00:00");
+
+    for dir in ["projects", "tasks", "attempts", "tests"] {
+        fs::create_dir_all(paths.root.join(dir)).unwrap();
+    }
+    fs::write(
+        paths.root.join("projects/app.md"),
+        format!("---\ntitle: app\nsummary: test app\nstatus: active\nupdated: 2026-01-04\npath: {}\nhistory: 1\n---\n", repo.display()),
+    )
+    .unwrap();
+    fs::write(
+        paths.root.join("tasks/context.md"),
+        format!("---\ntitle: context\nsummary: scoped context\nstatus: done\nupdated: 2026-01-04\nproject: app\ncommits:\n  - {first}\n---\n"),
+    )
+    .unwrap();
+    fs::write(
+        paths.root.join("attempts/transcript-index.md"),
+        "---\ntitle: transcript index\nsummary: index every tool call\nstatus: rejected\nupdated: 2026-01-03\ntask: context\nrejection: transcript volume hides durable decisions\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        paths.root.join("tests/context-pass.md"),
+        format!("---\ntitle: context pass\nsummary: context regression passed\nstatus: passed\nran_at: 2026-01-04T11:00:00+00:00\ntask: context\ncommit: {}\ncommand: cargo test context\nexit_code: 0\n---\n", &second[..8]),
+    )
+    .unwrap();
+    fs::write(
+        paths.root.join("tests/context-fail.md"),
+        format!("---\ntitle: context failure\nsummary: stale-context regression failed\nstatus: failed\nran_at: 2026-01-04T11:01:00+00:00\ntask: context\ncommit: {}\ncommand: cargo test stale_context\nexit_code: 1\n---\n", &second[..8]),
+    )
+    .unwrap();
+
+    let pages = extract::pages(&paths, &ont(&paths));
+    assert!(pages.problems.is_empty(), "{:?}", pages.problems);
+    let attempt = pages.nodes.iter().find(|node| node.id == "transcript-index").unwrap();
+    assert_eq!(attempt.state, "transcript volume hides durable decisions");
+    let passed = pages.nodes.iter().find(|node| node.id == "context-pass").unwrap();
+    assert_eq!(passed.updated, "2026-01-04T11:00:00+00:00");
+    assert_eq!(passed.state, "exit 0 · cargo test context");
+
+    let git = extract::git(&paths, &ont(&paths));
+    assert!(git.problems.is_empty(), "{:?}", git.problems);
+    put_raw(&paths, "pages", pages.nodes, pages.edges);
+    put_raw(&paths, "git", git.nodes, git.edges);
+    let fused = fuse::fuse(&paths, &ont(&paths));
+    assert!(fused.rejected.is_empty(), "{:?}", fused.rejected);
+
+    let rid = format!("local:{}", repo.display());
+    let commit_id = |sha: &str| format!("commit:{rid}@{sha}");
+    assert!(fused.nodes.contains(&commit_id(&first)), "an old task commit is retained");
+    assert!(fused.nodes.contains(&commit_id(&second)), "an old test commit is retained");
+    assert!(fused.nodes.contains(&commit_id(&fourth)), "the latest commit is retained");
+    assert!(!fused.nodes.contains(&commit_id(&third)), "unreferenced history outside the window stays out");
+    assert!(!fused.nodes.contains(&format!("path:{rid}:output/transcript.jsonl")));
+    assert_eq!(fused.nodes.values().filter(|node| node.kind == "commit").count(), 3);
+    assert_eq!(fused.nodes.get(&commit_id(&first)).unwrap().updated, "2026-01-01T10:00:00Z");
+    assert_eq!(fused.nodes.get(&commit_id(&second)).unwrap().updated, "2026-01-02T08:00:00Z");
+    assert!(fused.nodes.values().all(|node| !node.summary.contains("transcripts are not graph memory")));
+
+    let has = |src: &str, rel: &str, dst: &str| {
+        fused.edges.values().any(|edge| edge.src == src && edge.rel == rel && edge.dst == dst)
+    };
+    assert!(has(&commit_id(&first), "IMPLEMENTS", "context"));
+    assert!(has(&commit_id(&first), "TOUCHES", &format!("path:{rid}:src/first.rs")));
+    assert!(has(&rid, "CONTAINS", &commit_id(&first)));
+    assert!(has("transcript-index", "ATTEMPTS", "context"));
+    assert!(has("context-pass", "TESTS", "context"));
+    assert!(has("context-pass", "VERIFIES", "context"));
+    assert!(has("context-pass", "VERIFIES", &commit_id(&second)));
+    let verification = fused.edges.values().find(|edge| {
+        edge.src == "context-pass" && edge.rel == "VERIFIES" && edge.dst == commit_id(&second)
+    }).unwrap();
+    assert_eq!(verification.since, "2026-01-04T11:00:00+00:00");
+    assert!(has("context-fail", "TESTS", &commit_id(&second)));
+    assert!(!has("context-fail", "VERIFIES", "context"));
+    assert!(!has("context-fail", "VERIFIES", &commit_id(&second)));
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_sare"))
+        .arg("build")
+        .arg("local")
+        .arg("--root")
+        .arg(&paths.root)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("pages"));
+    assert!(stdout.contains("git"));
+    assert!(!stdout.contains("github"), "local builds must not contact GitHub: {stdout}");
+    assert!(kg::read_tsv(&paths.nodes_tsv()).iter().any(|node| kg::get(node, "id") == commit_id(&first)));
+
+    let mut legacy = ont(&paths);
+    legacy.nodes.remove("commit");
+    legacy.nodes.remove("path");
+    legacy.relations.remove("CONTAINS");
+    legacy.relations.remove("TOUCHES");
+    let legacy_pull = extract::git(&paths, &legacy);
+    assert!(legacy_pull.nodes.iter().all(|node| node.kind == "repo"));
+    assert!(legacy_pull.edges.iter().all(|edge| edge.rel == "LIVES_IN"));
+    let _ = fs::remove_dir_all(&paths.root);
+}
+
+#[test]
+fn failed_or_incomplete_tests_cannot_claim_verification() {
+    let paths = scratch("verification-gate");
+    for dir in ["projects", "tasks", "tests"] {
+        fs::create_dir_all(paths.root.join(dir)).unwrap();
+    }
+    fs::write(paths.root.join("projects/app.md"), "---\ntitle: app\n---\n").unwrap();
+    fs::write(paths.root.join("tasks/context.md"), "---\ntitle: context\nproject: app\n---\n").unwrap();
+    fs::write(
+        paths.root.join("tests/failed.md"),
+        "---\ntitle: failed\nstatus: failed\nran_at: 2026-01-04T11:00:00Z\ntask: context\ncommit: abcdef1234567\ncommand: cargo test\nexit_code: 1\nedges:\n  - VERIFIES context\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        paths.root.join("tests/incomplete.md"),
+        "---\ntitle: incomplete\nstatus: passed\nran_at: 2026-01-04T11:00:00Z\ntask: context\ncommit: abcdef1234567\nexit_code: 0\n---\n",
+    )
+    .unwrap();
+
+    let pages = extract::pages(&paths, &ont(&paths));
+    assert!(pages.problems.iter().any(|problem| problem.contains("cannot declare VERIFIES")));
+    assert!(pages.problems.iter().any(|problem| problem.contains("command is required")));
+    assert!(!pages.edges.iter().any(|edge| edge.rel == "VERIFIES"));
+    assert!(pages.edges.iter().any(|edge| edge.src == "failed" && edge.rel == "TESTS"));
+    let _ = fs::remove_dir_all(&paths.root);
 }
 
 #[test]
@@ -310,17 +484,17 @@ fn disconnected_nodes_are_parked_clear_of_the_connected_core() {
 #[test]
 fn every_type_lands_in_a_world_with_a_shape() {
     use os::sare::viz::{shape_of, world_of};
-    for kind in ["project", "concept", "decision", "person", "source", "briefing"] {
+    for kind in ["project", "task", "attempt", "test", "concept", "decision", "person", "source", "briefing"] {
         assert_eq!(world_of(kind), "wiki");
     }
-    for kind in ["repo", "service", "pr"] {
+    for kind in ["repo", "commit", "path", "service", "pr"] {
         assert_eq!(world_of(kind), "code");
     }
     let mut seen = std::collections::HashSet::new();
     for kind in ["project", "concept", "decision", "person", "source", "briefing"] {
         assert!(seen.insert(shape_of(kind)), "{kind} reuses a shape inside its own world");
     }
-    assert!(["project", "concept", "decision", "person", "source", "briefing", "repo", "service", "pr"]
+    assert!(["project", "task", "attempt", "test", "concept", "decision", "person", "source", "briefing", "repo", "commit", "path", "service", "pr"]
         .iter()
         .all(|k| shape_of(k) < 6));
 }

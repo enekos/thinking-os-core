@@ -72,7 +72,8 @@ if [ -f "$WIKI/graph/ontology.yaml" ]; then
   chmod +x "$WIKI/scripts/"*.sh
   note "scripts/ refreshed from the core"
   added=0
-  for page in "$CORE"/template/{concepts,sources}/*.md "$CORE"/template/projects/{sutegi,osagai}.md \
+  for page in "$CORE"/template/{concepts,sources}/*.md "$CORE"/template/{tasks,attempts,tests}/_example.md \
+              "$CORE"/template/projects/{sutegi,osagai}.md \
               "$CORE"/template/decisions/2026-11-17-default-stack-sutegi-osagai.md; do
     rel="${page#"$CORE/template/"}"
     [ -e "$WIKI/$rel" ] && continue
