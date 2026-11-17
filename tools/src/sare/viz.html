@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>thinking-os — the whole graph</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb;
+    --surface-2: #f2f2ef;
+    --line: #dcdcd6;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #86857e;
+    --wiki: #2a78d6;
+    --linear: #eb6834;
+    --code: #1baf7a;
+    --edge: #b9b9b1;
+    --focus: #0b0b0b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface-1: #1a1a19;
+      --surface-2: #232322;
+      --line: #3a3a37;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #8c8b82;
+      --wiki: #3987e5;
+      --linear: #d95926;
+      --code: #199e70;
+      --edge: #4a4a46;
+      --focus: #ffffff;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --surface-2: #232322;
+    --line: #3a3a37;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #8c8b82;
+    --wiki: #3987e5;
+    --linear: #d95926;
+    --code: #199e70;
+    --edge: #4a4a46;
+    --focus: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--surface-1);
+    color: var(--text-primary);
+    font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px;
+    padding: 12px 16px; border-bottom: 1px solid var(--line);
+  }
+  h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  .count { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+  .spacer { flex: 1; }
+  .controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  button, input {
+    font: inherit; color: var(--text-primary); background: var(--surface-2);
+    border: 1px solid var(--line); border-radius: 6px; padding: 4px 9px; cursor: pointer;
+  }
+  input { cursor: text; min-width: 160px; }
+  button:hover { border-color: var(--text-muted); }
+  .controls button[aria-pressed="true"] { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); }
+  main { flex: 1; display: flex; min-height: 0; }
+  #stage { flex: 1; position: relative; min-width: 0; }
+  svg { width: 100%; height: 100%; display: block; cursor: grab; }
+  svg.dragging { cursor: grabbing; }
+  .edge { stroke: var(--edge); stroke-width: 1.1; fill: none; }
+  .edge.legacy { stroke-dasharray: 3 3; }
+  .edge.lit { stroke: var(--focus); stroke-width: 1.6; }
+  .node { stroke: var(--surface-1); stroke-width: 1.5; }
+  .node.w-wiki { fill: var(--wiki); }
+  .node.w-linear { fill: var(--linear); }
+  .node.w-code { fill: var(--code); }
+  .node.lit { stroke: var(--focus); stroke-width: 2; }
+  .hidden { display: none; }
+  .dim { opacity: 0.12; }
+  .label { fill: var(--text-secondary); font-size: 10px; pointer-events: none; paint-order: stroke; stroke: var(--surface-1); stroke-width: 2.5px; }
+  aside {
+    width: 300px; border-left: 1px solid var(--line); padding: 14px 16px; overflow-y: auto;
+    background: var(--surface-2);
+  }
+  aside h2 { font-size: 13px; margin: 0 0 2px; word-break: break-word; }
+  aside .kind { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+  aside p { color: var(--text-secondary); margin: 8px 0; }
+  aside ul { list-style: none; padding: 0; margin: 6px 0 0; }
+  aside li { padding: 3px 0; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--text-secondary); }
+  aside li b { color: var(--text-primary); font-weight: 500; }
+  aside a { color: inherit; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 6px; padding: 10px 16px; border-top: 1px solid var(--line); }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px 3px 5px;
+    border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2);
+    color: var(--text-secondary); cursor: pointer; font-size: 11.5px;
+  }
+  .chip[aria-pressed="false"] { opacity: 0.4; }
+  .chip b { color: var(--text-primary); font-weight: 500; }
+  .chip .n { font-variant-numeric: tabular-nums; color: var(--text-muted); }
+  .world { color: var(--text-muted); font-size: 11px; align-self: center; padding-left: 6px; }
+  #tip {
+    position: absolute; pointer-events: none; opacity: 0; transition: opacity .1s;
+    background: var(--surface-1); border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 9px; max-width: 320px; box-shadow: 0 4px 14px rgba(0,0,0,.14);
+  }
+  #tip b { display: block; }
+  #tip span { color: var(--text-secondary); }
+  @media (max-width: 760px) { aside { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>thinking-os — the whole graph</h1>
+  <span class="count" id="counts"></span>
+  <span class="spacer"></span>
+  <div class="controls">
+    <input id="search" type="search" placeholder="search a node…" autocomplete="off">
+    <button id="preset-all">whole graph</button>
+    <button id="preset-core">wiki core</button>
+    <button id="preset-work">work</button>
+    <button id="reset">reset view</button>
+    <button id="theme">theme</button>
+  </div>
+</header>
+<main>
+  <div id="stage">
+    <svg id="canvas"><g id="scene"><g id="edges"></g><g id="nodes"></g><g id="labels"></g></g></svg>
+    <div id="tip"></div>
+  </div>
+  <aside id="panel">
+    <span class="kind">nothing selected</span>
+    <p>Click a node to see what reaches it and what it reaches. Scroll to zoom, drag to pan, and use the chips below to show or hide a type.</p>
+  </aside>
+</main>
+<div class="legend" id="legend"></div>
+
+<script>
+const NODES = "__NODES__";
+const EDGES = "__EDGES__";
+const META  = "__META__";
+
+const SHAPES = [
+  (s) => `M 0 ${-s} A ${s} ${s} 0 1 0 0 ${s} A ${s} ${s} 0 1 0 0 ${-s} Z`,
+  (s) => `M ${-s} ${-s} H ${s} V ${s} H ${-s} Z`,
+  (s) => `M 0 ${-s * 1.3} L ${s * 1.3} 0 L 0 ${s * 1.3} L ${-s * 1.3} 0 Z`,
+  (s) => `M 0 ${-s} A ${s} ${s} 0 1 0 0 ${s} A ${s} ${s} 0 1 0 0 ${-s} Z M 0 ${-s / 2.2} A ${s / 2.2} ${s / 2.2} 0 1 1 0 ${s / 2.2} A ${s / 2.2} ${s / 2.2} 0 1 1 0 ${-s / 2.2} Z`,
+  (s) => `M 0 ${-s * 1.25} L ${s * 1.1} ${s * 0.8} L ${-s * 1.1} ${s * 0.8} Z`,
+  (s) => { let p = ""; for (let i = 0; i < 6; i++) { const a = Math.PI / 6 + i * Math.PI / 3; p += (i ? "L" : "M") + (Math.cos(a) * s * 1.15).toFixed(2) + " " + (Math.sin(a) * s * 1.15).toFixed(2) + " "; } return p + "Z"; },
+];
+
+const ns = "http://www.w3.org/2000/svg";
+const scene = document.getElementById("scene");
+const gEdges = document.getElementById("edges");
+const gNodes = document.getElementById("nodes");
+const gLabels = document.getElementById("labels");
+const canvas = document.getElementById("canvas");
+const tip = document.getElementById("tip");
+const panel = document.getElementById("panel");
+
+const shapeOf = {}, worldOf = {};
+META.types.forEach(t => { shapeOf[t.t] = t.s; worldOf[t.t] = t.w; });
+
+const radius = (d) => Math.min(15, 3.6 + Math.sqrt(d) * 1.35);
+const neighbours = NODES.map(() => []);
+EDGES.forEach((e, i) => { neighbours[e.s].push(i); neighbours[e.t].push(i); });
+
+const edgeEls = EDGES.map(e => {
+  const a = NODES[e.s], b = NODES[e.t];
+  const el = document.createElementNS(ns, "line");
+  el.setAttribute("x1", a.x); el.setAttribute("y1", a.y);
+  el.setAttribute("x2", b.x); el.setAttribute("y2", b.y);
+  el.setAttribute("class", "edge" + (e.r === "MENTIONS" ? " legacy" : ""));
+  el.setAttribute("opacity", 0.3 + e.c * 0.45);
+  gEdges.appendChild(el);
+  return el;
+});
+
+const nodeEls = NODES.map((n, i) => {
+  const el = document.createElementNS(ns, "path");
+  el.setAttribute("d", SHAPES[shapeOf[n.t] ?? 0](radius(n.d)));
+  el.setAttribute("transform", `translate(${n.x} ${n.y})`);
+  el.setAttribute("class", "node w-" + (worldOf[n.t] || "code"));
+  el.dataset.i = i;
+  gNodes.appendChild(el);
+  return el;
+});
+
+const labelled = (() => {
+  const ranked = NODES.map((n, i) => [i, n.d]).sort((a, b) => b[1] - a[1]);
+  const taken = [], out = [];
+  for (const [i] of ranked) {
+    if (out.length >= 55) break;
+    const n = NODES[i];
+    if (taken.some(p => Math.abs(p.x - n.x) < 130 && Math.abs(p.y - n.y) < 40)) continue;
+    taken.push(n); out.push(i);
+  }
+  return out;
+})();
+const labelEls = labelled.map(i => {
+  const n = NODES[i];
+  const el = document.createElementNS(ns, "text");
+  el.setAttribute("class", "label");
+  el.setAttribute("x", n.x);
+  el.setAttribute("y", n.y - radius(n.d) - 4);
+  el.setAttribute("text-anchor", "middle");
+  el.textContent = n.id.length > 26 ? n.id.slice(0, 25) + "…" : n.id;
+  gLabels.appendChild(el);
+  return el;
+});
+
+let view = { x: 0, y: 0, k: 1 };
+function applyView() {
+  scene.setAttribute("transform", `translate(${view.x} ${view.y}) scale(${view.k})`);
+  labelEls.forEach(el => el.setAttribute("font-size", (11 / view.k).toFixed(2)));
+}
+function fitVisible() {
+  // Fit what is actually connected in the current view. Orphans are parked in a
+  // grid off to the side; letting them size the viewport shrinks the part of the
+  // graph that has something to say.
+  const live = new Set();
+  EDGES.forEach(e => {
+    if (hiddenTypes.has(NODES[e.s].t) || hiddenTypes.has(NODES[e.t].t)) return;
+    live.add(e.s); live.add(e.t);
+  });
+  const connected = NODES.filter((n, i) => live.has(i));
+  const shown = NODES.filter(n => !hiddenTypes.has(n.t));
+  fit(connected.length > 3 ? connected : shown);
+}
+function fit(subset) {
+  const use = (subset && subset.length ? subset : NODES);
+  const r = canvas.getBoundingClientRect();
+  // Fit the mass, not the stragglers: a handful of disconnected nodes sit far
+  // outside it, and a raw bounding box shrinks everything worth reading.
+  const band = (vals) => {
+    const s = vals.slice().sort((a, b) => a - b);
+    const at = (q) => s[Math.min(s.length - 1, Math.max(0, Math.round((s.length - 1) * q)))];
+    return [at(0.02), at(0.98)];
+  };
+  const [x0, x1] = band(use.map(n => n.x));
+  const [y0, y1] = band(use.map(n => n.y));
+  const pad = 46;
+  view.k = Math.min((r.width - pad * 2) / (x1 - x0 || 1), (r.height - pad * 2) / (y1 - y0 || 1));
+  view.k = Math.min(view.k, 6);
+  view.x = (r.width - (x1 - x0) * view.k) / 2 - x0 * view.k;
+  view.y = (r.height - (y1 - y0) * view.k) / 2 - y0 * view.k;
+  applyView();
+}
+
+canvas.addEventListener("wheel", (ev) => {
+  ev.preventDefault();
+  const r = canvas.getBoundingClientRect();
+  const px = ev.clientX - r.left, py = ev.clientY - r.top;
+  const factor = Math.exp(-ev.deltaY * 0.0015);
+  const k = Math.min(14, Math.max(0.05, view.k * factor));
+  view.x = px - (px - view.x) * (k / view.k);
+  view.y = py - (py - view.y) * (k / view.k);
+  view.k = k;
+  applyView();
+}, { passive: false });
+
+let drag = null;
+canvas.addEventListener("pointerdown", (ev) => {
+  drag = { x: ev.clientX - view.x, y: ev.clientY - view.y };
+  canvas.classList.add("dragging");
+  canvas.setPointerCapture(ev.pointerId);
+});
+canvas.addEventListener("pointermove", (ev) => {
+  if (!drag) return;
+  view.x = ev.clientX - drag.x;
+  view.y = ev.clientY - drag.y;
+  applyView();
+});
+canvas.addEventListener("pointerup", () => { drag = null; canvas.classList.remove("dragging"); });
+
+const hiddenTypes = new Set();
+function refreshVisibility() {
+  NODES.forEach((n, i) => nodeEls[i].classList.toggle("hidden", hiddenTypes.has(n.t)));
+  EDGES.forEach((e, i) => {
+    const off = hiddenTypes.has(NODES[e.s].t) || hiddenTypes.has(NODES[e.t].t);
+    edgeEls[i].classList.toggle("hidden", off);
+  });
+  labelled.forEach((n, j) => labelEls[j].classList.toggle("hidden", hiddenTypes.has(NODES[n].t)));
+  const shownNodes = NODES.filter(n => !hiddenTypes.has(n.t)).length;
+  const shownEdges = EDGES.filter(e => !hiddenTypes.has(NODES[e.s].t) && !hiddenTypes.has(NODES[e.t].t)).length;
+  document.getElementById("counts").textContent =
+    `${shownNodes} of ${META.nodes} nodes · ${shownEdges} of ${META.edges} edges`;
+}
+
+const legend = document.getElementById("legend");
+META.worlds.forEach(w => {
+  const label = document.createElement("span");
+  label.className = "world";
+  label.textContent = w.label;
+  legend.appendChild(label);
+  META.types.filter(t => t.w === w.id).sort((a, b) => b.c - a.c).forEach(t => {
+    const chip = document.createElement("button");
+    chip.className = "chip";
+    chip.setAttribute("aria-pressed", "true");
+    chip.innerHTML = `<svg width="14" height="14" viewBox="-8 -8 16 16"><path d="${SHAPES[t.s](5)}" fill="var(--${t.w})"/></svg><b>${t.t}</b> <span class="n">${t.c}</span>`;
+    chip.onclick = () => {
+      const on = chip.getAttribute("aria-pressed") === "true";
+      chip.setAttribute("aria-pressed", String(!on));
+      if (on) hiddenTypes.add(t.t); else hiddenTypes.delete(t.t);
+      refreshVisibility();
+    };
+    chip.dataset.type = t.t;
+    legend.appendChild(chip);
+  });
+});
+
+function setTypes(visible) {
+  hiddenTypes.clear();
+  META.types.forEach(t => { if (!visible.includes(t.t)) hiddenTypes.add(t.t); });
+  document.querySelectorAll(".chip").forEach(c =>
+    c.setAttribute("aria-pressed", String(!hiddenTypes.has(c.dataset.type))));
+  refreshVisibility();
+}
+const allTypes = META.types.map(t => t.t);
+const PRESETS = {
+  all: allTypes,
+  core: ["project", "concept", "decision", "person", "source", "briefing"],
+  work: ["pr", "repo", "project", "person"],
+};
+function applyPreset(name) {
+  if (!PRESETS[name]) return false;
+  setTypes(PRESETS[name]);
+  location.hash = name === "all" ? "" : name;
+  fitVisible();
+  return true;
+}
+document.getElementById("preset-all").onclick = () => applyPreset("all");
+document.getElementById("preset-core").onclick = () => applyPreset("core");
+document.getElementById("preset-work").onclick = () => applyPreset("work");
+document.getElementById("reset").onclick = () => { clearFocus(); fitVisible(); };
+document.getElementById("theme").onclick = () => {
+  const dark = document.documentElement.getAttribute("data-theme") === "dark";
+  document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
+};
+
+function clearFocus() {
+  gNodes.classList.remove("dim");
+  gEdges.classList.remove("dim");
+  nodeEls.forEach(el => el.classList.remove("lit"));
+  edgeEls.forEach(el => el.classList.remove("lit"));
+  panel.innerHTML = '<span class="kind">nothing selected</span><p>Click a node to see what reaches it and what it reaches.</p>';
+}
+
+function focus(i) {
+  nodeEls.forEach(el => el.classList.remove("lit"));
+  edgeEls.forEach(el => el.classList.remove("lit"));
+  gNodes.classList.add("dim");
+  gEdges.classList.add("dim");
+  const n = NODES[i];
+  nodeEls[i].classList.add("lit");
+  nodeEls[i].classList.remove("dim");
+  const rows = [];
+  neighbours[i].forEach(ei => {
+    const e = EDGES[ei];
+    edgeEls[ei].classList.add("lit");
+    const other = e.s === i ? e.t : e.s;
+    nodeEls[other].classList.add("lit");
+    rows.push(e.s === i
+      ? `<li><b>${e.r}</b> → ${NODES[e.t].id}</li>`
+      : `<li>${NODES[e.s].id} <b>${e.r}</b> →</li>`);
+  });
+  const link = n.p ? `<p><a href="../../${n.p}">${n.p}</a></p>` : "";
+  panel.innerHTML =
+    `<span class="kind">${n.t} · degree ${n.d}</span><h2>${n.id}</h2>` +
+    (n.n && n.n !== n.id ? `<p>${n.n}</p>` : "") +
+    (n.s ? `<p>${n.s}</p>` : "") + link +
+    `<ul>${rows.slice(0, 60).join("")}</ul>` +
+    (rows.length > 60 ? `<p>… ${rows.length - 60} more</p>` : "");
+}
+
+gNodes.addEventListener("click", (ev) => {
+  const i = ev.target.dataset && ev.target.dataset.i;
+  if (i === undefined) return;
+  focus(Number(i));
+});
+canvas.addEventListener("click", (ev) => { if (ev.target === canvas) clearFocus(); });
+
+gNodes.addEventListener("mousemove", (ev) => {
+  const i = ev.target.dataset && ev.target.dataset.i;
+  if (i === undefined) { tip.style.opacity = 0; return; }
+  const n = NODES[Number(i)];
+  tip.innerHTML = `<b>${n.id}</b><span>${n.t} · ${n.d} edges${n.s ? " · " + n.s : ""}</span>`;
+  const r = canvas.getBoundingClientRect();
+  tip.style.left = Math.min(ev.clientX - r.left + 12, r.width - 330) + "px";
+  tip.style.top = (ev.clientY - r.top + 12) + "px";
+  tip.style.opacity = 1;
+});
+gNodes.addEventListener("mouseleave", () => { tip.style.opacity = 0; });
+
+const search = document.getElementById("search");
+search.addEventListener("input", () => {
+  const q = search.value.trim().toLowerCase();
+  if (!q) { clearFocus(); return; }
+  const hit = NODES.findIndex(n => n.id.toLowerCase().includes(q));
+  if (hit >= 0) {
+    focus(hit);
+    const r = canvas.getBoundingClientRect();
+    view.k = Math.max(view.k, 1.6);
+    view.x = r.width / 2 - NODES[hit].x * view.k;
+    view.y = r.height / 2 - NODES[hit].y * view.k;
+    applyView();
+  }
+});
+
+refreshVisibility();
+if (!applyPreset(location.hash.slice(1))) fitVisible();
+window.addEventListener("resize", () => fitVisible());
+</script>
+</body>
+</html>

@@ -1,0 +1,234 @@
+{
+ "data": {
+  "open": {
+   "nodes": [
+    {
+     "number": 7276,
+     "title": "fix: THU-3461 stop an unmatched anchor",
+     "url": "https://github.com/join-com/data/pull/7276",
+     "state": "OPEN",
+     "isDraft": false,
+     "updatedAt": "2026-09-16T09:13:21Z",
+     "mergedAt": null,
+     "reviewDecision": null,
+     "headRefName": "feat-branch",
+     "baseRefName": "master",
+     "repository": {
+      "nameWithOwner": "join-com/data"
+     },
+     "author": {
+      "login": "enekos"
+     },
+     "mergedBy": null,
+     "latestReviews": {
+      "nodes": []
+     },
+     "commits": {
+      "nodes": [
+       {
+        "commit": {
+         "statusCheckRollup": {
+          "state": "SUCCESS",
+          "contexts": {
+           "nodes": [
+            {
+             "__typename": "StatusContext",
+             "context": "ci/circleci: test",
+             "state": "SUCCESS"
+            }
+           ]
+          }
+         }
+        }
+       }
+      ]
+     }
+    },
+    {
+     "number": 7280,
+     "title": "feat: THU-3468 unify the M5.3 prompts",
+     "url": "https://github.com/join-com/data/pull/7280",
+     "state": "OPEN",
+     "isDraft": false,
+     "updatedAt": "2026-09-16T09:13:21Z",
+     "mergedAt": null,
+     "reviewDecision": null,
+     "headRefName": "feat-m53-prompts",
+     "baseRefName": "master",
+     "repository": {
+      "nameWithOwner": "join-com/data"
+     },
+     "author": {
+      "login": "enekos"
+     },
+     "mergedBy": null,
+     "latestReviews": {
+      "nodes": []
+     },
+     "commits": {
+      "nodes": [
+       {
+        "commit": {
+         "statusCheckRollup": {
+          "state": "FAILURE",
+          "contexts": {
+           "nodes": [
+            {
+             "__typename": "CheckRun",
+             "name": "execute / lint-pr-title",
+             "conclusion": "FAILURE"
+            },
+            {
+             "__typename": "CheckRun",
+             "name": "execute / lint-pr-title",
+             "conclusion": "SUCCESS"
+            },
+            {
+             "__typename": "StatusContext",
+             "context": "ci/circleci: test",
+             "state": "SUCCESS"
+            }
+           ]
+          }
+         }
+        }
+       }
+      ]
+     }
+    },
+    {
+     "number": 13352,
+     "title": "fix: THU-3459 archive redirect",
+     "url": "https://github.com/join-com/frontend/pull/13352",
+     "state": "OPEN",
+     "isDraft": false,
+     "updatedAt": "2026-09-16T09:13:21Z",
+     "mergedAt": null,
+     "reviewDecision": null,
+     "headRefName": "feat-branch",
+     "baseRefName": "master",
+     "repository": {
+      "nameWithOwner": "join-com/frontend"
+     },
+     "author": {
+      "login": "enekos"
+     },
+     "mergedBy": null,
+     "latestReviews": {
+      "nodes": []
+     },
+     "commits": {
+      "nodes": [
+       {
+        "commit": {
+         "statusCheckRollup": {
+          "state": "SUCCESS",
+          "contexts": {
+           "nodes": [
+            {
+             "__typename": "StatusContext",
+             "context": "ci/circleci: test",
+             "state": "SUCCESS"
+            }
+           ]
+          }
+         }
+        }
+       }
+      ]
+     }
+    },
+    {
+     "number": 7262,
+     "title": "fix: THU-3331 review the job title",
+     "url": "https://github.com/join-com/data/pull/7262",
+     "state": "OPEN",
+     "isDraft": false,
+     "updatedAt": "2026-09-16T09:13:21Z",
+     "mergedAt": null,
+     "reviewDecision": null,
+     "headRefName": "feat-branch",
+     "baseRefName": "master",
+     "repository": {
+      "nameWithOwner": "join-com/data"
+     },
+     "author": {
+      "login": "enekos"
+     },
+     "mergedBy": null,
+     "latestReviews": {
+      "nodes": []
+     },
+     "commits": {
+      "nodes": [
+       {
+        "commit": {
+         "statusCheckRollup": {
+          "state": "SUCCESS",
+          "contexts": {
+           "nodes": [
+            {
+             "__typename": "StatusContext",
+             "context": "ci/circleci: test",
+             "state": "SUCCESS"
+            }
+           ]
+          }
+         }
+        }
+       }
+      ]
+     }
+    },
+    {
+     "number": 7100,
+     "title": "chore: an abandoned branch",
+     "url": "https://github.com/join-com/data/pull/7100",
+     "state": "OPEN",
+     "isDraft": false,
+     "updatedAt": "2026-09-16T09:13:21Z",
+     "mergedAt": null,
+     "reviewDecision": null,
+     "headRefName": "feat-branch",
+     "baseRefName": "master",
+     "repository": {
+      "nameWithOwner": "join-com/data"
+     },
+     "author": {
+      "login": "enekos"
+     },
+     "mergedBy": null,
+     "latestReviews": {
+      "nodes": []
+     },
+     "commits": {
+      "nodes": [
+       {
+        "commit": {
+         "statusCheckRollup": {
+          "state": "SUCCESS",
+          "contexts": {
+           "nodes": [
+            {
+             "__typename": "StatusContext",
+             "context": "ci/circleci: test",
+             "state": "SUCCESS"
+            }
+           ]
+          }
+         }
+        }
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "merged": {
+   "nodes": []
+  },
+  "review": {
+   "nodes": []
+  }
+ }
+}

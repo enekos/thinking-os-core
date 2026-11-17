@@ -1,0 +1,9 @@
+# Generated output: `git diff` prints one line per file instead of thousands.
+# Review the inputs (page frontmatter, sources) — not these.
+# `git diff --text <file>` still shows the full diff when you want it.
+index.md                -diff linguist-generated
+graph/views/**          -diff linguist-generated
+
+# Not listed on purpose: graph/wiki-*.tsv (small, moves only with a page) and the
+# append-only ledgers graph/events/ and inbox/events/ — nothing regenerates
+# them, so their diff is the only review they get.

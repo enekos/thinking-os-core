@@ -1,0 +1,245 @@
+# thinking-os ontology — stage 3 of the graph-engineering pipeline.
+#
+# This file is the schema. Nothing enters graph/edges.tsv that does not validate
+# against it. Extraction (stage 4-6) is constrained by these types; fusion
+# (stage 8) rejects edges whose endpoints have incompatible types.
+#
+# Rules this file obeys, from the discipline:
+#   - Every relation gets a precise verb. RELATED_TO is not a relation.
+#   - Domain and range are declared, so a wrong edge is a build error.
+#   - Types the wiki owns have a markdown body. Types owned by GitHub or git
+#     are external: they have an id and edges, never a page.
+
+version: 2
+updated: 2026-11-17
+
+# ---------------------------------------------------------------------------
+# NODE TYPES
+# ---------------------------------------------------------------------------
+# owner: wiki     — the node's body is a markdown page here; id = path slug
+# owner: github   — projected from the gh CLI
+# owner: local    — projected from the filesystem / git
+
+nodes:
+
+  project:
+    owner: wiki
+    dir: projects
+    id: page slug (my-app, my-app-api)
+    attrs: [title, summary, status, updated, path]
+    status: [active, blocked, dormant, done, unknown]
+    identity: >
+      One project = one thing being built. If two pages describe the same repo
+      they are the same node and must be merged (stage 8), not cross-linked.
+
+  concept:
+    owner: wiki
+    dir: concepts
+    id: page slug
+    attrs: [title, summary, updated]
+    identity: A cross-cutting idea that applies to more than one project.
+
+  decision:
+    owner: wiki
+    dir: decisions
+    id: page slug, dated suffix (arola-selfhosted-forge-2026-09-15)
+    attrs: [title, summary, status, updated]
+    status: [proposed, accepted, rejected, superseded, implemented]
+    identity: >
+      One decision = one choice with a rationale, at one point in time.
+      Revising a choice mints a NEW decision node that SUPERSEDES the old one.
+      Decision nodes are never edited to reverse themselves.
+
+  person:
+    owner: wiki
+    dir: people
+    id: firstname-lastname slug
+    attrs: [title, role, org]
+    identity: >
+      Git and GitHub handles are aliases on the person node, not separate
+      nodes. See fusion.aliases below.
+
+  source:
+    owner: wiki
+    dir: sources
+    id: YYYY-MM-DD-slug
+    attrs: [title, kind, date]
+    identity: >
+      Immutable. A source node is raw ingested material and is never rewritten,
+      only superseded by a later snapshot. This is the provenance floor of the
+      whole graph.
+
+  briefing:
+    owner: wiki
+    dir: briefings
+    id: YYYY-MM-DD
+    attrs: [date]
+    identity: One /today output. Append-only history, never compacted.
+
+  repo:
+    owner: local
+    id: "gh:<owner>/<name>  |  local:<abs path>"
+    attrs: [remote, default_branch]
+
+  service:
+    owner: local
+    id: "svc:<hostname>"
+    attrs: [host, runtime]
+    identity: A deployed, reachable runtime surface. app.example.com is one.
+
+  pr:
+    owner: github
+    id: "gh:<owner>/<repo>#<number>"
+    attrs: [title, state, draft, checks, updated, url]
+    state: [open, merged, closed]
+
+# ---------------------------------------------------------------------------
+# RELATION TYPES
+# ---------------------------------------------------------------------------
+# domain -> range is enforced. An edge with a type-incompatible endpoint is
+# rejected at fusion and reported in graph/views/health.md. Rejecting on
+# domain/range is the single validation step that removes most bad structure.
+
+relations:
+
+  # --- wiki structure ---
+  PART_OF:
+    domain: [project]
+    range: [project]
+    card: many-to-one
+    doc: Sub-project of a parent. my-app-api PART_OF my-app.
+
+  DEPENDS_ON:
+    domain: [project, pr]
+    range: [project, pr]
+    card: many-to-many
+    doc: >
+      project->project: build or runtime dependency (my-app DEPENDS_ON my-lib).
+      pr->pr: a stacked PR that cannot land before its base. Both are the same
+      relation because both mean "this cannot work until that lands".
+
+  DECIDES:
+    domain: [decision]
+    range: [project, concept]
+    card: many-to-many
+    doc: This decision settles a question for that project. Direction matters.
+
+  AFFECTS:
+    domain: [decision]
+    range: [project, concept]
+    card: many-to-many
+    doc: >
+      The decision constrains this project without being about it. Weaker than
+      DECIDES on purpose: arola's forge decision DECIDES arola and AFFECTS odei,
+      lantegi and odei-ci. Collapsing the two would make every decision look
+      like it settled five projects.
+
+  SUPERSEDES:
+    domain: [decision, source]
+    range: [decision, source]
+    card: many-to-one
+    doc: Replaces an earlier decision or an earlier snapshot of a source.
+
+  APPLIES_TO:
+    domain: [concept]
+    range: [project, decision]
+    card: many-to-many
+
+  EVIDENCED_BY:
+    domain: [decision, project, concept]
+    range: [source]
+    card: many-to-many
+    doc: >
+      The provenance edge. A decision with no EVIDENCED_BY is an opinion.
+      Not enforced as an error, but counted in the health view.
+
+  INVOLVES:
+    domain: [project, decision, source]
+    range: [person]
+    card: many-to-many
+
+  # --- code and runtime ---
+  LIVES_IN:
+    domain: [project]
+    range: [repo]
+    card: many-to-many
+    doc: A project can span repos (a monorepo plus its deploy repo).
+
+  DEPLOYS_TO:
+    domain: [project]
+    range: [service]
+    card: many-to-many
+
+  OPENED_IN:
+    domain: [pr]
+    range: [repo]
+    card: many-to-one
+
+  AUTHORED_BY:
+    domain: [pr]
+    range: [person]
+    card: many-to-one
+
+  REVIEWS:
+    domain: [person]
+    range: [pr]
+    card: many-to-many
+
+  # --- the legacy relation, on its way out ---
+  MENTIONS:
+    domain: ["*"]
+    range: ["*"]
+    card: many-to-many
+    deprecated: true
+    doc: >
+      An untyped `links:` entry from before the ontology existed. Carried at
+      confidence 0.5 so nothing is lost, counted in health.md as retyping
+      debt, and never created by new writes. `/graph retype <page>` drains it.
+      A graph made only of MENTIONS is a word cloud with arrows.
+
+# ---------------------------------------------------------------------------
+# PROVENANCE
+# ---------------------------------------------------------------------------
+# Every edge carries prov + conf + evidence. Non-negotiable: fusion and trust
+# both depend on it.
+
+provenance:
+  page:
+    conf: 1.0
+    doc: "Declared in a page's `edges:` frontmatter. Curator intent."
+  github:
+    conf: 1.0
+    doc: "Projected from the gh CLI. Authoritative for PRs."
+  git:
+    conf: 0.9
+    doc: "Read from a local repo — remote, branch, last commit date."
+  legacy:
+    conf: 0.5
+    doc: "An untyped `links:` entry. MENTIONS only."
+
+# ---------------------------------------------------------------------------
+# FUSION (stage 8)
+# ---------------------------------------------------------------------------
+
+fusion:
+  # Same real-world thing, different surface forms. Left side is canonical.
+  aliases:
+    {}
+  # On conflict between two edges with the same (src, rel, dst):
+  #   keep the higher conf; on a tie keep the more recent `since`;
+  #   record the loser's prov in the evidence field. Merges stay reversible
+  #   because wiki-edges.tsv is in git.
+  conflict_policy: higher-conf-then-newer
+
+# ---------------------------------------------------------------------------
+# QUALITY GATE (stage 7)
+# ---------------------------------------------------------------------------
+# Thresholds the health view checks. Failing one is a finding, not a crash.
+
+gate:
+  max_mentions_ratio: 0.35      # MENTIONS / all edges. Retyping debt ceiling.
+  max_orphan_nodes: 0           # a node with no inbound edge is unreachable
+  max_dangling_edges: 0         # an edge to a node that does not exist
+  stale_project_days: 45        # active project, no git activity -> flag dormant
+  require_next_up: true         # an active project with no Next up is not active
+  require_evidence_on: [decision]

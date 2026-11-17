@@ -1,0 +1,28 @@
+[package]
+name = "thinking-os-tools"
+version = "0.3.0"
+edition = "2024"
+description = "The thinking-os graph pipeline (sare), GitHub event watcher (zaindu) and graph viewer (ikusi)"
+
+[lib]
+name = "os"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+regex = "1"
+sutegi = { git = "https://github.com/enekos/sutegi", tag = "v0.11.0", default-features = false, features = ["graceful"] }
+
+[[bin]]
+name = "zaindu"
+path = "src/bin/zaindu.rs"
+
+[[bin]]
+name = "sare"
+path = "src/bin/sare.rs"
+
+[[bin]]
+name = "ikusi"
+path = "src/bin/ikusi.rs"

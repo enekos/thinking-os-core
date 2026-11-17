@@ -1,0 +1,248 @@
+{
+ "data": {
+  "open": {
+   "nodes": [
+    {
+     "number": 7280,
+     "title": "feat: THU-3468 unify the M5.3 prompts",
+     "url": "https://github.com/join-com/data/pull/7280",
+     "state": "OPEN",
+     "isDraft": false,
+     "updatedAt": "2026-09-16T09:13:21Z",
+     "mergedAt": null,
+     "reviewDecision": null,
+     "headRefName": "feat-m53-prompts",
+     "baseRefName": "master",
+     "repository": {
+      "nameWithOwner": "join-com/data"
+     },
+     "author": {
+      "login": "enekos"
+     },
+     "mergedBy": null,
+     "latestReviews": {
+      "nodes": []
+     },
+     "commits": {
+      "nodes": [
+       {
+        "commit": {
+         "statusCheckRollup": {
+          "state": "SUCCESS",
+          "contexts": {
+           "nodes": [
+            {
+             "__typename": "StatusContext",
+             "context": "ci/circleci: test",
+             "state": "SUCCESS"
+            }
+           ]
+          }
+         }
+        }
+       }
+      ]
+     }
+    },
+    {
+     "number": 13352,
+     "title": "fix: THU-3459 archive redirect",
+     "url": "https://github.com/join-com/frontend/pull/13352",
+     "state": "OPEN",
+     "isDraft": false,
+     "updatedAt": "2026-09-16T09:13:21Z",
+     "mergedAt": null,
+     "reviewDecision": null,
+     "headRefName": "feat-branch",
+     "baseRefName": "master",
+     "repository": {
+      "nameWithOwner": "join-com/frontend"
+     },
+     "author": {
+      "login": "enekos"
+     },
+     "mergedBy": null,
+     "latestReviews": {
+      "nodes": [
+       {
+        "author": {
+         "login": "cursor"
+        },
+        "state": "COMMENTED"
+       },
+       {
+        "author": {
+         "login": "mohammed-ali-1"
+        },
+        "state": "APPROVED"
+       }
+      ]
+     },
+     "commits": {
+      "nodes": [
+       {
+        "commit": {
+         "statusCheckRollup": {
+          "state": "SUCCESS",
+          "contexts": {
+           "nodes": [
+            {
+             "__typename": "StatusContext",
+             "context": "ci/circleci: test",
+             "state": "SUCCESS"
+            }
+           ]
+          }
+         }
+        }
+       }
+      ]
+     }
+    },
+    {
+     "number": 7262,
+     "title": "fix: THU-3331 review the job title",
+     "url": "https://github.com/join-com/data/pull/7262",
+     "state": "OPEN",
+     "isDraft": false,
+     "updatedAt": "2026-09-16T09:13:21Z",
+     "mergedAt": null,
+     "reviewDecision": null,
+     "headRefName": "feat-branch",
+     "baseRefName": "master",
+     "repository": {
+      "nameWithOwner": "join-com/data"
+     },
+     "author": {
+      "login": "enekos"
+     },
+     "mergedBy": null,
+     "latestReviews": {
+      "nodes": [
+       {
+        "author": {
+         "login": "mohammed-ali-1"
+        },
+        "state": "CHANGES_REQUESTED"
+       }
+      ]
+     },
+     "commits": {
+      "nodes": [
+       {
+        "commit": {
+         "statusCheckRollup": {
+          "state": "SUCCESS",
+          "contexts": {
+           "nodes": [
+            {
+             "__typename": "StatusContext",
+             "context": "ci/circleci: test",
+             "state": "SUCCESS"
+            }
+           ]
+          }
+         }
+        }
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "merged": {
+   "nodes": [
+    {
+     "number": 7276,
+     "title": "fix: THU-3461 stop an unmatched anchor",
+     "url": "https://github.com/join-com/data/pull/7276",
+     "state": "MERGED",
+     "isDraft": false,
+     "updatedAt": "2026-09-16T09:13:21Z",
+     "mergedAt": "2026-09-16T09:30:00Z",
+     "reviewDecision": null,
+     "headRefName": "feat-branch",
+     "baseRefName": "master",
+     "repository": {
+      "nameWithOwner": "join-com/data"
+     },
+     "author": {
+      "login": "enekos"
+     },
+     "mergedBy": {
+      "login": "mergequeue"
+     },
+     "latestReviews": {
+      "nodes": []
+     },
+     "commits": {
+      "nodes": [
+       {
+        "commit": {
+         "statusCheckRollup": {
+          "state": "SUCCESS",
+          "contexts": {
+           "nodes": [
+            {
+             "__typename": "StatusContext",
+             "context": "ci/circleci: test",
+             "state": "SUCCESS"
+            }
+           ]
+          }
+         }
+        }
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "review": {
+   "nodes": [
+    {
+     "number": 17,
+     "title": "feat(live): extended thinking",
+     "url": "https://github.com/the-yolo-company/bai/pull/17",
+     "state": "OPEN",
+     "isDraft": false,
+     "updatedAt": "2026-09-16T09:13:21Z",
+     "mergedAt": null,
+     "reviewDecision": null,
+     "headRefName": "feat-branch",
+     "baseRefName": "master",
+     "repository": {
+      "nameWithOwner": "the-yolo-company/bai"
+     },
+     "author": {
+      "login": "colleague"
+     },
+     "mergedBy": null,
+     "latestReviews": {
+      "nodes": []
+     },
+     "commits": {
+      "nodes": [
+       {
+        "commit": {
+         "statusCheckRollup": {
+          "state": "SUCCESS",
+          "contexts": {
+           "nodes": [
+            {
+             "__typename": "StatusContext",
+             "context": "ci/circleci: test",
+             "state": "SUCCESS"
+            }
+           ]
+          }
+         }
+        }
+       }
+      ]
+     }
+    }
+   ]
+  }
+ }
+}

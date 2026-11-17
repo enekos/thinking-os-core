@@ -1,0 +1,10 @@
+# Rendered by install.sh into ~/.config/systemd/user/ — @WIKI@ is the wiki root.
+[Unit]
+Description=thinking-os: poll GitHub for PR state changes (zaindu)
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=THINKING_OS_ROOT=@WIKI@
+ExecStart=@WIKI@/scripts/zaindu-poll.sh
+Nice=10

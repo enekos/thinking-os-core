@@ -1,0 +1,24 @@
+# graph: per-source extraction output and the full fused graph. Most of
+# nodes.tsv/edges.tsv mirrors GitHub, which keeps its own history, and it churns
+# on every build. `sare build` regenerates both; the wiki's own claims are
+# tracked in graph/wiki-{nodes,edges}.tsv.
+graph/raw/
+graph/nodes.tsv
+graph/edges.tsv
+
+# the static visualisation — rewritten on every `sare viz`. Rebuild, don't diff.
+graph/views/graph.html
+graph/views/graph.dot
+
+# zaindu + autocommit runtime state (graph/events/ IS tracked — the event
+# history is the point, and a TSV diff is how you review what fired)
+scripts/*.log
+scripts/.gh-watch-state.json
+scripts/.autocommit-stamp
+
+# agent work products: evidence, dumps, eval runs. File the conclusion into a
+# page instead.
+output/
+reports/
+
+.DS_Store
