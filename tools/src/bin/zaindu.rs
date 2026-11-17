@@ -4,7 +4,7 @@ use os::watch::events::{Event, Window};
 use os::watch::gh;
 use os::watch::graph;
 use os::watch::model;
-use os::watch::model::{Lifecycle, Snapshot};
+use os::watch::model::{Lifecycle, Snapshot, WINDOW};
 use os::watch::proposals;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -133,9 +133,11 @@ fn poll(args: &Args) -> Result<i32, String> {
     let curr = Snapshot {
         taken_at: clock::stamp(),
         login: login.clone(),
+        window: WINDOW,
         prs: prs.iter().map(|p| (p.id.clone(), p.clone())).collect(),
     };
-    let seeding = prev.prs.is_empty() || args.on("seed");
+    let widened = !prev.prs.is_empty() && prev.window < WINDOW;
+    let seeding = prev.prs.is_empty() || widened || args.on("seed");
     let window = Window {
         ts: curr.taken_at.clone(),
         merged_from: clock::days_ago(since_days),
@@ -189,7 +191,8 @@ fn poll(args: &Args) -> Result<i32, String> {
     let mine = curr.prs.values().filter(|p| p.mine).count();
     let reviewing = curr.prs.values().filter(|p| p.review_requested_of_me).count();
     if seeding {
-        println!("zaindu · seeded {} PRs ({mine} mine, {reviewing} to review) — no events on a first run", curr.prs.len());
+        let why = if widened { "the watched window grew; no events on this run" } else { "no events on a first run" };
+        println!("zaindu · seeded {} PRs ({mine} mine, {reviewing} to review) — {why}", curr.prs.len());
     } else {
         println!(
             "zaindu · {} PRs watched ({mine} mine, {reviewing} to review) · {} events",

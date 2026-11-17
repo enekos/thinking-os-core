@@ -27,6 +27,7 @@ pub fn pr(nwo: &str, number: u64, title: &str) -> Pr {
 
 pub fn snapshot(prs: &[Pr]) -> Snapshot {
     Snapshot {
+        window: crate::watch::model::WINDOW,
         taken_at: "2026-09-16T10:00:00Z".into(),
         login: "enekos".into(),
         prs: prs.iter().map(|p| (p.id.clone(), p.clone())).collect(),
