@@ -297,6 +297,13 @@ pub fn app(live: Live) -> App {
                 .with_header("content-type", "application/json; charset=utf-8")
                 .with_body(c.state::<Live>().current().scene().as_bytes().to_vec())
         })
+        .get("/api/status", "My latest open PRs and Linear issues, from the poller's snapshot.", |c: &Ctx| {
+            let live = c.state::<Live>();
+            match crate::ikusi::status::load(&live.paths.root) {
+                Some(snap) => ok(&crate::ikusi::status::board(&snap, number(c, "limit", 12, 100).max(1))),
+                None => fail(404, "zaindu has not polled yet — run `zaindu poll`"),
+            }
+        })
         .post("/api/open", "Open a node's file locally (editor, Finder).", |c: &Ctx| {
             let snap = c.state::<Live>().current();
             let Some(id) = param(c, "id") else {

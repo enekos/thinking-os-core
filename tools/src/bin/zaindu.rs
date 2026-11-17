@@ -94,7 +94,7 @@ fn resolve_root(explicit: Option<&str>) -> PathBuf {
 fn state_path(root: &Path, explicit: Option<&str>) -> PathBuf {
     explicit
         .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("scripts/.gh-watch-state.json"))
+        .unwrap_or_else(|| root.join(os::watch::model::STATE_FILE))
 }
 
 fn load_state(path: &Path) -> Snapshot {
