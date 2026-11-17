@@ -67,6 +67,18 @@ sources:
 4. **Decisions are immutable.** A revision is a new decision that `SUPERSEDES`.
 5. **Sources are immutable.** The provenance floor.
 
+## Library and stack
+
+`concepts/library.md` is the engineering shelf — read the page **before** the task:
+
+- Rust → `concepts/rust-style-guide.md` · TypeScript/Svelte → `concepts/ts-architecture.md`
+- LLM feature, agent harness, benchmark, or agent findings → `concepts/eval-methods.md`
+- **New app or service → `concepts/stack-defaults.md`**: a sutegi server
+  (Rust, std-only, SQLite → Postgres) serving a SvelteKit SPA built on the
+  osagai kit (`projects/sutegi.md`, `projects/osagai.md`). Kit components and
+  `query()`/`task()` before hand-rolled UI. A gap in sutegi or osagai is fixed
+  upstream, not patched in the app; any deviation gets a decision page.
+
 ## Operations — each is a skill
 
 `/graph` (build, query, health, retype) · `/ingest` · `/today` · `/lint` ·

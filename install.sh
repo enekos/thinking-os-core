@@ -6,8 +6,9 @@
 # 1. checks git, gh (authenticated) and cargo
 # 2. cargo-installs sare, zaindu, ikusi into ~/.local/bin
 # 3. creates the wiki from template/ if DIR has none (git init, os.yaml, first
-#    commit); on an existing wiki refreshes scripts/ only and reports — never
-#    applies — template changes to CLAUDE.md and graph/ontology.yaml
+#    commit); on an existing wiki refreshes scripts/, adds library pages it is
+#    missing, and reports — never applies — template changes to CLAUDE.md and
+#    graph/ontology.yaml
 # 4. symlinks each skills/<name> into the skills dir
 # 5. installs + enables the 5-minute zaindu timer (systemd user / launchd)
 # 6. seeds zaindu, builds the graph, prints a summary
@@ -26,7 +27,7 @@ while [ $# -gt 0 ]; do
     --wiki) WIKI="$2"; shift 2 ;;
     --skills-dir) SKILLS="$2"; shift 2 ;;
     --no-timer) TIMER=0; shift ;;
-    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "install.sh: unknown flag $1" >&2; exit 2 ;;
   esac
 done
@@ -70,6 +71,16 @@ if [ -f "$WIKI/graph/ontology.yaml" ]; then
   cp "$CORE/template/scripts/"*.sh "$WIKI/scripts/"
   chmod +x "$WIKI/scripts/"*.sh
   note "scripts/ refreshed from the core"
+  added=0
+  for page in "$CORE"/template/{concepts,sources}/*.md "$CORE"/template/projects/{sutegi,osagai}.md \
+              "$CORE"/template/decisions/2026-11-17-default-stack-sutegi-osagai.md; do
+    rel="${page#"$CORE/template/"}"
+    [ -e "$WIKI/$rel" ] && continue
+    mkdir -p "$(dirname "$WIKI/$rel")"
+    cp "$page" "$WIKI/$rel"
+    added=$((added + 1))
+  done
+  [ "$added" = 0 ] || note "library: $added missing page(s) added — commit them: git -C $WIKI add concepts sources projects"
   for f in CLAUDE.md graph/ontology.yaml .gitignore .gitattributes; do
     if [ -f "$WIKI/$f" ] && ! cmp -s "$CORE/template/$f" "$WIKI/$f"; then
       note "differs from template: $f — review with: diff $CORE/template/$f $WIKI/$f"

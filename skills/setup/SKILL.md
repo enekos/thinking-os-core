@@ -98,6 +98,23 @@ lists the example pages, `ikusi status` answers.
 
 Report one table: piece → ok / fixed / failed, with the failing output.
 
+## 5. Optional — the default stack's repos
+
+The wiki ships an engineering library (`concepts/library.md`) whose
+`concepts/stack-defaults.md` points new apps at **sutegi** (Rust web framework) and
+**osagai** (Svelte UI kit). Both are consumed from crates.io / npm, so cloning
+is only needed to contribute or read their docs locally. Offer it; don't do it
+unasked:
+
+```bash
+gh repo clone enekos/sutegi ~/src/sutegi
+gh repo clone enekos/osagai ~/src/osagai
+```
+
+Then set `path:` in `projects/sutegi.md` and `projects/osagai.md` and run
+`sare build` — health stops listing them as "no reachable repo" and their PRs
+join `work.md`.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
@@ -121,7 +138,9 @@ Logs: `<wiki>/scripts/zaindu-poll.log`,
 git -C "$CORE" pull --ff-only && "$CORE/install.sh" [same flags]
 ```
 
-Rebuilds the binaries and re-links skills. The wiki's pages are never touched;
+Rebuilds the binaries and re-links skills. Library pages the wiki is missing
+(new in the core's `template/concepts`, `sources`, `projects/{sutegi,osagai}`)
+are added; existing pages are never touched;
 template changes to `CLAUDE.md` or `ontology.yaml` are reported, not applied —
 diff `"$CORE/template/<file>"` against the wiki's copy and merge by hand.
 

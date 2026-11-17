@@ -15,7 +15,8 @@ tools/       one Rust crate, three binaries
                sare    pipeline: extract (pages, git, github) · fuse · serve · retype · viz
                zaindu  GitHub watcher: PR transitions → ledger + inbox proposals
                ikusi   graph viewer on 127.0.0.1:4747
-template/    the wiki skeleton: CLAUDE.md, ontology, example pages, scripts/
+template/    the wiki skeleton: CLAUDE.md, ontology, example pages, scripts/,
+               and the engineering library (below)
 skills/      Claude Code skills: setup, graph, today, ingest, lint, synthesis, fan
 deploy/      systemd user units (Linux), launchd plist (macOS) for the 5-min poll
 install.sh   build, create/upgrade the wiki, link skills, enable the timer
@@ -41,6 +42,24 @@ git -C ~/src/thinking-os-core pull --ff-only && ~/src/thinking-os-core/install.s
 
 Then, from the wiki directory in Claude Code: `/today`, `/ingest <url>`,
 `/graph`, `ikusi`.
+
+## The engineering library
+
+Every wiki starts with a curated shelf in `template/concepts/`, hub
+`library.md`. Each page cites an immutable copy of its source in `template/sources/`.
+
+| Shelf | Pages |
+|---|---|
+| Stack | `stack-defaults` — sutegi + SvelteKit + osagai, when to deviate · `projects/sutegi`, `projects/osagai` |
+| Language practice | `rust-style-guide` · `ts-architecture` · `rust-on-workers` · `go-httptrace` |
+| Measuring | `eval-methods` · `autoresearch` |
+| Working with agents | `augmented-coding-patterns` · `graph-engineering` · `llm-wiki` |
+| Choosing work | `inventing-work` |
+| Systems design | `query-system-design` |
+
+The template `CLAUDE.md` points every session at the right page: Rust edits →
+the style guide, new apps → stack defaults. On upgrade, `install.sh` adds any
+library page the wiki is missing and never overwrites one you already have.
 
 ## Tests
 
