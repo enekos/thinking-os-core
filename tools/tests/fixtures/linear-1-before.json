@@ -1,0 +1,180 @@
+{
+ "data": {
+  "open": {
+   "nodes": [
+    {
+     "number": 41,
+     "title": "fix: stop the importer looping on an empty page",
+     "url": "https://github.com/acme/app/pull/41",
+     "state": "OPEN",
+     "isDraft": false,
+     "updatedAt": "2026-09-16T09:13:21Z",
+     "mergedAt": null,
+     "reviewDecision": null,
+     "headRefName": "app-12-importer-loop",
+     "baseRefName": "main",
+     "repository": {
+      "nameWithOwner": "acme/app"
+     },
+     "author": {
+      "login": "enekos"
+     },
+     "mergedBy": null,
+     "latestReviews": {
+      "nodes": []
+     },
+     "commits": {
+      "nodes": [
+       {
+        "commit": {
+         "statusCheckRollup": null
+        }
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "merged": {
+   "nodes": []
+  },
+  "review": {
+   "nodes": []
+  },
+  "linear": {
+   "nodes": [
+    {
+     "identifier": "APP-12",
+     "title": "Importer loops on an empty page",
+     "priority": 2,
+     "updatedAt": "2026-09-16T09:13:21.000Z",
+     "url": "https://linear.app/acme/issue/APP-12",
+     "state": {
+      "name": "In Progress",
+      "type": "started"
+     },
+     "project": {
+      "id": "0b0c0d0e-1111-2222-3333-76ed37275476",
+      "name": "Importer",
+      "state": "started",
+      "health": "onTrack",
+      "url": "https://linear.app/acme/project/importer-76ed37275476"
+     },
+     "cycle": null,
+     "assignee": {
+      "displayName": "enekos",
+      "name": "Eneko"
+     },
+     "parent": null,
+     "attachments": {
+      "nodes": [
+       {
+        "url": "https://github.com/acme/app/pull/41",
+        "sourceType": "github"
+       }
+      ]
+     },
+     "relations": {
+      "nodes": [
+       {
+        "type": "blocks",
+        "relatedIssue": {
+         "identifier": "APP-13",
+         "title": "Backfill the skipped pages"
+        }
+       }
+      ]
+     },
+     "inverseRelations": {
+      "nodes": []
+     },
+     "comments": {
+      "nodes": []
+     }
+    },
+    {
+     "identifier": "APP-13",
+     "title": "Backfill the skipped pages",
+     "priority": 3,
+     "updatedAt": "2026-09-16T09:13:21.000Z",
+     "url": "https://linear.app/acme/issue/APP-13",
+     "state": {
+      "name": "Todo",
+      "type": "unstarted"
+     },
+     "project": {
+      "id": "0b0c0d0e-1111-2222-3333-76ed37275476",
+      "name": "Importer",
+      "state": "started",
+      "health": "onTrack",
+      "url": "https://linear.app/acme/project/importer-76ed37275476"
+     },
+     "cycle": null,
+     "assignee": {
+      "displayName": "enekos",
+      "name": "Eneko"
+     },
+     "parent": null,
+     "attachments": {
+      "nodes": []
+     },
+     "relations": {
+      "nodes": []
+     },
+     "inverseRelations": {
+      "nodes": [
+       {
+        "type": "blocks",
+        "issue": {
+         "identifier": "APP-12",
+         "state": {
+          "type": "started"
+         }
+        }
+       }
+      ]
+     },
+     "comments": {
+      "nodes": []
+     }
+    },
+    {
+     "identifier": "APP-14",
+     "title": "Importer metrics dashboard",
+     "priority": 4,
+     "updatedAt": "2026-09-16T09:13:21.000Z",
+     "url": "https://linear.app/acme/issue/APP-14",
+     "state": {
+      "name": "Backlog",
+      "type": "backlog"
+     },
+     "project": {
+      "id": "0b0c0d0e-1111-2222-3333-76ed37275476",
+      "name": "Importer",
+      "state": "started",
+      "health": "onTrack",
+      "url": "https://linear.app/acme/project/importer-76ed37275476"
+     },
+     "cycle": null,
+     "assignee": {
+      "displayName": "enekos",
+      "name": "Eneko"
+     },
+     "parent": null,
+     "attachments": {
+      "nodes": []
+     },
+     "relations": {
+      "nodes": []
+     },
+     "inverseRelations": {
+      "nodes": []
+     },
+     "comments": {
+      "nodes": []
+     }
+    }
+   ]
+  }
+ }
+}

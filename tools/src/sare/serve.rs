@@ -151,6 +151,7 @@ impl Graph {
         for (kind, label) in [
             ("pr", "GitHub PRs"), ("repo", "Repos"), ("service", "Services"),
             ("commit", "Commits"), ("path", "Changed paths"),
+            ("issue", "Linear issues"), ("milestone", "Linear projects"), ("cycle", "Linear cycles"),
         ] {
             let c = self.by_type(kind).len();
             if c > 0 {
@@ -225,7 +226,71 @@ impl Graph {
             l.push(self.pr_line(id));
         }
         l.push(String::new());
+        self.tickets_section(me, &mut l);
         l.join("\n")
+    }
+
+    /// My open Linear issues, furthest along first, each with the PRs Linear
+    /// attached to it. Absent entirely on a wiki that does not use Linear.
+    fn tickets_section(&self, me: &str, l: &mut Vec<String>) {
+        const ORDER: [&str; 4] = ["started", "unstarted", "backlog", "triage"];
+        let rank = |id: &str| ORDER.iter().position(|s| *s == self.attr(id, "status"));
+        let priority = |id: &str| match self.attr(id, "summary").as_str() {
+            "urgent" => 0,
+            "high" => 1,
+            "medium" => 2,
+            "low" => 3,
+            _ => 4,
+        };
+        let mut mine: Vec<String> = self
+            .edges
+            .iter()
+            .filter(|e| g(e, "rel") == "ASSIGNED_TO" && g(e, "dst") == me && rank(g(e, "src")).is_some())
+            .map(|e| g(e, "src").to_string())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if mine.is_empty() {
+            return;
+        }
+        mine.sort_by_key(|id| (rank(id), self.attr(id, "state"), priority(id), id.clone()));
+        let mut prs_of: HashMap<String, Vec<String>> = HashMap::new();
+        for e in &self.edges {
+            if g(e, "rel") == "IMPLEMENTS" && g(e, "src").starts_with("gh:") {
+                prs_of.entry(g(e, "dst").to_string()).or_default().push(g(e, "src").to_string());
+            }
+        }
+
+        l.push(format!("## Tickets ({})", mine.len()));
+        l.push(String::new());
+        let mut heading = String::new();
+        for id in &mine {
+            let state = self.attr(id, "state");
+            if state != heading {
+                if !heading.is_empty() {
+                    l.push(String::new());
+                }
+                l.push(format!("### {state}"));
+                l.push(String::new());
+                heading = state;
+            }
+            let url = self.attr(id, "url");
+            let head = if url.is_empty() { id.clone() } else { format!("[{id}]({url})") };
+            let prio = match self.attr(id, "summary").as_str() {
+                "" | "none" => String::new(),
+                p => format!(" ({p})"),
+            };
+            l.push(format!("- {head}{prio} — {}", self.attr(id, "title")));
+            let mut prs = prs_of.get(id).cloned().unwrap_or_default();
+            prs.sort();
+            prs.dedup();
+            for pr in prs {
+                let status = self.attr(&pr, "status");
+                let tail = if status.is_empty() { String::new() } else { format!(" ({status})") };
+                l.push(format!("  - {}{tail}", pr.replace("gh:", "")));
+            }
+        }
+        l.push(String::new());
     }
 
     // ------------------------------------------------------------ projects
@@ -239,14 +304,28 @@ impl Graph {
             }
         }
         let stale_days = ont.gate.stale_project_days;
+        // Ticket columns only exist once some page TRACKS a Linear project.
+        let tracks = self.rel_map_many("TRACKS");
+        let mut open_tickets: Counter = Counter::new();
+        for e in &self.edges {
+            let open = matches!(self.attr(g(e, "src"), "status").as_str(), "triage" | "backlog" | "unstarted" | "started");
+            if g(e, "rel") == "SCOPED_TO" && open {
+                open_tickets.add(g(e, "dst"));
+            }
+        }
 
         let mut l: Vec<String> = vec![
             "# projects — status against real git activity".into(), "".into(), GENERATED.into(), "".into(),
             format!("`last commit` is read from the repo on disk, not from the page. When a page says active and the repo has not moved in {stale_days} days, the graph says so here."),
             "".into(),
-            "| project | status | last commit | repo | open PRs |".into(),
-            "|---|---|---|---|---|".into(),
         ];
+        if tracks.is_empty() {
+            l.push("| project | status | last commit | repo | open PRs |".into());
+            l.push("|---|---|---|---|---|".into());
+        } else {
+            l.push("| project | status | last commit | repo | open PRs | tracks | my open tickets |".into());
+            l.push("|---|---|---|---|---|---|---|".into());
+        }
         for n in self.by_type("project") {
             let id = g(n, "id");
             let repos = repo_of.get(id).cloned().unwrap_or_default();
@@ -268,7 +347,21 @@ impl Graph {
                 if names.is_empty() { "—".to_string() } else { names.join(", ") }
             };
             let status = if g(n, "status").is_empty() { "?" } else { g(n, "status") };
-            l.push(format!("| [{id}]({}) | {status} | {age} | {repo_txt} | {prs} |", g(n, "path")));
+            let mut row = format!("| [{id}]({}) | {status} | {age} | {repo_txt} | {prs} |", g(n, "path"));
+            if !tracks.is_empty() {
+                let milestones = tracks.get(id).cloned().unwrap_or_default();
+                let names: Vec<String> = milestones
+                    .iter()
+                    .map(|m| {
+                        let title = self.attr(m, "title");
+                        if title.is_empty() { format!("`{m}`") } else { title }
+                    })
+                    .collect();
+                let tickets: usize = milestones.iter().map(|m| open_tickets.get(m)).sum();
+                let tickets = if tickets == 0 { String::new() } else { tickets.to_string() };
+                row.push_str(&format!(" {} | {tickets} |", names.join(", ")));
+            }
+            l.push(row);
         }
         l.push(String::new());
         l.join("\n")

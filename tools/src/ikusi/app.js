@@ -344,6 +344,8 @@ const RELATION_DOC = {
   APPLIES_TO: "applies to", EVIDENCED_BY: "evidence", INVOLVES: "people",
   LIVES_IN: "code lives in", DEPLOYS_TO: "runs at",
   OPENED_IN: "opened in", AUTHORED_BY: "author", REVIEWS: "reviewer",
+  TRACKS: "tracks in Linear", SCOPED_TO: "in Linear project", PLANNED_IN: "in cycle",
+  ASSIGNED_TO: "assignee", BLOCKS: "blocks", SUBTASK_OF: "subtask of",
   MENTIONS: "untyped legacy link",
 };
 
@@ -445,6 +447,7 @@ function renderPanel(detail) {
 function linkLabel(n) {
   const l = n.link || "";
   if (l.includes("github.com")) return n.type === "pr" ? "Open the PR" : "Open on GitHub";
+  if (l.includes("linear.app")) return "Open in Linear";
   if (n.type === "service") return "Open the site";
   return "Open";
 }

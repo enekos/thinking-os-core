@@ -2,8 +2,8 @@
 
 The engine behind a **thinking-os**: a personal knowledge graph an LLM keeps on
 your behalf. Pages are nodes, frontmatter edges are typed and validated against
-an ontology, git repos, bounded commit/path history and GitHub PRs join the
-graph automatically, and Claude Code skills do the bookkeeping.
+an ontology, git repos, bounded commit/path history, GitHub PRs and (opt-in)
+Linear issues join the graph automatically, and Claude Code skills do the bookkeeping.
 
 This repo is the engine only. Your wiki is a separate git repo, created from
 `template/` on install and never touched by upgrades.
@@ -12,8 +12,8 @@ This repo is the engine only. Your wiki is a separate git repo, created from
 
 ```
 tools/       one Rust crate, three binaries
-               sare    pipeline: extract (pages, git, github) · fuse · serve · retype · viz
-               zaindu  GitHub watcher: PR transitions → ledger + inbox proposals
+               sare    pipeline: extract (pages, git, github, linear) · fuse · serve · retype · viz
+               zaindu  watcher: PR and Linear issue transitions → ledger + inbox proposals
                ikusi   graph viewer on 127.0.0.1:4747
 template/    the wiki skeleton: CLAUDE.md, ontology, coding-memory examples, scripts/,
                and the engineering library (below)
@@ -61,17 +61,40 @@ The template `CLAUDE.md` points every session at the right page: Rust edits →
 the style guide, new apps → stack defaults. On upgrade, `install.sh` adds any
 library page the wiki is missing and never overwrites one you already have.
 
+## Linear (opt-in)
+
+Off by default — without the key nothing ever calls Linear. To turn it on,
+install the [`linear` CLI](https://github.com/schpet/linear-cli), authenticate
+it (`linear auth login`, or `$LINEAR_API_KEY`), and add to the wiki's `os.yaml`:
+
+```yaml
+linear:
+  teams: [APP]     # optional: team keys to recognise in PR titles and branches
+```
+
+`sare build` then projects the issues assigned to you (with their Linear
+project and cycle) into the graph and `work.md` gains a **Tickets** section;
+`zaindu poll` watches the same issues and proposes work when one is assigned,
+finishes, is unblocked, is raised to high/urgent or gets a comment — and a
+merged PR names the ticket it implements and the state Linear still has it in.
+A project page claims a Linear project with `TRACKS lin:project:<id>`; the id is
+in `sare hop <issue>`.
+
+The 5-minute timer runs outside your shell, so it does not see variables your
+shell profile exports. `scripts/zaindu-poll.sh` sources
+`~/.config/thinking-os/env` when that file exists — put `export LINEAR_API_KEY=…`
+there (mode 600) if the CLI is not logged in on its own. The details are in
+`skills/graph/references/linear.md`.
+
 ## Tests
 
 ```bash
 cargo test --manifest-path tools/Cargo.toml
-bash tools/e2e-zaindu.sh      # offline event chain, then a live GitHub leg
+bash tools/e2e-zaindu.sh      # offline event chains (GitHub, Linear), then a live GitHub leg
 ```
 
 ## Left out, compared to the original
 
-- **Linear** — no issue/milestone/cycle nodes, no ticket relations; `work.md` is
-  PR-centric.
 - **The frozen Python oracle** and its byte-identical differential test.
 - **Personal tooling** — go-live watchdogs, notification hooks, machine-specific
   paths. zaindu sends no notifications.

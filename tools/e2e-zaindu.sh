@@ -111,6 +111,48 @@ is "events filters by kind" "$("$BIN" events --root "$ROOT" --kind merged | wc -
 has "proposals prints today's open boxes" "$("$BIN" proposals --root "$ROOT")" "- [ ]"
 has "status reads the snapshot back" "$("$BIN" status --root "$ROOT" --state "$ROOT/state.json")" "join-com/data#7280"
 
+echo
+echo "e2e / offline — Linear as a second source"
+LIN="/tmp/zaindu-e2e-linear"
+seed_root "$LIN"
+printf 'importer\tproject\timporter\n' >> "$LIN/graph/nodes.tsv"
+printf 'importer\tTRACKS\tlin:project:76ed37275476\n' >> "$LIN/graph/edges.tsv"
+
+OUT=$(fixture_poll "$LIN" "$FIX/linear-0-github-only.json")
+is "a wiki without Linear watches no issues" "$(printf '%s' "$OUT" | field issues)" "0"
+
+OUT=$(fixture_poll "$LIN" "$FIX/linear-1-before.json")
+is "turning Linear on seeds the issues" "$(printf '%s' "$OUT" | field issues)" "3"
+is "  without a burst of assignments" "$(printf '%s' "$OUT" | kinds)" ""
+
+OUT=$(fixture_poll "$LIN" "$FIX/linear-2-after.json")
+is "each issue transition fires once, beside the merge" "$(printf '%s' "$OUT" | kinds)" \
+   "issue.assigned issue.commented issue.priority_raised issue.state_changed pr.merged"
+has "the merge names the ticket and the state it is still in" "$OUT" "merged by @mergequeue · APP-12 (Code Review)"
+
+OUT=$(fixture_poll "$LIN" "$FIX/linear-2-after.json")
+is "the same issues again are silent" "$(printf '%s' "$OUT" | kinds)" ""
+
+OUT=$(fixture_poll "$LIN" "$FIX/linear-3-done.json")
+is "finishing a blocker completes one issue and frees the next" "$(printf '%s' "$OUT" | kinds)" \
+   "issue.done issue.unblocked"
+
+OUT=$(fixture_poll "$LIN" "$FIX/linear-0-github-only.json")
+is "a poll that could not read Linear keeps the last issues" "$(printf '%s' "$OUT" | field issues)" "4"
+is "  and invents no events" "$(printf '%s' "$OUT" | kinds)" ""
+
+LIN_INBOX=$(cat "$LIN/inbox/events/$(date +%F).md")
+has "an issue event is filed under the page that tracks its project" "$LIN_INBOX" "assigned APP-15 · [[importer]]"
+has "  and says what the ticket is" "$LIN_INBOX" "new ticket (Todo · high): Importer retries forever on a 429"
+has "a merge asks for its ticket to be checked" "$LIN_INBOX" "check APP-12 (Code Review)"
+has "a comment names who is waiting" "$LIN_INBOX" "@colleague commented"
+is "a plain state move is a timeline line, not a task" \
+   "$(printf '%s\n' "$LIN_INBOX" | grep -c '^- [0-9].* moved APP-12')" "1"
+is "every Linear ledger row has 7 columns" \
+   "$(awk -F'\t' 'NF!=7{n++} END{print n+0}' "$LIN/graph/events/$(date -u +%Y-%m).tsv")" "0"
+is "events filters by an issue kind" "$("$BIN" events --root "$LIN" --kind done | wc -l | tr -d ' ')" "1"
+has "status lists the open issues" "$("$BIN" status --root "$LIN" --state "$LIN/state.json")" "APP-15"
+
 if [ "${ZAINDU_E2E_OFFLINE:-0}" = "1" ]; then
   echo; echo "live leg skipped (ZAINDU_E2E_OFFLINE=1)"
 else

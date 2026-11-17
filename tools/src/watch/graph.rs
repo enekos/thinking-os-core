@@ -49,7 +49,9 @@ pub fn index(root: &Path) -> Index {
         }
     }
     for row in read_tsv(&root.join("graph/edges.tsv")) {
-        if row.get("rel").map(String::as_str) == Some("LIVES_IN") {
+        // A project page claims a repo with LIVES_IN and a Linear project with
+        // TRACKS; an event on either one belongs to that page.
+        if matches!(row.get("rel").map(String::as_str), Some("LIVES_IN" | "TRACKS")) {
             let src = row.get("src").cloned().unwrap_or_default();
             let dst = row.get("dst").cloned().unwrap_or_default();
             if src.is_empty() || dst.is_empty() {
@@ -193,6 +195,13 @@ mod tests {
         let idx = index(&root);
         assert_eq!(idx.projects_for("gh:join-com/data"), ["meta-data-service", "meta-join"]);
         assert!(idx.projects_for("gh:join-com/frontend").is_empty());
+
+        fs::write(
+            root.join("graph/edges.tsv"),
+            "src\trel\tdst\nimporter\tTRACKS\tlin:project:76ed37275476\n",
+        )
+        .unwrap();
+        assert_eq!(index(&root).projects_for("lin:project:76ed37275476"), ["importer"]);
         let _ = fs::remove_dir_all(&root);
     }
 

@@ -85,17 +85,60 @@ impl Pr {
     }
 }
 
+/// A Linear issue assigned to me, as the watcher last saw it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Issue {
+    pub id: String,
+    pub title: String,
+    pub url: String,
+    /// The workflow state's own name ("Code Review"); `state_type` is the
+    /// fixed category Linear files it under ("started").
+    pub state: String,
+    pub state_type: String,
+    pub priority: i64,
+    /// Graph id of the Linear project (`lin:project:…`), or empty.
+    pub project: String,
+    pub project_name: String,
+    pub updated: String,
+    pub blocked_by: Vec<String>,
+    pub comment_at: String,
+    /// Empty when the latest comment is my own or an integration's.
+    pub comment_by: String,
+    pub prs: Vec<String>,
+}
+
+impl Issue {
+    pub fn is_open(&self) -> bool {
+        matches!(self.state_type.as_str(), "triage" | "backlog" | "unstarted" | "started")
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     pub taken_at: String,
     pub login: String,
     pub prs: BTreeMap<String, Pr>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub issues: BTreeMap<String, Issue>,
+    /// When Linear was last read in full. Empty until the first such poll,
+    /// which seeds silently.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub issues_at: String,
 }
 
 impl Snapshot {
     pub fn sorted(&self) -> Vec<&Pr> {
         let mut out: Vec<&Pr> = self.prs.values().collect();
         out.sort_by(|a, b| b.updated.cmp(&a.updated).then(a.id.cmp(&b.id)));
+        out
+    }
+
+    /// Open issues first by priority (urgent on top, unprioritised last), then
+    /// finished ones.
+    pub fn sorted_issues(&self) -> Vec<&Issue> {
+        let rank = |i: &Issue| (!i.is_open(), if i.priority == 0 { 5 } else { i.priority });
+        let mut out: Vec<&Issue> = self.issues.values().collect();
+        out.sort_by(|a, b| rank(a).cmp(&rank(b)).then(b.updated.cmp(&a.updated)).then(a.id.cmp(&b.id)));
         out
     }
 }

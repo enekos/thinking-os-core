@@ -417,6 +417,151 @@ fn first10(s: &str) -> String {
 
 // ---------------------------------------------------------------- github
 
+fn person_id(display: &str, name: &str, ont: &Ontology) -> String {
+    let base = if !display.is_empty() { display } else { name };
+    let lowered = base.trim().to_lowercase();
+    let cleaned = re_of(r"[^a-z0-9]+").replace_all(&lowered, "-").to_string();
+    ont.canon(cleaned.trim_matches('-'))
+}
+
+/// How far back a finished issue stays in the graph.
+const LINEAR_WINDOW_DAYS: i64 = 30;
+
+/// Issues assigned to the owner, with the Linear project (a `milestone` here —
+/// `project` is the wiki's own type) and cycle each sits in. Every issue is
+/// the viewer's, so it is `ASSIGNED_TO` the owner's own node when `me` is known
+/// rather than to a second person minted from a Linear display name.
+pub fn linear_graph(data: &[Value], me: Option<&str>, ont: &Ontology) -> (Vec<Node>, Vec<Edge>) {
+    let mut nodes: Vec<Node> = Vec::new();
+    let mut edges: Vec<Edge> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    // An issue only referenced — a parent, a blocked ticket — may belong to
+    // someone else and never arrive as a row of its own.
+    let mut referenced: Vec<(String, String)> = Vec::new();
+
+    for it in data {
+        let iid = head(it, "identifier");
+        if iid.is_empty() {
+            continue;
+        }
+        let since = first10(&head(it, "updatedAt"));
+        if seen.insert(iid.clone()) {
+            let mut node = Node::new(&iid, "issue");
+            node.title = kg::clean(&head(it, "title"));
+            node.status = kg::clean(it.pointer("/state/type").and_then(Value::as_str).unwrap_or(""));
+            node.state = kg::clean(it.pointer("/state/name").and_then(Value::as_str).unwrap_or(""));
+            let priority = it.get("priority").and_then(Value::as_f64).unwrap_or(0.0) as i64;
+            node.summary = crate::watch::linear::priority_label(priority).to_string();
+            node.updated = since.clone();
+            node.url = head(it, "url");
+            nodes.push(node);
+        }
+
+        if let Some(proj) = it.get("project").filter(|p| !p.is_null()) {
+            let mid = crate::watch::linear::milestone_id(&head(proj, "id"));
+            if seen.insert(mid.clone()) {
+                let mut n = Node::new(&mid, "milestone");
+                n.title = kg::clean(&head(proj, "name"));
+                n.status = kg::clean(&head(proj, "state"));
+                n.summary = kg::clean(&head(proj, "health"));
+                n.updated = since.clone();
+                n.url = head(proj, "url");
+                nodes.push(n);
+            }
+            edges.push(Edge::new(&iid, "SCOPED_TO", &mid, &since, "linear", 1.0, &iid));
+        }
+
+        if let Some(cyc) = it.get("cycle").filter(|c| !c.is_null()) {
+            let team = cyc.pointer("/team/key").and_then(Value::as_str).unwrap_or("?").to_string();
+            let number = cyc.get("number").and_then(Value::as_f64).unwrap_or(0.0) as i64;
+            let cid = format!("lin:cycle:{team}-{number}");
+            if seen.insert(cid.clone()) {
+                let mut n = Node::new(&cid, "cycle");
+                n.title = format!("{team} cycle {number}");
+                n.summary = format!("{}..{}", first10(&head(cyc, "startsAt")), first10(&head(cyc, "endsAt")));
+                n.updated = since.clone();
+                nodes.push(n);
+            }
+            edges.push(Edge::new(&iid, "PLANNED_IN", &cid, &since, "linear", 1.0, &iid));
+        }
+
+        if let Some(asg) = it.get("assignee").filter(|a| !a.is_null()) {
+            let pid = match me {
+                Some(me) => ont.canon(me),
+                None => person_id(&head(asg, "displayName"), &head(asg, "name"), ont),
+            };
+            if !pid.is_empty() {
+                if seen.insert(pid.clone()) {
+                    let mut n = Node::new(&pid, "person");
+                    n.title = if me.is_some() { pid.clone() } else { kg::clean(&head(asg, "name")) };
+                    nodes.push(n);
+                }
+                edges.push(Edge::new(&iid, "ASSIGNED_TO", &pid, &since, "linear", 1.0, &iid));
+            }
+        }
+
+        if let Some(parent) = it.get("parent").filter(|p| !p.is_null()) {
+            let pid = head(parent, "identifier");
+            if !pid.is_empty() {
+                edges.push(Edge::new(&iid, "SUBTASK_OF", &pid, &since, "linear", 1.0, &iid));
+                referenced.push((pid, head(parent, "title")));
+            }
+        }
+
+        if let Some(rels) = it.pointer("/relations/nodes").and_then(Value::as_array) {
+            for rel in rels.iter().filter(|r| head(r, "type") == "blocks") {
+                let Some(other) = rel.get("relatedIssue").filter(|r| !r.is_null()) else {
+                    continue;
+                };
+                let oid = head(other, "identifier");
+                if !oid.is_empty() {
+                    edges.push(Edge::new(&iid, "BLOCKS", &oid, &since, "linear", 1.0, &iid));
+                    referenced.push((oid, head(other, "title")));
+                }
+            }
+        }
+
+        if let Some(atts) = it.pointer("/attachments/nodes").and_then(Value::as_array) {
+            for att in atts {
+                let url = head(att, "url");
+                if let Some(pr) = crate::watch::linear::pr_id_of(&url) {
+                    edges.push(Edge::new(&pr, "IMPLEMENTS", &iid, &since, "linear", 1.0, &url));
+                }
+            }
+        }
+    }
+
+    for (id, title) in referenced {
+        if seen.insert(id.clone()) {
+            let mut n = Node::new(&id, "issue");
+            n.title = kg::clean(&title);
+            nodes.push(n);
+        }
+    }
+    (nodes, edges)
+}
+
+pub fn linear(paths: &Paths, ont: &Ontology) -> Pull {
+    let since = crate::clock::days_ago(LINEAR_WINDOW_DAYS);
+    let pull = match crate::watch::linear::fetch(&since) {
+        Ok(pull) => pull,
+        Err(e) => {
+            return Pull {
+                nodes: Vec::new(),
+                edges: Vec::new(),
+                problems: vec![format!("linear: {e} — is $LINEAR_API_KEY set, or `linear auth login` current?")],
+            };
+        }
+    };
+    let mut problems: Vec<String> = Vec::new();
+    if !pull.complete {
+        problems.push("linear: pagination stopped early".into());
+    }
+    let (nodes, edges) = linear_graph(&pull.nodes, paths.me().as_deref(), ont);
+    let _ = kg::dump_raw(paths, "linear", &nodes, &edges);
+    Pull { nodes, edges, problems }
+}
+
 const PR_FIELDS: &str = "number,title,state,isDraft,url,updatedAt,headRefName,baseRefName,author,reviewRequests,statusCheckRollup";
 
 fn repos_of_interest(known: &[String]) -> Vec<String> {

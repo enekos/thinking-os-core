@@ -18,6 +18,7 @@ updated: 2026-11-17
 # ---------------------------------------------------------------------------
 # owner: wiki     — the node's body is a markdown page here; id = path slug
 # owner: github   — projected from the gh CLI
+# owner: linear   — projected from the linear CLI; only when os.yaml has `linear:`
 # owner: local    — projected from the filesystem / git
 
 nodes:
@@ -141,6 +142,29 @@ nodes:
     attrs: [title, state, draft, checks, updated, url]
     state: [open, merged, closed]
 
+  milestone:
+    owner: linear
+    id: "lin:project:<uuid-tail>"
+    attrs: [title, status, summary, updated, url]
+    identity: >
+      A Linear *project*. Named `milestone` here on purpose: `project` is the
+      wiki's own node type, and one name for both turns every Linear project
+      into an orphan page waiting to be written.
+
+  cycle:
+    owner: linear
+    id: "lin:cycle:<team>-<number>"
+    attrs: [title, summary, updated]
+
+  issue:
+    owner: linear
+    id: "APP-123"
+    attrs: [title, status, state, summary, updated, url]
+    state: [triage, backlog, unstarted, started, completed, canceled]
+    identity: >
+      A Linear issue assigned to the owner. `status` is Linear's fixed state
+      category, `state` the team's own name for it, `summary` the priority.
+
 # ---------------------------------------------------------------------------
 # RELATION TYPES
 # ---------------------------------------------------------------------------
@@ -167,12 +191,13 @@ relations:
       relation because both mean "this cannot work until that lands".
 
   IMPLEMENTS:
-    domain: [commit]
-    range: [task]
+    domain: [commit, pr]
+    range: [task, issue]
     card: many-to-many
     doc: >
       An explicitly declared commit SHA in a task's `commits` list implements
-      that task. No issue-key or commit-message inference.
+      that task, and a pull request Linear itself lists as an attachment of an
+      issue implements that issue. No issue-key or commit-message inference.
 
   ATTEMPTS:
     domain: [attempt]
@@ -275,6 +300,42 @@ relations:
     range: [pr]
     card: many-to-many
 
+  # --- work tracking (Linear) ---
+  TRACKS:
+    domain: [project]
+    range: [milestone]
+    card: many-to-many
+    doc: >
+      A wiki project page TRACKS a Linear project — the one hand-written edge
+      of this group. It is what lets /today walk from "what am I building" to
+      "which tickets are open on it", and what files an issue event under the
+      right page.
+
+  SCOPED_TO:
+    domain: [issue]
+    range: [milestone]
+    card: many-to-one
+
+  PLANNED_IN:
+    domain: [issue]
+    range: [cycle]
+    card: many-to-one
+
+  ASSIGNED_TO:
+    domain: [issue]
+    range: [person]
+    card: many-to-one
+
+  BLOCKS:
+    domain: [issue]
+    range: [issue]
+    card: many-to-many
+
+  SUBTASK_OF:
+    domain: [issue]
+    range: [issue]
+    card: many-to-one
+
   # --- the legacy relation, on its way out ---
   MENTIONS:
     domain: ["*"]
@@ -300,6 +361,9 @@ provenance:
   github:
     conf: 1.0
     doc: "Projected from the gh CLI. Authoritative for PRs."
+  linear:
+    conf: 1.0
+    doc: "Projected from the linear CLI. Authoritative for issues."
   git:
     conf: 0.9
     doc: "Read from a local repo — remote, branch, last commit date."

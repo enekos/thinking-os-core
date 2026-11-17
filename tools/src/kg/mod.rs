@@ -17,6 +17,44 @@ pub struct Paths {
     pub root: PathBuf,
 }
 
+/// The `linear:` key of `os.yaml`. Linear is opt-in: without the key no
+/// extractor or watcher ever calls the `linear` CLI.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LinearConfig {
+    /// Team keys whose ids count as tickets in a PR title or branch, on top of
+    /// the teams the assigned issues already reveal.
+    pub teams: Vec<String>,
+}
+
+/// `linear: true` and `linear: {teams: [APP]}` both enable it; an absent key,
+/// `false` or `null` leave it off.
+pub fn linear_config(root: &Path) -> Option<LinearConfig> {
+    let text = std::fs::read_to_string(root.join("os.yaml")).ok()?;
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
+    let section = doc.get("linear")?;
+    match section {
+        serde_yaml::Value::Null | serde_yaml::Value::Bool(false) => None,
+        serde_yaml::Value::Mapping(_) => {
+            if section.get("enabled").and_then(serde_yaml::Value::as_bool) == Some(false) {
+                return None;
+            }
+            let teams = section
+                .get("teams")
+                .and_then(serde_yaml::Value::as_sequence)
+                .map(|seq| {
+                    seq.iter()
+                        .filter_map(serde_yaml::Value::as_str)
+                        .map(|t| t.trim().to_ascii_uppercase())
+                        .filter(|t| !t.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(LinearConfig { teams })
+        }
+        _ => Some(LinearConfig::default()),
+    }
+}
+
 impl Paths {
     pub fn resolve(explicit: Option<&str>) -> Paths {
         if let Some(p) = explicit {
@@ -81,6 +119,10 @@ impl Paths {
         })?;
         let id = login.trim().to_ascii_lowercase();
         (!id.is_empty()).then_some(id)
+    }
+    /// `Some` when `os.yaml` turns the Linear integration on.
+    pub fn linear(&self) -> Option<LinearConfig> {
+        linear_config(&self.root)
     }
     pub fn rel(&self, path: &Path) -> String {
         path.strip_prefix(&self.root).unwrap_or(path).to_string_lossy().to_string()

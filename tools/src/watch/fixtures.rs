@@ -1,4 +1,4 @@
-use crate::watch::model::{Checks, Lifecycle, Pr, Review, Snapshot};
+use crate::watch::model::{Checks, Issue, Lifecycle, Pr, Review, Snapshot};
 use serde_json::{Value, json};
 
 pub fn pr(nwo: &str, number: u64, title: &str) -> Pr {
@@ -30,7 +30,45 @@ pub fn snapshot(prs: &[Pr]) -> Snapshot {
         taken_at: "2026-09-16T10:00:00Z".into(),
         login: "enekos".into(),
         prs: prs.iter().map(|p| (p.id.clone(), p.clone())).collect(),
+        ..Snapshot::default()
     }
+}
+
+pub fn issue(id: &str, state: &str, state_type: &str) -> Issue {
+    Issue {
+        id: id.to_string(),
+        title: format!("{id} title"),
+        url: format!("https://linear.app/acme/issue/{id}"),
+        state: state.to_string(),
+        state_type: state_type.to_string(),
+        updated: "2026-09-16".into(),
+        ..Issue::default()
+    }
+}
+
+pub fn with_issues(mut snap: Snapshot, issues: &[Issue]) -> Snapshot {
+    snap.issues = issues.iter().map(|i| (i.id.clone(), i.clone())).collect();
+    snap.issues_at = snap.taken_at.clone();
+    snap
+}
+
+pub fn issue_node(id: &str, title: &str, state: &str, state_type: &str) -> Value {
+    json!({
+        "identifier": id,
+        "title": title,
+        "priority": 0,
+        "updatedAt": "2026-09-16T09:13:21.000Z",
+        "url": format!("https://linear.app/acme/issue/{id}"),
+        "state": {"name": state, "type": state_type},
+        "project": Value::Null,
+        "cycle": Value::Null,
+        "assignee": {"displayName": "me", "name": "Me"},
+        "parent": Value::Null,
+        "attachments": {"nodes": []},
+        "relations": {"nodes": []},
+        "inverseRelations": {"nodes": []},
+        "comments": {"nodes": []}
+    })
 }
 
 pub fn node(nwo: &str, number: u64, title: &str, state: &str) -> Value {

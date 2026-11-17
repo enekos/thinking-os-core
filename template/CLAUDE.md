@@ -17,7 +17,7 @@ belongs in a skill reference.
 ## Layout
 
 ```
-CLAUDE.md  README.md  os.yaml (me.github)  log.md (append-only)  index.md (GENERATED)
+CLAUDE.md  README.md  os.yaml (me.github, linear)  log.md (append-only)  index.md (GENERATED)
 graph/      ontology.yaml · services.tsv (hand-kept) · wiki-{nodes,edges}.tsv (GENERATED, tracked)
             nodes.tsv/edges.tsv (GENERATED, gitignored — full graph incl. GitHub)
             events/YYYY-MM.tsv (zaindu ledger) · raw/ (gitignored) · views/ (GENERATED)

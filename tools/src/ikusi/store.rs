@@ -81,11 +81,14 @@ pub fn weight_of(kind: &str) -> i32 {
         "task" => 16,
         "decision" => 14,
         "service" => 12,
+        "milestone" => 10,
         "repo" => 8,
+        "issue" => 6,
         "person" => 4,
         "pr" => 2,
         "test" => 2,
         "attempt" => 1,
+        "cycle" => 1,
         _ => 0,
     }
 }
