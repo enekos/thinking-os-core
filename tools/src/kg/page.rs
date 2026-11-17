@@ -3,8 +3,11 @@ use serde_yaml::{Mapping, Value};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-pub const WIKI_DIRS: [(&str, &str); 6] = [
+pub const WIKI_DIRS: [(&str, &str); 9] = [
     ("projects", "project"),
+    ("tasks", "task"),
+    ("attempts", "attempt"),
+    ("tests", "test"),
     ("concepts", "concept"),
     ("decisions", "decision"),
     ("people", "person"),

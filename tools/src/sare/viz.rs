@@ -7,7 +7,7 @@ pub const WORLDS: [(&str, &str); 2] = [("wiki", "this wiki"), ("code", "code & r
 
 pub fn world_of(kind: &str) -> &'static str {
     match kind {
-        "project" | "concept" | "decision" | "person" | "source" | "briefing" => "wiki",
+        "project" | "task" | "attempt" | "test" | "concept" | "decision" | "person" | "source" | "briefing" => "wiki",
         _ => "code",
     }
 }

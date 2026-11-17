@@ -6,8 +6,9 @@ description: Operate the thinking-os knowledge graph and task graphs. Use when a
 # graph — the thinking-os graph
 
 thinking-os is a knowledge graph whose nodes are markdown pages and whose edges
-are typed, dated and sourced. The wiki owns projects, concepts, decisions,
-people, sources and briefings. GitHub owns PRs and reviews. git owns repos.
+are typed, dated and sourced. The wiki owns projects, tasks, rejected attempts,
+test results, concepts, decisions, people, sources and briefings. GitHub owns
+PRs and reviews. git owns repos and bounded commit/path history.
 
 The wiki root is `$THINKING_OS_ROOT`, else the nearest parent holding
 `graph/ontology.yaml`, else `~/thinking-os`. Paths below are relative to it.
@@ -42,6 +43,8 @@ Then report: node/edge counts, what the gate rejected, and what changed in
 `git diff --stat`. The GitHub pass is most of the time.
 
 `sare build pages` skips the network — use it after editing frontmatter.
+`sare build local` rebuilds pages plus bounded git history without GitHub — use
+it after naming a task commit or recording a test result.
 
 **`/graph q <node>`** — the subgraph around a node, for your own context:
 
@@ -111,10 +114,18 @@ than one agent, and apply it to `/today`'s dispatch step and `/fan`.
 - **The human gate sits on irreversible edges only** — push, deploy, publish, delete.
 - **Caps**: one writer per file, a round limit on every loop, a hard cap on spawned agents (3 for `/today`).
 
+## Code-aware memory
+
+Read [references/code-memory.md](references/code-memory.md) before creating a
+task, rejected attempt, test result, or changing git history extraction. It
+defines the bounded selection rule, exact-commit verification, and why diffs,
+tool calls and transcripts stay out of the graph.
+
 ## Reference files
 
 - [references/task-graphs.md](references/task-graphs.md) — fake edges, the diamond, the stop rule, the human gate, guardrails.
 - [references/pipeline.md](references/pipeline.md) — the 9 stages as implemented: what each extractor reads, how fusion resolves conflicts.
+- [references/code-memory.md](references/code-memory.md) — tasks, attempts, exact-commit tests, and bounded commit/path history.
 - [references/integrations.md](references/integrations.md) — GitHub as a graph: the queries, stacked PRs, failure modes.
 - [references/ikusi.md](references/ikusi.md) — the viewer on `127.0.0.1:4747`, and `sare viz` for a static file.
 - [references/zaindu.md](references/zaindu.md) — the GitHub event watcher: searches, ledger, inbox proposals, the two fields it re-derives.

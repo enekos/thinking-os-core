@@ -10,7 +10,7 @@
 #   - Types the wiki owns have a markdown body. Types owned by GitHub or git
 #     are external: they have an id and edges, never a page.
 
-version: 2
+version: 3
 updated: 2026-11-17
 
 # ---------------------------------------------------------------------------
@@ -26,11 +26,42 @@ nodes:
     owner: wiki
     dir: projects
     id: page slug (my-app, my-app-api)
-    attrs: [title, summary, status, updated, path]
+    attrs: [title, summary, status, updated, path, history]
     status: [active, blocked, dormant, done, unknown]
     identity: >
       One project = one thing being built. If two pages describe the same repo
       they are the same node and must be merged (stage 8), not cross-linked.
+
+  task:
+    owner: wiki
+    dir: tasks
+    id: page slug
+    attrs: [title, summary, status, updated, project, commits]
+    status: [ready, active, blocked, done, cancelled]
+    identity: >
+      One bounded coding objective. `project` places it in a project and
+      `commits` names immutable full or abbreviated commit SHAs that implement it.
+
+  attempt:
+    owner: wiki
+    dir: attempts
+    id: page slug
+    attrs: [title, summary, status, updated, task, rejection]
+    status: [rejected, abandoned]
+    identity: >
+      One concise unsuccessful approach and why it was rejected. Successful
+      work is represented by commits, not attempt pages or chat transcripts.
+
+  test:
+    owner: wiki
+    dir: tests
+    id: page slug
+    attrs: [title, summary, status, ran_at, task, commit, command, exit_code]
+    status: [passed, failed, error]
+    identity: >
+      One recorded execution of one command against one commit. This is a
+      result, not a test-file definition. `passed` plus `exit_code: 0` earns
+      VERIFIES; every recorded execution earns TESTS.
 
   concept:
     owner: wiki
@@ -81,6 +112,23 @@ nodes:
     id: "gh:<owner>/<name>  |  local:<abs path>"
     attrs: [remote, default_branch]
 
+  commit:
+    owner: local
+    id: "commit:<repo-id>@<full-sha>"
+    attrs: [title, summary, updated, url]
+    identity: >
+      One immutable commit at its committer timestamp. Only recent non-merge
+      commits within a project's bounded history and explicitly referenced
+      commits are projected. No diff or commit body is indexed.
+
+  path:
+    owner: local
+    id: "path:<repo-id>:<repo-relative-path>"
+    attrs: [title, summary, updated, path]
+    identity: >
+      A path touched by a selected commit, including a since-deleted path.
+      Only the path name and selected commit timestamps enter the graph.
+
   service:
     owner: local
     id: "svc:<hostname>"
@@ -104,10 +152,10 @@ relations:
 
   # --- wiki structure ---
   PART_OF:
-    domain: [project]
+    domain: [project, task]
     range: [project]
     card: many-to-one
-    doc: Sub-project of a parent. my-app-api PART_OF my-app.
+    doc: A sub-project or coding task belongs to its parent project.
 
   DEPENDS_ON:
     domain: [project, pr]
@@ -117,6 +165,48 @@ relations:
       project->project: build or runtime dependency (my-app DEPENDS_ON my-lib).
       pr->pr: a stacked PR that cannot land before its base. Both are the same
       relation because both mean "this cannot work until that lands".
+
+  IMPLEMENTS:
+    domain: [commit]
+    range: [task]
+    card: many-to-many
+    doc: >
+      An explicitly declared commit SHA in a task's `commits` list implements
+      that task. No issue-key or commit-message inference.
+
+  ATTEMPTS:
+    domain: [attempt]
+    range: [task]
+    card: many-to-one
+    doc: A rejected or abandoned approach belongs to the task it informed.
+
+  CONTAINS:
+    domain: [repo]
+    range: [commit, path]
+    card: many-to-many
+    doc: The repository owns this immutable commit or historical changed path.
+
+  TOUCHES:
+    domain: [commit]
+    range: [path]
+    card: many-to-many
+    doc: The commit changed this path. Only path names are projected, never diffs.
+
+  TESTS:
+    domain: [test]
+    range: [commit, task]
+    card: many-to-many
+    doc: >
+      This command was executed against the target. The test node's status and
+      exit code carry the outcome; TESTS alone makes no correctness claim.
+
+  VERIFIES:
+    domain: [test]
+    range: [commit, task]
+    card: many-to-many
+    doc: >
+      A test recorded as `passed` with `exit_code: 0` verifies the exact commit
+      and its task. Failed, errored, or non-zero executions never get this edge.
 
   DECIDES:
     domain: [decision]

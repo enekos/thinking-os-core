@@ -138,11 +138,14 @@ Logs: `<wiki>/scripts/zaindu-poll.log`,
 git -C "$CORE" pull --ff-only && "$CORE/install.sh" [same flags]
 ```
 
-Rebuilds the binaries and re-links skills. Library pages the wiki is missing
-(new in the core's `template/concepts`, `sources`, `projects/{sutegi,osagai}`)
-are added; existing pages are never touched;
+Rebuilds the binaries and re-links skills. Library pages and coding-memory
+examples the wiki is missing (new in the core's `template/concepts`, `sources`,
+`projects/{sutegi,osagai}`, `tasks`, `attempts`, `tests`) are added; existing
+pages are never touched;
 template changes to `CLAUDE.md` or `ontology.yaml` are reported, not applied —
 diff `"$CORE/template/<file>"` against the wiki's copy and merge by hand.
+Code-aware memory requires ontology v3; merge that reported ontology change
+before using `sare build local` with task, attempt, or test pages.
 
 ## Uninstall
 

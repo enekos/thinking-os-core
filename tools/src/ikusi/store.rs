@@ -78,11 +78,14 @@ pub fn weight_of(kind: &str) -> i32 {
     match kind {
         "project" => 30,
         "concept" => 18,
+        "task" => 16,
         "decision" => 14,
         "service" => 12,
         "repo" => 8,
         "person" => 4,
         "pr" => 2,
+        "test" => 2,
+        "attempt" => 1,
         _ => 0,
     }
 }

@@ -2,8 +2,8 @@
 
 The engine behind a **thinking-os**: a personal knowledge graph an LLM keeps on
 your behalf. Pages are nodes, frontmatter edges are typed and validated against
-an ontology, git repos and GitHub PRs join the graph automatically, and Claude
-Code skills do the bookkeeping.
+an ontology, git repos, bounded commit/path history and GitHub PRs join the
+graph automatically, and Claude Code skills do the bookkeeping.
 
 This repo is the engine only. Your wiki is a separate git repo, created from
 `template/` on install and never touched by upgrades.
@@ -15,7 +15,7 @@ tools/       one Rust crate, three binaries
                sare    pipeline: extract (pages, git, github) · fuse · serve · retype · viz
                zaindu  GitHub watcher: PR transitions → ledger + inbox proposals
                ikusi   graph viewer on 127.0.0.1:4747
-template/    the wiki skeleton: CLAUDE.md, ontology, example pages, scripts/,
+template/    the wiki skeleton: CLAUDE.md, ontology, coding-memory examples, scripts/,
                and the engineering library (below)
 skills/      Claude Code skills: setup, graph, today, ingest, lint, synthesis, fan
 deploy/      systemd user units (Linux), launchd plist (macOS) for the 5-min poll

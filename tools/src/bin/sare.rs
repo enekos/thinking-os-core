@@ -4,7 +4,7 @@ use os::sare::{extract, fuse, retype, serve, viz};
 const USAGE: &str = "\
 sare — the thinking-os graph pipeline
 
-  sare build [pages]              extract + fuse + serve (pages: skip the network)
+  sare build [pages|local]        extract + fuse + serve (local: pages + git, no network)
   sare extract [all|pages|git|github]
   sare fuse [--strict]
   sare serve
@@ -17,6 +17,8 @@ sare — the thinking-os graph pipeline
 fn extract_all(paths: &Paths, ont: &Ontology, which: &str) -> i32 {
     let order: Vec<&str> = if which == "all" {
         vec!["pages", "git", "github"]
+    } else if which == "local" {
+        vec!["pages", "git"]
     } else {
         vec![which]
     };
@@ -127,7 +129,11 @@ fn main() {
     let code = match command.as_str() {
         "build" => {
             let which = positional.first().map(String::as_str).unwrap_or("all");
-            let which = if which == "pages" { "pages" } else { "all" };
+            let which = match which {
+                "pages" => "pages",
+                "local" => "local",
+                _ => "all",
+            };
             let mut code = extract_all(&paths, &ont, which);
             if code == 0 {
                 code = run_fuse(&paths, &ont, false, false);
