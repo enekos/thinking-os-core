@@ -17,7 +17,7 @@ tools/       one Rust crate, three binaries
                ikusi   graph viewer on 127.0.0.1:4747
 template/    the wiki skeleton: CLAUDE.md, ontology, coding-memory examples, scripts/,
                and the engineering library (below)
-skills/      Claude Code skills: setup, graph, today, ingest, lint, quality-gate, synthesis, fan
+skills/      Claude Code skills: setup, graph, today, ingest, lint, quality-gate, security-audit, synthesis, fan
 deploy/      systemd user units (Linux), launchd plist (macOS) for the 5-min poll
 install.sh   build, create/upgrade the wiki, link skills, enable the timer
 ```
