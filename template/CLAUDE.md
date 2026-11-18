@@ -77,6 +77,9 @@ sources:
 - `TESTS` records an execution; only `passed` + `exit_code: 0` earns `VERIFIES`.
   Rejected attempts need a concise `rejection:`.
 - No diffs, commit bodies, tool calls, or transcripts. Run `sare build local`.
+- `exemplar:` on a done task nominates it as code worth copying; sare emits
+  `EXEMPLIFIES` only when it is merged, test-verified and small. Nominate
+  rarely — the rubric is in the graph skill's `references/code-memory.md`.
 
 ## Library and stack
 

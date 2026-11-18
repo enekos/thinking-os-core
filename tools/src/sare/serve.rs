@@ -104,6 +104,7 @@ impl Graph {
             "- [graph/views/work.md](graph/views/work.md) — my open PRs and the reviews waiting on me".into(),
             "- [graph/views/projects.md](graph/views/projects.md) — project board with real git staleness".into(),
             "- [graph/views/health.md](graph/views/health.md) — the quality gate".into(),
+            "- [graph/views/exemplars.md](graph/views/exemplars.md) — merged, verified code worth copying, by concept".into(),
             "- [log.md](log.md) — append-only operation log".into(),
             "".into(),
         ];
@@ -523,6 +524,78 @@ impl Graph {
             l.push(format!("- … {} more", noev.len() - 30));
         }
         l.push(String::new());
+
+        let held = kg::read_tsv(&paths.raw().join("exemplars.tsv"));
+        l.push(format!("## 7 · Exemplars held back ({})", held.len()));
+        l.push(String::new());
+        l.push("A task nominated as an `exemplar:` that has not cleared the gate: done, on the default branch, verified by a passing test at a commit containing it, small enough to read. Most clear once the PR merges and a test runs on main; a held-back nomination is not an error.".into());
+        l.push(String::new());
+        for r in &held {
+            l.push(format!("- `{}` ({}) — {}", g(r, "id"), g(r, "project"), g(r, "reason")));
+        }
+        l.push(String::new());
+        l.join("\n")
+    }
+
+    // ------------------------------------------------------------ exemplars
+
+    pub fn view_exemplars(&self) -> String {
+        let mut l: Vec<String> = vec![
+            "# exemplars — code worth copying".into(), "".into(), GENERATED.into(), "".into(),
+            "Merged, verified tasks that demonstrate a concept from the engineering library. Read the matching entry before writing new code of the same shape. Only `sare` writes an `EXEMPLIFIES` edge, and only once the task clears the gate; nominations still waiting are in `health.md` §7.".into(),
+            "".into(),
+        ];
+        let mut by_concept: Ordered<Vec<String>> = Ordered::new();
+        let mut rows: Vec<&Row> = self.edges.iter().filter(|e| g(e, "rel") == "EXEMPLIFIES").collect();
+        rows.sort_by(|a, b| g(a, "dst").cmp(g(b, "dst")).then(g(b, "since").cmp(g(a, "since"))));
+        for e in rows {
+            by_concept.entry_or(g(e, "dst"), Vec::new()).push(g(e, "src").to_string());
+        }
+        if by_concept.is_empty() {
+            l.push("No exemplars yet. Nominate one with an `exemplar:` block on a finished task.".into());
+            l.push(String::new());
+        }
+        let projects = self.rel_map_one("PART_OF");
+        for (concept, tasks) in by_concept.iter() {
+            let title = self.attr(concept, "title");
+            let label = if title.is_empty() { concept.clone() } else { title };
+            let page = self.attr(concept, "path");
+            let heading = if page.is_empty() { label } else { format!("[{label}]({page})") };
+            l.push(format!("## {heading} ({})", tasks.len()));
+            l.push(String::new());
+            for task in tasks {
+                let path = self.attr(task, "path");
+                let title = self.attr(task, "title");
+                let link = if path.is_empty() { format!("`{task}`") } else { format!("[{title}]({path})") };
+                let project = projects.get(task).map(|p| format!(" ({p})")).unwrap_or_default();
+                l.push(format!("- {link}{project} — {}", self.attr(task, "state")));
+                let mut commits: Vec<String> = self
+                    .inbound(task)
+                    .iter()
+                    .map(|&i| &self.edges[i])
+                    .filter(|e| g(e, "rel") == "IMPLEMENTS")
+                    .map(|e| {
+                        let cid = g(e, "src");
+                        let short = self.attr(cid, "title");
+                        match self.attr(cid, "url") {
+                            url if url.is_empty() => format!("`{short}`"),
+                            url => format!("[`{short}`]({url})"),
+                        }
+                    })
+                    .collect();
+                commits.sort();
+                let verified: BTreeSet<&str> = self
+                    .inbound(task)
+                    .iter()
+                    .map(|&i| &self.edges[i])
+                    .filter(|e| g(e, "rel") == "VERIFIES")
+                    .map(|e| g(e, "src"))
+                    .collect();
+                let verified: Vec<&str> = verified.into_iter().collect();
+                l.push(format!("  - commits {} · verified by `{}`", commits.join(" "), verified.join("`, `")));
+            }
+            l.push(String::new());
+        }
         l.join("\n")
     }
 
@@ -624,6 +697,7 @@ pub fn write_views(paths: &Paths, ont: &Ontology) -> std::io::Result<Vec<(String
         (paths.views().join("work.md"), graph.view_work(paths.me().as_deref())),
         (paths.views().join("projects.md"), graph.view_projects(ont)),
         (paths.views().join("health.md"), graph.view_health(paths, ont)),
+        (paths.views().join("exemplars.md"), graph.view_exemplars()),
     ];
     let mut written = Vec::new();
     for (path, text) in outputs {

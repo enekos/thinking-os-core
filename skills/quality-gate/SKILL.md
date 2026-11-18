@@ -108,6 +108,10 @@ UTC timestamp, status, and exit code. Never edit the underscore example.
   report but do not create a verification page for `HEAD`.
 - If no task or code-aware ontology exists, return the evidence in the report;
   do not invent graph records.
+- If the change clears the exemplar rubric in the graph skill's
+  `references/code-memory.md`, say so in the report and suggest the
+  `exemplar:` block. Do not add it during review: nominate after merge,
+  naming the SHA that landed.
 - After recording valid pages, run `sare build local` and inspect graph errors.
 
 ## 6. Report once, findings first

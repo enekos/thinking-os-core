@@ -117,7 +117,8 @@ than one agent, and apply it to `/today`'s dispatch step and `/fan`.
 ## Code-aware memory
 
 Read [references/code-memory.md](references/code-memory.md) before creating a
-task, rejected attempt, test result, or changing git history extraction. It
+task, rejected attempt, test result, exemplar nomination, or changing git
+history extraction. It
 defines the bounded selection rule, exact-commit verification, and why diffs,
 tool calls and transcripts stay out of the graph.
 
@@ -125,7 +126,7 @@ tool calls and transcripts stay out of the graph.
 
 - [references/task-graphs.md](references/task-graphs.md) — fake edges, the diamond, the stop rule, the human gate, guardrails.
 - [references/pipeline.md](references/pipeline.md) — the 9 stages as implemented: what each extractor reads, how fusion resolves conflicts.
-- [references/code-memory.md](references/code-memory.md) — tasks, attempts, exact-commit tests, and bounded commit/path history.
+- [references/code-memory.md](references/code-memory.md) — tasks, attempts, exact-commit tests, the exemplar gate, and bounded commit/path history.
 - [references/integrations.md](references/integrations.md) — GitHub as a graph: the queries, stacked PRs, failure modes.
 - [references/linear.md](references/linear.md) — Linear, opt-in: the `linear:` key, issue/milestone/cycle nodes, `TRACKS`, the issue events.
 - [references/ikusi.md](references/ikusi.md) — the viewer on `127.0.0.1:4747`, and `sare viz` for a static file.

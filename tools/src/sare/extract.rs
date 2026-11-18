@@ -50,6 +50,13 @@ pub fn pages(paths: &Paths, ont: &Ontology) -> Pull {
             };
         } else if ntype == "attempt" {
             node.state = kg::clean(&fm.text("rejection"));
+        } else if ntype == "task" {
+            if let Some(nominated) = nomination(&fm) {
+                node.state = nominated.why.clone();
+                if nominated.concepts.is_empty() || nominated.why.is_empty() {
+                    problems.push(format!("{rel_path}: exemplar needs at least one concept and a why"));
+                }
+            }
         }
         node.path = rel_path.clone();
         let updated = node.updated.clone();
@@ -69,6 +76,10 @@ pub fn pages(paths: &Paths, ont: &Ontology) -> Pull {
             }
             if ntype == "test" && rel == "VERIFIES" && !passing_test(&fm) {
                 problems.push(format!("{rel_path}: a failed or incomplete test cannot declare VERIFIES"));
+                continue;
+            }
+            if rel == "EXEMPLIFIES" {
+                problems.push(format!("{rel_path}: EXEMPLIFIES is earned through an exemplar: block, never declared"));
                 continue;
             }
             edges.push(Edge::new(&id, rel, &ont.canon(&target), &updated, "page", 1.0, &rel_path));
@@ -141,11 +152,103 @@ const MAX_HISTORY: usize = 200;
 struct CommitRef {
     revision: String,
     wiki_id: String,
+    task: String,
     evidence: String,
     since: String,
     test: bool,
     passing: bool,
 }
+
+/// A task's `exemplar:` block: the concepts its code demonstrates and why a
+/// reader should study it. A nomination, not a claim — the gate decides.
+pub struct Nomination {
+    pub concepts: Vec<String>,
+    pub why: String,
+}
+
+pub fn nomination(fm: &kg::Front) -> Option<Nomination> {
+    let block = fm.get("exemplar")?;
+    let concepts = match block.get("concepts") {
+        Some(serde_yaml::Value::Sequence(items)) => items
+            .iter()
+            .map(|item| kg::slug(&kg::page::scalar(item)))
+            .filter(|concept| !concept.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    };
+    let why = block.get("why").map(kg::page::scalar).map(|why| kg::clean(&why)).unwrap_or_default();
+    Some(Nomination { concepts, why })
+}
+
+/// The branch a commit must be on to count as landed: what `origin/HEAD`
+/// points at, else the first conventional default that exists.
+fn default_branch(abs: &str) -> Option<String> {
+    let symbolic = kg::run(&["git", "-C", abs, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], None, 30);
+    if let Some(name) = symbolic.as_deref().map(str::trim).filter(|name| !name.is_empty()) {
+        return Some(name.to_string());
+    }
+    ["origin/main", "origin/master", "main", "master"]
+        .into_iter()
+        .find(|candidate| {
+            let target = format!("{candidate}^{{commit}}");
+            kg::run(&["git", "-C", abs, "rev-parse", "--verify", "-q", &target], None, 30).is_some()
+        })
+        .map(str::to_string)
+}
+
+fn contains_commit(abs: &str, ancestor: &str, descendant: &str) -> bool {
+    kg::run(&["git", "-C", abs, "merge-base", "--is-ancestor", ancestor, descendant], None, 60).is_some()
+}
+
+fn sha_of(cid: &str) -> &str {
+    cid.rsplit('@').next().unwrap_or("")
+}
+
+/// Where a nominated task stands against the exemplar gate, given what the
+/// git extractor resolved for it in one repository.
+struct Candidate<'a> {
+    abs: &'a str,
+    status: String,
+    nominated: Nomination,
+    declared: usize,
+    commits: Vec<String>,
+    tested_at: Vec<String>,
+    touched: usize,
+}
+
+fn judge(candidate: &Candidate, default_ref: Option<&str>, max_paths: usize) -> Result<(), String> {
+    if candidate.nominated.concepts.is_empty() || candidate.nominated.why.is_empty() {
+        return Err("exemplar needs at least one concept and a why".into());
+    }
+    if candidate.status != "done" {
+        return Err(format!("status is '{}', not done", candidate.status));
+    }
+    if candidate.declared == 0 {
+        return Err("names no commits".into());
+    }
+    if candidate.commits.len() < candidate.declared {
+        return Err("a named commit does not resolve".into());
+    }
+    let Some(default_ref) = default_ref else {
+        return Err("no default branch to check the commits against".into());
+    };
+    if let Some(stray) = candidate.commits.iter().find(|cid| !contains_commit(candidate.abs, sha_of(cid), default_ref)) {
+        let short: String = sha_of(stray).chars().take(12).collect();
+        return Err(format!("commit {short} is not on {default_ref}"));
+    }
+    let verified = candidate.tested_at.iter().any(|tested| {
+        candidate.commits.iter().all(|cid| contains_commit(candidate.abs, sha_of(cid), sha_of(tested)))
+    });
+    if !verified {
+        return Err("no passing test ran at a commit containing all of its commits".into());
+    }
+    if candidate.touched > max_paths {
+        return Err(format!("touches {} paths (gate: {max_paths}) — too large to read as an example", candidate.touched));
+    }
+    Ok(())
+}
+
+pub const EXEMPLAR_COLS: [&str; 3] = ["id", "project", "reason"];
 
 fn passing_test(fm: &kg::Front) -> bool {
     fm.text("status") == "passed"
@@ -242,6 +345,7 @@ pub fn git(paths: &Paths, ont: &Ontology) -> Pull {
     let mut edges = Vec::new();
     let mut problems = Vec::new();
     let mut seen_repos: HashSet<String> = HashSet::new();
+    let mut verdicts: BTreeMap<String, (String, Result<(), String>)> = BTreeMap::new();
     let paren = re_of(r"\s*\(.*\)$");
     let remote_re = re_of(r"[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?$");
     let home = std::env::var("HOME").unwrap_or_default();
@@ -341,6 +445,7 @@ pub fn git(paths: &Paths, ont: &Ontology) -> Pull {
                     references.push(CommitRef {
                         revision,
                         wiki_id: ont.canon(tid),
+                        task: ont.canon(tid),
                         evidence: paths.rel(task_path),
                         since: String::new(),
                         test: false,
@@ -360,12 +465,15 @@ pub fn git(paths: &Paths, ont: &Ontology) -> Pull {
                 references.push(CommitRef {
                     revision: test_fm.text("commit"),
                     wiki_id: ont.canon(test_id),
+                    task: ont.canon(&task),
                     evidence: paths.rel(test_path),
                     since: test_fm.text("ran_at"),
                     test: true,
                     passing: passing_test(&test_fm),
                 });
             }
+            let mut implemented: HashMap<String, Vec<String>> = HashMap::new();
+            let mut tested_at: HashMap<String, Vec<String>> = HashMap::new();
             for reference in references {
                 if reference.revision.is_empty() {
                     continue;
@@ -388,18 +496,86 @@ pub fn git(paths: &Paths, ont: &Ontology) -> Pull {
                         &reference.wiki_id, "TESTS", &cid, since, "page", 1.0, &reference.evidence,
                     ));
                     if reference.passing {
+                        tested_at.entry(reference.task.clone()).or_default().push(cid.clone());
                         edges.push(Edge::new(
                             &reference.wiki_id, "VERIFIES", &cid, since, "page", 1.0, &reference.evidence,
                         ));
                     }
                 } else {
+                    implemented.entry(reference.task.clone()).or_default().push(cid.clone());
                     edges.push(Edge::new(
                         &cid, "IMPLEMENTS", &reference.wiki_id, &committed_at, "page", 1.0, &reference.evidence,
                     ));
                 }
             }
+
+            if !ont.has_relation("EXEMPLIFIES") {
+                continue;
+            }
+            let default_ref = default_branch(&abs);
+            for (tid, kind, task_path) in &wiki {
+                if kind != "task" || task_projects.get(tid).is_none_or(|project| project != nid) {
+                    continue;
+                }
+                let task_fm = kg::frontmatter(task_path);
+                let Some(nominated) = nomination(&task_fm) else {
+                    continue;
+                };
+                let task_id = ont.canon(tid);
+                let commits = implemented.remove(&task_id).unwrap_or_default();
+                let touched: HashSet<&str> = edges
+                    .iter()
+                    .filter(|edge| edge.rel == "TOUCHES" && commits.contains(&edge.src))
+                    .map(|edge| edge.dst.as_str())
+                    .collect();
+                let candidate = Candidate {
+                    abs: &abs,
+                    status: task_fm.text("status"),
+                    declared: task_fm.list("commits").len(),
+                    tested_at: tested_at.remove(&task_id).unwrap_or_default(),
+                    touched: touched.len(),
+                    commits,
+                    nominated,
+                };
+                let verdict = judge(&candidate, default_ref.as_deref(), ont.gate.max_exemplar_paths);
+                if verdict.is_ok() {
+                    let since = candidate
+                        .commits
+                        .iter()
+                        .filter_map(|cid| memory_nodes.get(cid).map(|node| node.updated.clone()))
+                        .max()
+                        .unwrap_or_default();
+                    let evidence = paths.rel(task_path);
+                    for concept in &candidate.nominated.concepts {
+                        edges.push(Edge::new(&task_id, "EXEMPLIFIES", &ont.canon(concept), &since, "page", 1.0, &evidence));
+                    }
+                }
+                let held = verdicts.entry(task_id).or_insert_with(|| (nid.clone(), verdict.clone()));
+                if verdict.is_ok() {
+                    *held = (nid.clone(), verdict);
+                }
+            }
         }
     }
+
+    if ont.has_relation("EXEMPLIFIES") {
+        for (tid, kind, task_path) in &wiki {
+            let task_id = ont.canon(tid);
+            if kind == "task" && !verdicts.contains_key(&task_id) && nomination(&kg::frontmatter(task_path)).is_some() {
+                let project = task_projects.get(tid).cloned().unwrap_or_default();
+                verdicts.insert(task_id, (project, Err("its project has no reachable repository".into())));
+            }
+        }
+    }
+    let mut refusals: Vec<Vec<String>> = Vec::new();
+    for (task_id, (project, verdict)) in &verdicts {
+        if let Err(reason) = verdict {
+            problems.push(format!("{task_id}: exemplar held back — {reason}"));
+            refusals.push(vec![task_id.clone(), project.clone(), reason.clone()]);
+        }
+    }
+    let _ = kg::write_tsv(&paths.raw().join("exemplars.tsv"), &EXEMPLAR_COLS, &refusals);
+
     nodes.extend(memory_nodes.into_values());
     let _ = kg::dump_raw(paths, "git", &nodes, &edges);
     Pull { nodes, edges, problems }

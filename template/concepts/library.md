@@ -10,6 +10,8 @@ updated: 2026-11-17
 The reference shelf every new wiki starts with. Each page is a concept: terse,
 opinionated, `EVIDENCED_BY` an immutable source under `sources/` where one
 exists. **Read the page before the task**, not after the review.
+Then open `graph/views/exemplars.md`: merged, verified code from your own repos
+that shows the page's pattern in practice.
 
 ## Read before you…
 
