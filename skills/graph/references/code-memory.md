@@ -100,6 +100,57 @@ contained uncommitted changes, commit first and rerun, or record a non-verifying
 result instead. Never infer an executed test from a changed test file or a
 GitHub check name.
 
+## Exemplar — code worth copying
+
+Most tasks are bookkeeping. A few are code you would point the next engineer
+(or agent) at: the clearest instance in the wiki of a pattern from the
+engineering library. Those are exemplars, and the graph only holds the ones
+that are earned.
+
+Nominate a finished task with an `exemplar:` block:
+
+```yaml
+exemplar:
+  concepts: [rust-type-driven-design]        # library concept pages it demonstrates
+  why: "validated newtype ids make a cross-tenant write unrepresentable"
+```
+
+The block is a nomination. `sare extract git` writes `task EXEMPLIFIES concept`
+only when every rule holds, and lists the rest in `health.md` §7 with the reason:
+
+1. `status: done`.
+2. `commits` names at least one SHA, and every one resolves.
+3. Every commit is on the default branch (`origin/HEAD`, else `origin/main`,
+   `origin/master`, `main`, `master`). For a squash or rebase merge, name the
+   SHA that landed, not the branch SHA.
+4. A passing test page (`passed`, `exit_code: 0`) for the task ran at a commit
+   that contains all of them — the code that landed is the code that passed.
+5. The commits touch at most `gate.max_exemplar_paths` paths (25). Larger
+   changes are not readable as an example; nominate the smaller follow-up.
+
+`EXEMPLIFIES` in `edges:` is refused: no page can declare itself an example.
+`why` becomes the task node's `state`; `graph/views/exemplars.md` lists the
+shelf by concept with commit links and the verifying test.
+
+### When to nominate
+
+The gate checks facts. Taste is the curator's, so nominate rarely — one
+exemplar per concept per quarter is plenty. Nominate only when all are true:
+
+- **It teaches a pattern.** Name the library concept and the exact move
+  (a typestate, a bounded fan-out, an outbox). "Good code" is not a reason.
+- **It is the clearest instance.** If an existing exemplar for the concept is
+  as good, do not add a second.
+- **A reviewer accepted it.** Merged through review, no follow-up fix needed
+  in the same area since.
+- **It reads alone.** Someone can open the commits and follow them without
+  the PR thread: small, focused, named well, tested at the boundary.
+- **It is not a workaround.** Hot fixes, migrations, generated code, vendored
+  code, dependency bumps and config churn never qualify.
+
+When unsure, do not nominate. A missing exemplar costs nothing; a mediocre one
+teaches every later agent the wrong shape.
+
 ## Build and query
 
 ```bash
@@ -114,8 +165,9 @@ Useful relation slices:
 grep -P '\tIMPLEMENTS\t' graph/edges.tsv
 grep -P '\tTOUCHES\t' graph/edges.tsv
 grep -P '\tVERIFIES\t' graph/edges.tsv
+grep -P '\tEXEMPLIFIES\t' graph/edges.tsv
 ```
 
 `IMPLEMENTS`, `ATTEMPTS`, `TESTS`, and `VERIFIES` are curator declarations with
-provenance `page`. `CONTAINS` and `TOUCHES` come from git with provenance `git`.
+provenance `page`; `EXEMPLIFIES` is a curator nomination that sare confirms. `CONTAINS` and `TOUCHES` come from git with provenance `git`.
 Fusion still validates every endpoint and relation against the ontology.

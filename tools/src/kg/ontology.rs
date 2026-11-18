@@ -38,6 +38,12 @@ pub struct Fusion {
 pub struct Gate {
     pub max_mentions_ratio: f64,
     pub stale_project_days: i64,
+    #[serde(default = "default_exemplar_paths")]
+    pub max_exemplar_paths: usize,
+}
+
+fn default_exemplar_paths() -> usize {
+    25
 }
 
 #[derive(Debug, Clone, Deserialize)]

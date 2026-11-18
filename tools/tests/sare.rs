@@ -239,6 +239,121 @@ fn failed_or_incomplete_tests_cannot_claim_verification() {
 }
 
 #[test]
+fn only_done_merged_verified_readable_code_becomes_an_exemplar() {
+    let paths = scratch("exemplars");
+    let ontology = fs::read_to_string(paths.ontology()).unwrap();
+    assert!(ontology.contains("max_exemplar_paths: 25"));
+    fs::write(paths.ontology(), ontology.replace("max_exemplar_paths: 25", "max_exemplar_paths: 2")).unwrap();
+    let repo = paths.root.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "user.name", "Thinking OS Test"]);
+    git(&repo, &["config", "user.email", "thinking-os@example.invalid"]);
+    let typed = commit_file(&repo, "src/ids.rs", "ids\n", "2026-01-01T10:00:00+00:00");
+    git(&repo, &["checkout", "-q", "-b", "side"]);
+    let unmerged = commit_file(&repo, "src/side.rs", "side\n", "2026-01-02T10:00:00+00:00");
+    git(&repo, &["checkout", "-q", "main"]);
+    commit_file(&repo, "src/a.rs", "a\n", "2026-01-03T10:00:00+00:00");
+    commit_file(&repo, "src/b.rs", "b\n", "2026-01-03T11:00:00+00:00");
+    for name in ["src/a.rs", "src/b.rs", "src/c.rs"] {
+        fs::write(repo.join(name), "wide\n").unwrap();
+    }
+    git(&repo, &["add", "--", "src"]);
+    git(&repo, &["commit", "-q", "-m", "touch three paths"]);
+    let sprawling = git(&repo, &["rev-parse", "HEAD"]);
+    let head = commit_file(&repo, "README.md", "readme\n", "2026-01-04T10:00:00+00:00");
+
+    for dir in ["projects", "tasks", "tests", "concepts"] {
+        fs::create_dir_all(paths.root.join(dir)).unwrap();
+    }
+    fs::write(
+        paths.root.join("projects/app.md"),
+        format!("---\ntitle: app\nstatus: active\npath: {}\nhistory: 0\n---\n", repo.display()),
+    )
+    .unwrap();
+    fs::write(paths.root.join("concepts/typed-ids.md"), "---\ntitle: Typed ids\nsummary: newtype ids\n---\n").unwrap();
+    let task = |slug: &str, status: &str, commit: &str, extra: &str| {
+        fs::write(
+            paths.root.join(format!("tasks/{slug}.md")),
+            format!("---\ntitle: {slug}\nstatus: {status}\nproject: app\ncommits:\n  - {commit}\n{extra}---\n"),
+        )
+        .unwrap();
+    };
+    let nominated = "exemplar:\n  concepts: [typed-ids]\n  why: ids cannot be mixed up\n";
+    task("good", "done", &typed, nominated);
+    task("unmerged", "done", &unmerged, nominated);
+    task("untested", "done", &typed, nominated);
+    task("unfinished", "active", &typed, nominated);
+    task("sprawling", "done", &sprawling, nominated);
+    task("declared", "done", &typed, "edges:\n  - EXEMPLIFIES typed-ids\n");
+    task("homeless", "done", &typed, nominated);
+    fs::write(
+        paths.root.join("tasks/homeless.md"),
+        format!("---\ntitle: homeless\nstatus: done\nproject: nowhere\ncommits:\n  - {typed}\n{nominated}---\n"),
+    )
+    .unwrap();
+    let test_page = |slug: &str, for_task: &str, commit: &str, status: &str, exit: u8| {
+        fs::write(
+            paths.root.join(format!("tests/{slug}.md")),
+            format!("---\ntitle: {slug}\nstatus: {status}\nran_at: 2026-01-05T10:00:00Z\ntask: {for_task}\ncommit: {commit}\ncommand: cargo test\nexit_code: {exit}\n---\n"),
+        )
+        .unwrap();
+    };
+    test_page("good-at-head", "good", &head, "passed", 0);
+    test_page("unmerged-pass", "unmerged", &unmerged, "passed", 0);
+    test_page("untested-fail", "untested", &head, "failed", 1);
+    test_page("unfinished-pass", "unfinished", &head, "passed", 0);
+    test_page("sprawling-pass", "sprawling", &head, "passed", 0);
+
+    let pages = extract::pages(&paths, &ont(&paths));
+    assert!(pages.problems.iter().any(|p| p.contains("EXEMPLIFIES is earned")), "{:?}", pages.problems);
+    assert!(!pages.edges.iter().any(|e| e.rel == "EXEMPLIFIES"), "pages never emit EXEMPLIFIES");
+    assert_eq!(pages.nodes.iter().find(|n| n.id == "good").unwrap().state, "ids cannot be mixed up");
+    let pulled = extract::git(&paths, &ont(&paths));
+    put_raw(&paths, "pages", pages.nodes, pages.edges);
+    put_raw(&paths, "git", pulled.nodes, pulled.edges);
+    let fused = fuse::fuse(&paths, &ont(&paths));
+    let exemplars: Vec<&str> = fused
+        .edges
+        .values()
+        .filter(|e| e.rel == "EXEMPLIFIES")
+        .map(|e| {
+            assert_eq!(e.dst, "typed-ids");
+            assert_eq!(e.since, "2026-01-01T10:00:00Z", "dated by the newest implementing commit");
+            e.src.as_str()
+        })
+        .collect();
+    assert_eq!(exemplars, ["good"]);
+
+    let held: std::collections::HashMap<String, String> = kg::read_tsv(&paths.raw().join("exemplars.tsv"))
+        .iter()
+        .map(|r| (kg::get(r, "id").to_string(), kg::get(r, "reason").to_string()))
+        .collect();
+    assert!(held["unmerged"].contains("is not on main"), "{held:?}");
+    assert!(held["untested"].contains("no passing test"), "{held:?}");
+    assert!(held["unfinished"].contains("not done"), "{held:?}");
+    assert!(held["sprawling"].contains("touches 3 paths"), "{held:?}");
+    assert!(held["homeless"].contains("no reachable repository"), "{held:?}");
+    assert!(!held.contains_key("good") && !held.contains_key("declared"));
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_sare"))
+        .args(["build", "local", "--root"])
+        .arg(&paths.root)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let shelf = fs::read_to_string(paths.views().join("exemplars.md")).unwrap();
+    assert!(shelf.contains("## [Typed ids](concepts/typed-ids.md) (1)"), "{shelf}");
+    assert!(shelf.contains("[good](tasks/good.md) (app) — ids cannot be mixed up"), "{shelf}");
+    assert!(shelf.contains("verified by `good-at-head`"), "{shelf}");
+    assert!(!shelf.contains("unmerged"), "{shelf}");
+    let health = fs::read_to_string(paths.views().join("health.md")).unwrap();
+    assert!(health.contains("## 7 · Exemplars held back (5)"), "{health}");
+    assert!(fs::read_to_string(paths.root.join("index.md")).unwrap().contains("graph/views/exemplars.md"));
+    let _ = fs::remove_dir_all(&paths.root);
+}
+
+#[test]
 fn fusion_rejects_an_edge_whose_endpoints_have_the_wrong_type() {
     let paths = scratch("domain");
     let o = ont(&paths);

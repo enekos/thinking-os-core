@@ -37,11 +37,13 @@ nodes:
     owner: wiki
     dir: tasks
     id: page slug
-    attrs: [title, summary, status, updated, project, commits]
+    attrs: [title, summary, status, updated, project, commits, exemplar]
     status: [ready, active, blocked, done, cancelled]
     identity: >
       One bounded coding objective. `project` places it in a project and
       `commits` names immutable full or abbreviated commit SHAs that implement it.
+      An optional `exemplar:` block nominates the code as a reference example;
+      the nomination only becomes an EXEMPLIFIES edge once it clears the gate.
 
   attempt:
     owner: wiki
@@ -204,6 +206,16 @@ relations:
     range: [task]
     card: many-to-one
     doc: A rejected or abandoned approach belongs to the task it informed.
+
+  EXEMPLIFIES:
+    domain: [task]
+    range: [concept]
+    card: many-to-many
+    doc: >
+      The task's code is a reference example of the concept's pattern. Never
+      declared in `edges:`: sare emits it only when the task is done, every
+      named commit is on the default branch, a passing test ran at a commit
+      that contains them all, and the change touches few enough paths to read.
 
   CONTAINS:
     domain: [repo]
@@ -397,3 +409,4 @@ gate:
   stale_project_days: 45        # active project, no git activity -> flag dormant
   require_next_up: true         # an active project with no Next up is not active
   require_evidence_on: [decision]
+  max_exemplar_paths: 25        # an exemplar larger than this is not readable

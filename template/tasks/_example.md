@@ -6,6 +6,9 @@ status: ready
 updated: YYYY-MM-DD
 project: example-project
 commits: []
+# exemplar:                 # only for a rare, merged, verified reference example
+#   concepts: [verification-patterns]
+#   why: "one line naming the pattern this code demonstrates"
 ---
 
 # Bounded coding objective
