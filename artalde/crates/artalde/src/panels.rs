@@ -1310,7 +1310,6 @@ impl App {
             {
                 push("session.open");
             }
-            drop(push);
             if let Some(w) = &s.worktree
                 && kit::icon_button(
                     ui,
