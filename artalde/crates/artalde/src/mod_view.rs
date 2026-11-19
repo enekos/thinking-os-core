@@ -4,7 +4,8 @@ use artalde_core::theme::Theme;
 use artalde_mods::{Action, Kind, UiNode};
 use eframe::egui::{self, Color32, CornerRadius, RichText, Sense, Stroke, StrokeKind};
 
-use crate::style::{self, RADIUS, tint, token};
+use crate::kit;
+use crate::style::{self, tint, token};
 
 const CARD_WIDTH: f32 = 230.0;
 const WRAP_GAP: f32 = 8.0;
@@ -48,10 +49,17 @@ fn draw(
     let resp = match node.kind {
         Kind::Text => Some(ui.add(egui::Label::new(rich(theme, node, None)).wrap())),
         Kind::Heading => {
-            let mut n = node.clone();
-            n.size = Some(n.size.unwrap_or(17.0));
-            n.bold = true;
-            Some(ui.label(rich(theme, &n, None)))
+            let color = node
+                .color
+                .as_deref()
+                .map_or(style::c(theme.text), |c| token(theme, c));
+            Some(
+                ui.label(
+                    RichText::new(&node.text)
+                        .font(crate::fonts::display(node.size.unwrap_or(17.0)))
+                        .color(color),
+                ),
+            )
         }
         Kind::Markdown => {
             let out = crate::markdown::show(ui, theme, &node.text, node.size.unwrap_or(13.5));
@@ -61,8 +69,11 @@ fn draw(
             None
         }
         Kind::Row => Some(
-            ui.horizontal_wrapped(|ui| children(ui, theme, node, clicked, path))
-                .response,
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+                children(ui, theme, node, clicked, path);
+            })
+            .response,
         ),
         Kind::Col => Some(
             ui.vertical(|ui| children(ui, theme, node, clicked, path))
@@ -124,45 +135,40 @@ fn draw(
                     egui::Frame::new()
                         .fill(fill)
                         .stroke(Stroke::new(width, stroke_color))
-                        .corner_radius(CornerRadius::same(RADIUS))
-                        .inner_margin(egui::Margin::same(10))
+                        .corner_radius(CornerRadius::same(kit::CARD_RADIUS))
+                        .inner_margin(egui::Margin::same(12))
                         .show(ui, |ui| {
                             let w = CARD_WIDTH.min(ui.available_width());
                             ui.set_max_width(w);
                             ui.set_min_width(w);
-                            ui.vertical(|ui| children(ui, theme, node, clicked, path));
+                            ui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 4.0;
+                                children(ui, theme, node, clicked, path);
+                            });
                         });
                 },
             );
-            let resp = scoped.response;
-            if resp.hovered() && node.action.is_some() {
-                ui.painter().rect_stroke(
-                    resp.rect,
-                    CornerRadius::same(RADIUS),
-                    Stroke::new(1.5, style::c(theme.accent)),
-                    StrokeKind::Inside,
-                );
+            let mut resp = scoped.response;
+            if node.action.is_some() {
+                if ui.rect_contains_pointer(resp.rect) {
+                    ui.painter().rect_stroke(
+                        resp.rect,
+                        CornerRadius::same(kit::CARD_RADIUS),
+                        Stroke::new(1.0, tint(stroke_color, style::c(theme.text), 0.35)),
+                        StrokeKind::Inside,
+                    );
+                }
+                resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
             }
             Some(resp)
         }
-        Kind::Button => {
-            let text = rich(theme, node, None);
-            Some(ui.button(text))
-        }
+        Kind::Button => Some(kit::button(ui, theme, &node.text, None)),
         Kind::Badge => {
             let color = node
                 .color
                 .as_deref()
                 .map_or(style::c(theme.dim), |c| token(theme, c));
-            let bg = tint(style::c(theme.surface), color, 0.18);
-            let r = egui::Frame::new()
-                .fill(bg)
-                .corner_radius(CornerRadius::same(10))
-                .inner_margin(egui::Margin::symmetric(8, 2))
-                .show(ui, |ui| {
-                    ui.label(rich(theme, node, Some(color)).size(node.size.unwrap_or(12.0)))
-                });
-            Some(r.response)
+            Some(kit::pill(ui, theme, &node.text, color))
         }
         Kind::Dot => {
             let color = node
@@ -173,7 +179,14 @@ fn draw(
             ui.painter().circle_filled(rect.center(), 4.0, color);
             Some(resp)
         }
-        Kind::Sep => Some(ui.separator()),
+        Kind::Sep => {
+            ui.add_space(kit::S1);
+            let (r, resp) =
+                ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), Sense::hover());
+            ui.painter().rect_filled(r, 0.0, style::c(theme.border));
+            ui.add_space(kit::S1);
+            Some(resp)
+        }
         Kind::Space => {
             ui.add_space(node.value.clamp(0.0, 200.0));
             None

@@ -27,6 +27,9 @@ const INBOX_EVERY_SECS: u64 = 120;
 const DETAIL_EVERY_SECS: u64 = 60;
 const SESSION_TURNS: usize = 60;
 const SIDE_WIDTH: f32 = 380.0;
+/// Tab widths in the top bar: narrowest when crowded, widest when roomy.
+const TAB_MIN_W: f32 = 110.0;
+const TAB_MAX_W: f32 = 240.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Tab {
@@ -317,6 +320,10 @@ impl App {
     }
 
     pub(crate) fn act_now(&mut self, pr: &PrRef, action: Action) {
+        if self.dry_run {
+            self.push_log(format!("dry run: {pr} {}", action.describe()));
+            return;
+        }
         let detail = self.prs.get(pr).and_then(|v| v.detail.clone());
         let what = action.describe();
         match self.gh.send(Req::Act {
@@ -444,6 +451,9 @@ impl App {
         let mut close = None;
         let mut select = None;
         let surface = style::c(theme.background);
+        // Many tabs share the room evenly instead of falling off the end.
+        let room = (rect.max.x - right_reserved - x).max(0.0);
+        let tab_max = (room / self.tabs.len().max(1) as f32).clamp(TAB_MIN_W, TAB_MAX_W);
         for (i, tab) in self.tabs.clone().iter().enumerate() {
             let (_, label) = self.tab_label(tab);
             let on = i == self.active;
@@ -463,8 +473,8 @@ impl App {
                 _ => None,
             };
             let badge_w = badge.as_ref().map_or(0.0, |b| b.len() as f32 * 6.5 + 14.0);
-            let w =
-                (galley.size().x + 40.0 + badge_w + if closable { 18.0 } else { 0.0 }).min(240.0);
+            let w = (galley.size().x + 40.0 + badge_w + if closable && on { 18.0 } else { 0.0 })
+                .min(tab_max);
             if x + w > rect.max.x - right_reserved {
                 break;
             }
@@ -507,16 +517,17 @@ impl App {
                 Tab::Settings => kit::paint_icon(&painter, icon_rect, kit::Icon::Gear, fg),
                 Tab::Repo(_) => kit::paint_icon(&painter, icon_rect, kit::Icon::Editor, fg),
             }
-            let text_end = r.max.x - if closable { 24.0 } else { 10.0 } - badge_w;
+            // Only the active tab keeps room for its close button; a hovered
+            // one shows it over the end of its label.
+            let text_end = r.max.x - if closable && on { 24.0 } else { 10.0 } - badge_w;
             let clip_rect = egui::Rect::from_min_max(
                 egui::pos2(r.min.x + 28.0, r.min.y),
                 egui::pos2(text_end, r.max.y),
             );
-            painter.with_clip_rect(clip_rect).text(
-                egui::pos2(clip_rect.min.x, r.center().y),
-                egui::Align2::LEFT_CENTER,
-                label,
-                font,
+            let text = kit::ellipsized(&painter, &label, font, fg, clip_rect.width());
+            painter.galley(
+                egui::pos2(clip_rect.min.x, r.center().y - text.size().y / 2.0),
+                text,
                 fg,
             );
             if let Some(b) = badge {
@@ -543,6 +554,13 @@ impl App {
                     egui::Id::unique(("tab-close", tab.key())),
                     Sense::click(),
                 );
+                if !on {
+                    painter.rect_filled(
+                        cr.expand2(egui::vec2(4.0, 0.0)),
+                        CornerRadius::same(4),
+                        fill,
+                    );
+                }
                 if cresp.hovered() {
                     painter.rect_filled(
                         cr,
@@ -693,7 +711,12 @@ impl App {
     }
 
     pub(crate) fn md(&mut self, ui: &mut egui::Ui, text: &str, size: f32) {
-        let out = markdown::show(ui, &self.theme, text, size);
+        let out = ui
+            .scope(|ui| {
+                kit::selectable_text(ui);
+                markdown::show(ui, &self.theme, text, size)
+            })
+            .inner;
         for url in out.clicked_links {
             self.open_link(&url);
         }
@@ -706,15 +729,17 @@ impl App {
         let theme = self.theme.clone();
         let now = artalde_core::now();
         ui.horizontal(|ui| {
-            let edit = ui.add(
-                egui::TextEdit::singleline(&mut self.inbox.filter)
-                    .hint_text("filter: repo:data ci:red review:changes @alice -is:bot \"words\"")
-                    .desired_width(ui.available_width() - if compact { 30.0 } else { 120.0 }),
+            let w = ui.available_width() - if compact { 32.0 } else { 120.0 };
+            kit::search(
+                ui,
+                &theme,
+                &mut self.inbox.filter,
+                "repo:data ci:red review:changes @alice -is:bot \"words\"",
+                w,
             );
-            let _ = edit;
             if self.inbox.loading {
                 ui.spinner();
-            } else if ui.small_button("⟳").on_hover_text("Refresh").clicked() {
+            } else if kit::icon_button(ui, &theme, kit::Icon::Refresh, "Refresh").clicked() {
                 self.refresh_inbox();
             }
             if !compact {
@@ -746,10 +771,7 @@ impl App {
                     "size:<100",
                 ] {
                     let on = self.inbox.filter.split_whitespace().any(|t| t == chip);
-                    if ui
-                        .selectable_label(on, RichText::new(chip).small().monospace())
-                        .clicked()
-                    {
+                    if kit::chip(ui, &theme, chip, on).clicked() {
                         let mut parts: Vec<&str> = self
                             .inbox
                             .filter
@@ -783,25 +805,14 @@ impl App {
                 .filter(|r| filter.matches(r, bucket, &login))
                 .collect();
             let collapsed = self.inbox.collapsed.contains(&bucket);
-            let head = ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(if collapsed { "▸" } else { "▾" }).color(style::c(theme.dim)),
-                );
-                ui.label(RichText::new(bucket.label()).font(fonts::semibold(13.0)));
-                ui.label(
-                    RichText::new(format!("{}", shown.len()))
-                        .small()
-                        .color(style::c(theme.dim)),
-                );
-            });
-            if ui
-                .interact(
-                    head.response.rect,
-                    egui::Id::unique(("bucket", bucket.key(), compact)),
-                    Sense::click(),
-                )
-                .clicked()
-            {
+            if kit::fold(
+                ui,
+                &theme,
+                (bucket.key(), compact),
+                bucket.label(),
+                Some(shown.len()),
+                !collapsed,
+            ) {
                 if collapsed {
                     self.inbox.collapsed.retain(|b| *b != bucket);
                 } else {
@@ -1276,101 +1287,125 @@ impl App {
         let busy = view.busy.is_some();
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-            ui.add_enabled_ui(!busy, |ui| {
-                if d.open() {
-                    if d.can_write && !d.draft && !d.merge_methods.is_empty() {
-                        let method = view.method.unwrap_or(MergeMethod::Squash);
-                        let ready = d.mergeable != "CONFLICTING";
-                        let color = if ready {
-                            style::c(theme.done)
-                        } else {
-                            style::c(theme.dim)
-                        };
-                        if kit::primary(ui, &theme, method.label(), color).clicked() {
-                            self.act(
-                                pr,
-                                Action::Merge {
-                                    method,
-                                    delete_branch: view.delete_branch,
-                                },
-                            );
-                        }
-                        let r = kit::button(ui, &theme, "▾", None).on_hover_text("Merge options");
-                        egui::Popup::menu(&r).show(|ui| {
-                            for m in &d.merge_methods {
-                                ui.selectable_value(&mut view.method, Some(*m), m.label());
-                            }
-                            ui.separator();
-                            ui.checkbox(&mut view.delete_branch, "Delete branch after merge");
-                            ui.separator();
-                            if d.auto_merge.is_some() {
-                                if ui.button("Disable auto-merge").clicked() {
-                                    self.act(pr, Action::DisableAutoMerge);
-                                }
-                            } else if ui.button("Auto-merge when ready").clicked() {
+            // A merged PR has no state actions: an empty scope would still
+            // take a gap and push the row right.
+            if d.open() || d.state == "CLOSED" {
+                ui.add_enabled_ui(!busy, |ui| {
+                    if d.open() {
+                        if d.can_write && !d.draft && !d.merge_methods.is_empty() {
+                            let method = view.method.unwrap_or(MergeMethod::Squash);
+                            let ready = d.mergeable != "CONFLICTING";
+                            let color = if ready {
+                                style::c(theme.done)
+                            } else {
+                                style::c(theme.dim)
+                            };
+                            if kit::primary(ui, &theme, method.label(), color).clicked() {
                                 self.act(
                                     pr,
-                                    Action::AutoMerge {
+                                    Action::Merge {
                                         method,
                                         delete_branch: view.delete_branch,
                                     },
                                 );
                             }
-                        });
-                    }
-                    if !d.viewer_is_author {
-                        if kit::button(ui, &theme, "Approve", None).clicked() {
-                            self.act(pr, Action::Approve(view.composer.trim().to_owned()));
+                            let r =
+                                kit::button(ui, &theme, "▾", None).on_hover_text("Merge options");
+                            egui::Popup::menu(&r).show(|ui| {
+                                for m in &d.merge_methods {
+                                    if kit::menu_item(
+                                        ui,
+                                        &theme,
+                                        m.label(),
+                                        view.method == Some(*m),
+                                    ) {
+                                        view.method = Some(*m);
+                                    }
+                                }
+                                ui.separator();
+                                kit::check(
+                                    ui,
+                                    &theme,
+                                    &mut view.delete_branch,
+                                    "Delete branch after merge",
+                                    12.5,
+                                );
+                                ui.separator();
+                                if d.auto_merge.is_some() {
+                                    if ui.button("Disable auto-merge").clicked() {
+                                        self.act(pr, Action::DisableAutoMerge);
+                                    }
+                                } else if ui.button("Auto-merge when ready").clicked() {
+                                    self.act(
+                                        pr,
+                                        Action::AutoMerge {
+                                            method,
+                                            delete_branch: view.delete_branch,
+                                        },
+                                    );
+                                }
+                            });
                         }
-                        if kit::button(ui, &theme, "Request changes", None)
-                            .on_hover_text("Uses the comment box as the review body")
+                        if !d.viewer_is_author {
+                            if kit::button(ui, &theme, "Approve", None).clicked() {
+                                self.act(pr, Action::Approve(view.composer.trim().to_owned()));
+                            }
+                            if kit::button(ui, &theme, "Request changes", None)
+                                .on_hover_text("Uses the comment box as the review body")
+                                .clicked()
+                            {
+                                self.act(
+                                    pr,
+                                    Action::RequestChanges(view.composer.trim().to_owned()),
+                                );
+                            }
+                        }
+                        if d.can_update_branch
+                            && d.merge_state == "BEHIND"
+                            && kit::button(ui, &theme, "Update branch", None).clicked()
+                        {
+                            self.act(pr, Action::UpdateBranch { rebase: false });
+                        }
+                        let failed = d.failed_runs();
+                        if !failed.is_empty()
+                            && kit::button(
+                                ui,
+                                &theme,
+                                &format!("Re-run failed ({})", failed.len()),
+                                None,
+                            )
                             .clicked()
                         {
-                            self.act(pr, Action::RequestChanges(view.composer.trim().to_owned()));
+                            self.act(pr, Action::RerunFailed(failed));
                         }
-                    }
-                    if d.can_update_branch
-                        && d.merge_state == "BEHIND"
-                        && kit::button(ui, &theme, "Update branch", None).clicked()
-                    {
-                        self.act(pr, Action::UpdateBranch { rebase: false });
-                    }
-                    let failed = d.failed_runs();
-                    if !failed.is_empty()
-                        && kit::button(
-                            ui,
-                            &theme,
-                            &format!("Re-run failed ({})", failed.len()),
-                            None,
-                        )
-                        .clicked()
-                    {
-                        self.act(pr, Action::RerunFailed(failed));
-                    }
-                    if d.viewer_is_author || d.can_write {
-                        let r = kit::button(ui, &theme, "More ▾", None);
-                        egui::Popup::menu(&r).show(|ui| {
-                            if d.draft {
-                                if ui.button("Mark ready for review").clicked() {
-                                    self.act(pr, Action::Ready);
+                        if d.viewer_is_author || d.can_write {
+                            let r = kit::button(ui, &theme, "More ▾", None);
+                            egui::Popup::menu(&r).show(|ui| {
+                                if d.draft {
+                                    if ui.button("Mark ready for review").clicked() {
+                                        self.act(pr, Action::Ready);
+                                    }
+                                } else if ui.button("Convert to draft").clicked() {
+                                    self.act(pr, Action::ToDraft);
                                 }
-                            } else if ui.button("Convert to draft").clicked() {
-                                self.act(pr, Action::ToDraft);
-                            }
-                            if d.can_update_branch && ui.button("Update branch (rebase)").clicked()
-                            {
-                                self.act(pr, Action::UpdateBranch { rebase: true });
-                            }
-                            ui.separator();
-                            if ui.button("Close pull request").clicked() {
-                                self.act(pr, Action::Close);
-                            }
-                        });
+                                if d.can_update_branch
+                                    && ui.button("Update branch (rebase)").clicked()
+                                {
+                                    self.act(pr, Action::UpdateBranch { rebase: true });
+                                }
+                                ui.separator();
+                                if ui.button("Close pull request").clicked() {
+                                    self.act(pr, Action::Close);
+                                }
+                            });
+                        }
+                    } else if d.state == "CLOSED"
+                        && kit::button(ui, &theme, "Reopen", None).clicked()
+                    {
+                        self.act(pr, Action::Reopen);
                     }
-                } else if d.state == "CLOSED" && kit::button(ui, &theme, "Reopen", None).clicked() {
-                    self.act(pr, Action::Reopen);
-                }
-            });
+                });
+            }
             if d.open() {
                 let running = self.reviewer.runs.contains_key(pr);
                 let label = if running {
@@ -1449,9 +1484,12 @@ impl App {
                             .font(fonts::semibold(14.0)),
                         );
                         if resolved > 0 {
-                            ui.checkbox(
+                            kit::check(
+                                ui,
+                                &theme,
                                 &mut view.show_resolved,
-                                RichText::new(format!("show {resolved} resolved")).small(),
+                                &format!("show {resolved} resolved"),
+                                11.5,
                             );
                         }
                     });
@@ -1542,7 +1580,7 @@ ui.horizontal(|ui| {
     ui.label(RichText::new("Activity").font(fonts::semibold(14.0)));
     if bots > 0 {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.checkbox(&mut view.hide_bots, RichText::new(format!("hide {bots} bot comments")).size(12.0));
+            kit::check(ui, &theme, &mut view.hide_bots, &format!("hide {bots} bot comments"), 12.0);
         });
     }
 });
@@ -1741,66 +1779,92 @@ TimelineItem::Comment(c) => card(ui, &theme, None, |ui| {
                     );
                 }
                 for (wf, checks) in groups {
-                    ui.label(RichText::new(wf).font(fonts::semibold(14.0)));
+                    kit::section(ui, &theme, &wf, Some(checks.len()), |_| {});
                     for c in checks {
-                        ui.horizontal(|ui| {
-                            let (dot, _) =
-                                ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
-                            ui.painter().circle_filled(
-                                dot.center(),
-                                4.0,
-                                check_color(&theme, &c.verdict),
-                            );
-                            ui.label(&c.name);
-                            ui.label(
-                                RichText::new(c.verdict.to_lowercase())
-                                    .small()
-                                    .color(check_color(&theme, &c.verdict)),
-                            );
-                            if let (Some(a), Some(b)) = (
-                                github::parse_iso(&c.started),
-                                github::parse_iso(&c.completed),
-                            ) {
-                                ui.label(
-                                    RichText::new(ago(b.saturating_sub(a)))
-                                        .small()
-                                        .color(style::c(theme.dim)),
-                                );
-                            }
-                            if let Some(job) = c.job_id {
-                                if c.failed() {
-                                    let open = self.logs.contains_key(&job);
-                                    if ui
-                                        .small_button(if open { "hide log" } else { "log" })
-                                        .clicked()
-                                    {
-                                        if open {
-                                            self.logs.remove(&job);
-                                        } else if self
-                                            .gh
-                                            .send(Req::Log {
-                                                pr: pr.clone(),
-                                                job,
-                                            })
-                                            .is_ok()
-                                        {
-                                            self.logs.insert(job, None);
-                                        }
-                                    }
+                        let color = check_color(&theme, &c.verdict);
+                        let took = match (
+                            github::parse_iso(&c.started),
+                            github::parse_iso(&c.completed),
+                        ) {
+                            (Some(a), Some(b)) => ago(b.saturating_sub(a)),
+                            _ => String::new(),
+                        };
+                        let mut log_toggle = false;
+                        let mut rerun = None;
+                        let open = c.job_id.is_some_and(|j| self.logs.contains_key(&j));
+                        let resp = kit::row(
+                            ui,
+                            &theme,
+                            ("check", &c.workflow, &c.name),
+                            kit::ROW,
+                            false,
+                            &[
+                                Col::Px(16.0),
+                                Col::Flex,
+                                Col::Px(90.0),
+                                Col::Px(48.0),
+                                Col::Px(150.0),
+                            ],
+                            |col, ui| match col {
+                                0 => kit::status_dot(ui, color, 0.0),
+                                1 => {
+                                    kit::text(ui, &c.name, 13.0, style::c(theme.text));
                                 }
-                                if !c.running() && ui.small_button("re-run").clicked() {
-                                    self.act(pr, Action::RerunJob(job));
+                                2 => {
+                                    kit::text(ui, &c.verdict.to_lowercase(), 11.5, color);
                                 }
-                            }
-                            if !c.url.is_empty()
-                                && ui.small_button("↗").on_hover_text(&c.url).clicked()
+                                3 => kit::right(ui, &took, 11.5, style::c(theme.faint)),
+                                _ => {
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.spacing_mut().item_spacing.x = 4.0;
+                                            if let Some(job) = c.job_id {
+                                                if !c.running()
+                                                    && kit::button(ui, &theme, "Re-run", None)
+                                                        .clicked()
+                                                {
+                                                    rerun = Some(job);
+                                                }
+                                                if c.failed()
+                                                    && kit::button(
+                                                        ui,
+                                                        &theme,
+                                                        if open { "Hide log" } else { "Log" },
+                                                        None,
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    log_toggle = true;
+                                                }
+                                            }
+                                        },
+                                    );
+                                }
+                            },
+                        );
+                        let resp = resp.on_hover_text("Open on GitHub");
+                        if let Some(job) = rerun {
+                            self.act(pr, Action::RerunJob(job));
+                        } else if log_toggle && let Some(job) = c.job_id {
+                            if open {
+                                self.logs.remove(&job);
+                            } else if self
+                                .gh
+                                .send(Req::Log {
+                                    pr: pr.clone(),
+                                    job,
+                                })
+                                .is_ok()
                             {
-                                self.queue.push(artalde_core::command::Command::new(
-                                    "url.open",
-                                    Some(&c.url),
-                                ));
+                                self.logs.insert(job, None);
                             }
-                        });
+                        } else if resp.clicked() && !c.url.is_empty() {
+                            self.queue.push(artalde_core::command::Command::new(
+                                "url.open",
+                                Some(&c.url),
+                            ));
+                        }
                         if let Some(entry) = c.job_id.and_then(|j| self.logs.get(&j)) {
                             match entry {
                                 None => {
@@ -1818,6 +1882,7 @@ TimelineItem::Comment(c) => card(ui, &theme, None, |ui| {
                                             .id_salt(("log", c.job_id))
                                             .max_height(360.0)
                                             .show(ui, |ui| {
+                                                kit::selectable_text(ui);
                                                 ui.add(
                                                     egui::Label::new(
                                                         RichText::new(log).monospace().size(12.0),

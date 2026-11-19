@@ -130,8 +130,11 @@ pub struct Settings {
     pub light_theme: String,
     /// `system`, `light` or `dark`.
     pub appearance: String,
-    /// macOS notifications when an agent blocks or finishes unseen.
-    pub notify: bool,
+    /// Retired: artalde no longer sends macOS notifications (its own
+    /// toasts cover blocked and finished agents). Still read so older
+    /// `settings.json` files load; never written back.
+    #[serde(rename = "notify", skip_serializing)]
+    pub legacy_notify: Option<bool>,
     /// Days of zaindu proposal files to show.
     pub inbox_days: usize,
     /// Poll `gh` for open PRs.
@@ -180,7 +183,7 @@ impl Default for Settings {
             theme: "graphite".into(),
             light_theme: "paper".into(),
             appearance: "system".into(),
-            notify: true,
+            legacy_notify: None,
             inbox_days: 2,
             gh: true,
             spawn_worktree: "zz -c {repo}@{branch} {agent} {prompt}".into(),
@@ -410,6 +413,13 @@ mod tests {
             std::env::temp_dir().join(format!("artalde-config-{name}-{}", std::process::id()));
         let _ignored = fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn retired_notify_still_loads_and_is_not_written() {
+        let s: Settings = serde_json::from_str(r#"{"notify": true}"#).unwrap();
+        assert_eq!(s.legacy_notify, Some(true));
+        assert!(!serde_json::to_string(&s).unwrap().contains("notify"));
     }
 
     #[test]

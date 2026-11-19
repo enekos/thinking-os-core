@@ -563,11 +563,8 @@ impl App {
             );
         });
         ui.add_space(kit::S1);
-        ui.add(
-            egui::TextEdit::singleline(&mut view.file_filter)
-                .hint_text("Filter files…")
-                .desired_width(f32::INFINITY),
-        );
+        let w = ui.available_width();
+        kit::search(ui, &theme, &mut view.file_filter, "Filter files…", w);
         ui.add_space(kit::S1);
         let needle = view.file_filter.to_lowercase();
         egui::ScrollArea::vertical()
@@ -680,76 +677,114 @@ impl App {
             .inner_margin(egui::Margin::symmetric(12, 8))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    kit::pill(
-                        ui,
-                        &theme,
-                        match f.status {
-                            FileStatus::Added => "added",
-                            FileStatus::Deleted => "deleted",
-                            FileStatus::Renamed => "renamed",
-                            FileStatus::Modified => "modified",
-                        },
-                        status_color(&theme, f.status),
-                    );
-                    let (dir, name) = f
-                        .path
-                        .rsplit_once('/')
-                        .map_or((String::new(), f.path.clone()), |(d, n)| {
-                            (format!("{d}/"), n.to_owned())
-                        });
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    ui.label(
-                        RichText::new(dir)
-                            .monospace()
-                            .size(12.0)
-                            .color(style::c(theme.dim)),
-                    );
-                    ui.label(RichText::new(name).monospace().size(12.5).strong());
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    ui.add_space(8.0);
-                    ui.label(
-                        RichText::new(format!("+{}", f.added))
-                            .monospace()
-                            .size(11.5)
-                            .color(style::c(theme.done)),
-                    );
-                    ui.label(
-                        RichText::new(format!("−{}", f.removed))
-                            .monospace()
-                            .size(11.5)
-                            .color(style::c(theme.danger)),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if kit::button(ui, &theme, "›", Some("]"))
-                            .on_hover_text("Next file")
-                            .clicked()
-                        {
-                            view.file = (view.file + 1).min(total - 1);
-                        }
-                        if kit::button(ui, &theme, "‹", Some("["))
-                            .on_hover_text("Previous file")
-                            .clicked()
-                        {
-                            view.file = view.file.saturating_sub(1);
-                        }
-                        ui.label(
-                            RichText::new(format!("{} / {total}", view.file + 1))
-                                .size(11.5)
-                                .color(style::c(theme.dim)),
-                        );
-                        ui.checkbox(&mut view.wrap, RichText::new("wrap").size(12.0));
-                        if kit::button(ui, &theme, "Copy path", None).clicked() {
-                            ui.ctx().copy_text(f.path.clone());
-                        }
-                        if kit::button(ui, &theme, "GitHub ↗", None).clicked() {
-                            self.queue.push(artalde_core::command::Command::new(
-                                "url.open",
-                                Some(&format!("{}/files", pr.url())),
-                            ));
-                        }
+                // Controls claim the right first; the path gets what is left,
+                // its directory ellipsized so the file name stays whole.
+                let (row, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), kit::CONTROL),
+                    Sense::hover(),
+                );
+                let mut right = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(row)
+                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                );
+                right.spacing_mut().item_spacing.x = 6.0;
+                if kit::button(&mut right, &theme, "›", Some("]"))
+                    .on_hover_text("Next file")
+                    .clicked()
+                {
+                    view.file = (view.file + 1).min(total - 1);
+                }
+                if kit::button(&mut right, &theme, "‹", Some("["))
+                    .on_hover_text("Previous file")
+                    .clicked()
+                {
+                    view.file = view.file.saturating_sub(1);
+                }
+                right.label(
+                    RichText::new(format!("{} / {total}", view.file + 1))
+                        .size(11.5)
+                        .color(style::c(theme.dim)),
+                );
+                kit::check(&mut right, &theme, &mut view.wrap, "Wrap", 12.0);
+                // Narrow: the two link buttons shrink to icons so the path keeps room.
+                let narrow = row.width() < 760.0;
+                let copy = if narrow {
+                    kit::icon_button(&mut right, &theme, kit::Icon::Copy, "Copy path")
+                } else {
+                    kit::button(&mut right, &theme, "Copy path", None)
+                };
+                if copy.clicked() {
+                    right.ctx().copy_text(f.path.clone());
+                }
+                let github = if narrow {
+                    kit::icon_button(&mut right, &theme, kit::Icon::External, "Open on GitHub")
+                } else {
+                    kit::button_icon(&mut right, &theme, kit::Icon::External, "GitHub", None)
+                };
+                if github.clicked() {
+                    self.queue.push(artalde_core::command::Command::new(
+                        "url.open",
+                        Some(&format!("{}/files", pr.url())),
+                    ));
+                }
+                let used = right.min_rect().width();
+                let left_rect = egui::Rect::from_min_max(
+                    row.min,
+                    egui::pos2((row.max.x - used - kit::S3).max(row.min.x), row.max.y),
+                );
+                let mut left = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(left_rect)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                left.set_clip_rect(left_rect.intersect(ui.clip_rect()));
+                left.spacing_mut().item_spacing.x = 8.0;
+                kit::pill(
+                    &mut left,
+                    &theme,
+                    match f.status {
+                        FileStatus::Added => "added",
+                        FileStatus::Deleted => "deleted",
+                        FileStatus::Renamed => "renamed",
+                        FileStatus::Modified => "modified",
+                    },
+                    status_color(&theme, f.status),
+                );
+                left.label(
+                    RichText::new(format!("+{}", f.added))
+                        .monospace()
+                        .size(11.5)
+                        .color(style::c(theme.done)),
+                );
+                left.label(
+                    RichText::new(format!("−{}", f.removed))
+                        .monospace()
+                        .size(11.5)
+                        .color(style::c(theme.danger)),
+                );
+                let (dir, name) = f
+                    .path
+                    .rsplit_once('/')
+                    .map_or((String::new(), f.path.clone()), |(d, n)| {
+                        (format!("{d}/"), n.to_owned())
                     });
-                });
+                let name_g = left.painter().layout_no_wrap(
+                    name,
+                    egui::FontId::monospace(12.5),
+                    style::c(theme.text),
+                );
+                let dir_w = (left.available_width() - name_g.size().x).max(0.0);
+                let dir_g = kit::ellipsized(
+                    left.painter(),
+                    &dir,
+                    egui::FontId::monospace(12.0),
+                    style::c(theme.dim),
+                    dir_w,
+                );
+                left.spacing_mut().item_spacing.x = 0.0;
+                left.label(dir_g).on_hover_text(&f.path);
+                left.label(name_g);
                 if let Some(old) = &f.old_path {
                     ui.label(
                         RichText::new(format!("renamed from {old}"))

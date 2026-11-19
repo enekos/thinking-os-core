@@ -28,8 +28,6 @@ fn render(ctx) {
         groups[key].push(s);
     }
     let out = [row([
-        heading("Radar"),
-        space(10),
         badge(`${ctx.counts.blocked} blocked`).color("blocked"),
         badge(`${ctx.counts.done} done`).color("done"),
         badge(`${ctx.counts.working} working`).color("working"),

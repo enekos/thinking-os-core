@@ -57,6 +57,9 @@ pub struct App {
     tab_colors: HashMap<String, (String, Option<String>)>,
     pub(crate) label_edit: String,
     pub(crate) settings_draft: Option<artalde_core::config::Settings>,
+    /// The saved settings the draft started from, to tell an untouched
+    /// draft (follows outside changes) from an edited one (kept).
+    pub(crate) settings_base: Option<artalde_core::config::Settings>,
     pub(crate) hook_confirm: bool,
     pub(crate) reviewer: crate::reviewer::Reviewer,
     /// A review to start next frame: PR and agent index.
@@ -81,6 +84,9 @@ pub struct App {
     pub(crate) closing: HashMap<String, u64>,
     pub(crate) close_confirm: Option<CloseConfirm>,
     pub(crate) egui_ctx: egui::Context,
+    /// `artalde drive`: log every side effect (terminal, process, gh write,
+    /// review agent) instead of doing it.
+    pub(crate) dry_run: bool,
     pub(crate) reply: String,
     pub(crate) hide_done: bool,
     pub(crate) shot: Option<Shot>,
@@ -150,6 +156,7 @@ impl App {
             tab_colors: HashMap::new(),
             label_edit: String::new(),
             settings_draft: None,
+            settings_base: None,
             hook_confirm: false,
             reviewer: crate::reviewer::Reviewer::new(),
             queue_review: None,
@@ -170,6 +177,7 @@ impl App {
             closing: HashMap::new(),
             close_confirm: None,
             egui_ctx: cc.egui_ctx.clone(),
+            dry_run: std::env::var_os("ARTALDE_DRY_RUN").is_some(),
             reply: String::new(),
             hide_done: true,
             gh,
@@ -305,8 +313,6 @@ impl App {
     }
 
     fn receive(&mut self, ctx: &egui::Context, mut snap: Snapshot) {
-        let notify = self.settings().notify;
-        let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
         let mut events = Vec::new();
         for s in &snap.sessions {
             let before = self.prev_states.get(&s.rec.id).copied();
@@ -377,15 +383,6 @@ impl App {
             );
             self.push_log(line.clone());
             self.toast(ctx, line);
-            if notify && !focused {
-                let _queued_or_logged = self
-                    .actions
-                    .submit(Job::Notify {
-                        title: clip(&name, 60),
-                        body: clip(&what, 140),
-                    })
-                    .map_err(|e| self.push_log(format!("notify: {e}")));
-            }
         }
     }
 
@@ -394,6 +391,10 @@ impl App {
     }
 
     fn submit(&mut self, job: Job) {
+        if self.dry_run {
+            self.push_log(format!("dry run: {job:?}"));
+            return;
+        }
         if let Err(e) = self.actions.submit(job) {
             self.push_log(e);
         }
@@ -601,6 +602,9 @@ impl App {
                         .map_or(0, |i| i + 1);
                     self.theme_name = names.get(i % names.len().max(1)).map(|s| (*s).to_owned());
                 }
+            }
+            "inbox.toggle" if self.dry_run => {
+                self.push_log(format!("dry run: inbox.toggle {}", arg.unwrap_or_default()));
             }
             "inbox.toggle" => {
                 if let Some(item) = arg
@@ -925,10 +929,13 @@ impl App {
         let theme = self.theme.clone();
         let modal = egui::Modal::new(egui::Id::unique("palette")).show(ctx, |ui| {
             ui.set_width(560.0);
-            let edit = ui.add(
-                egui::TextEdit::singleline(&mut p.query)
-                    .hint_text("Type a command, agent, layout…")
-                    .desired_width(f32::INFINITY),
+            let w = ui.available_width();
+            let edit = crate::kit::search(
+                ui,
+                &theme,
+                &mut p.query,
+                "Type a command, agent, layout…",
+                w,
             );
             edit.request_focus();
             if edit.changed() {
@@ -1126,7 +1133,12 @@ impl App {
     }
 }
 
-fn save_png(path: &std::path::Path, rgba: &[u8], w: usize, h: usize) -> anyhow::Result<()> {
+pub(crate) fn save_png(
+    path: &std::path::Path,
+    rgba: &[u8],
+    w: usize,
+    h: usize,
+) -> anyhow::Result<()> {
     let file = std::io::BufWriter::new(std::fs::File::create(path)?);
     let mut enc = png::Encoder::new(file, u32::try_from(w)?, u32::try_from(h)?);
     enc.set_color(png::ColorType::Rgba);

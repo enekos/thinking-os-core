@@ -90,3 +90,20 @@ app + CLI). Follow `concepts/rust-style-guide.md`, then:
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 ARTALDE_LAYOUT=main ARTALDE_SCREENSHOT=/tmp/a.png artalde   # self-screenshot, then quits
 ```
+
+Drive the real UI offscreen — no window, no stolen focus — with a script of
+`size`, `wait`, `move`, `click`, `dclick`, `rclick`, `scroll`, `type`, `key`,
+`cmd` and `shot` steps (format in `crates/artalde/src/drive.rs`). Every side
+effect (terminals, processes, gh writes, review agents, zaindu ticks) is only
+logged. Point it at scratch copies of the config and state:
+
+```bash
+cargo build --features headless
+ARTALDE_CONFIG_DIR=$scratch/config ARTALDE_STATE_DIR=$scratch/state \
+  ~/.cargo/shared-target/debug/artalde drive script.txt
+```
+
+UI rules the kit enforces: chrome labels are not selectable (a click on a row's
+text reaches the row; `kit::selectable_text` opts reading surfaces back in);
+controls are `kit::CONTROL` tall and painted at fixed sizes; `add_sized`
+centres, so fixed-width captions use `kit::caption`.

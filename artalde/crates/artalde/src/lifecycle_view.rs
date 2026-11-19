@@ -441,34 +441,45 @@ impl App {
                 match form.place {
                     Place::Existing(i) => field_row(ui, &theme, "Folder", |ui| {
                         let label = choices.get(i).map_or("pick a folder", |c| c.0.as_str());
-                        egui::ComboBox::from_id_salt("spawn-folder")
-                            .selected_text(label)
-                            .width(ui.available_width() - 4.0)
-                            .height(320.0)
-                            .show_ui(ui, |ui| {
-                                for (j, (l, _, _)) in choices.iter().enumerate() {
-                                    ui.selectable_value(&mut form.place, Place::Existing(j), l);
-                                }
-                            });
-                    }),
-                    Place::NewWorktree => {
-                        field_row(ui, &theme, "Repo", |ui| {
-                            egui::ComboBox::from_id_salt("spawn-repo")
-                                .selected_text(&form.repo)
-                                .width(ui.available_width() - 4.0)
-                                .show_ui(ui, |ui| {
-                                    for r in &repos {
-                                        ui.selectable_value(&mut form.repo, r.clone(), r);
+                        let w = ui.available_width();
+                        kit::dropdown(ui, &theme, "spawn-folder", label, w, |ui| {
+                            egui::ScrollArea::vertical()
+                                .max_height(320.0)
+                                .show(ui, |ui| {
+                                    for (j, (l, _, _)) in choices.iter().enumerate() {
+                                        if kit::menu_item(ui, &theme, l, j == i) {
+                                            form.place = Place::Existing(j);
+                                        }
                                     }
                                 });
                         });
+                    }),
+                    Place::NewWorktree => {
+                        field_row(ui, &theme, "Repo", |ui| {
+                            let w = ui.available_width();
+                            let current = form.repo.clone();
+                            kit::dropdown(ui, &theme, "spawn-repo", &current, w, |ui| {
+                                egui::ScrollArea::vertical()
+                                    .max_height(320.0)
+                                    .show(ui, |ui| {
+                                        for r in &repos {
+                                            if kit::menu_item(ui, &theme, r, *r == current) {
+                                                form.repo = r.clone();
+                                            }
+                                        }
+                                    });
+                            });
+                        });
                         field_row(ui, &theme, "Branch", |ui| {
                             kit::icon(ui, Icon::Branch, 13.0, style::c(theme.faint));
-                            let r = ui.add(
-                                egui::TextEdit::singleline(&mut form.branch)
-                                    .hint_text("from the prompt")
-                                    .font(egui::TextStyle::Monospace)
-                                    .desired_width(ui.available_width()),
+                            let w = ui.available_width();
+                            let r = kit::input(
+                                ui,
+                                &theme,
+                                &mut form.branch,
+                                "from the prompt",
+                                w,
+                                true,
                             );
                             if r.changed() {
                                 form.branch_auto = form.branch.trim().is_empty();
@@ -728,15 +739,13 @@ fn field_row(
 ) {
     ui.horizontal(|ui| {
         ui.set_min_height(kit::CONTROL);
-        ui.add_sized(
-            [64.0, kit::CONTROL],
-            egui::Label::new(
-                RichText::new(label.to_uppercase())
-                    .font(crate::fonts::semibold(10.0))
-                    .extra_letter_spacing(0.6)
-                    .color(style::c(theme.faint)),
-            )
-            .halign(egui::Align::Min),
+        kit::caption(
+            ui,
+            &label.to_uppercase(),
+            64.0,
+            kit::CONTROL,
+            crate::fonts::semibold(10.0),
+            style::c(theme.faint),
         );
         ui.spacing_mut().item_spacing.x = 4.0;
         add(ui);
