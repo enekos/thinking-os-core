@@ -56,10 +56,12 @@ fn render(ctx) {
 
 - Nodes: `text(s)` `heading(s)` `row([..])` `col([..])` `wrap([..])` `grid(n, [..])` `card([..])`
   `button(label, action)` `badge(s)` `dot()` `sep()` `space(px)` `bar(0.0..1.0)`. A bare string is text; an array is a column.
+- Colours: theme tokens, tag names (`blue`, `pink`, …) or `#rrggbb`.
 - Modifiers: `.color(token)` `.fill(token)` (tinted background for cards/badges) `.size(px)` `.bold()` `.mono()` `.tip(s)` `.on_click(action)`.
 - Actions: `cmd("name")`, `cmd("name", arg)`, `set("key", value)` (merges into `ctx.state`, re-renders; state survives edits).
 - Helpers: `ago(secs)` → `3m`, `clip(s, n)`.
-- `ctx`: `sessions` (each: `id agent state name age index selected repo branch worktree cwd tty pid title last_prompt activity message task pending_tasks last_said discovered`),
+- `ctx`: `sessions` (each: `id agent state name age index selected repo branch worktree cwd tty pid title ai_title handle tag label last_prompt activity message task pending_tasks last_said discovered resources[kind id title state url mentions]`),
+  `name` is the label, else the conversation title (`ai_title`), else the first prompt; `tag` is a palette colour usable as a token (`red orange yellow green teal blue purple pink`),
   `spaces` (`repo root worktrees[path branch dirty ahead behind]`), `prs` (`repo number title url draft updated`),
   `inbox` (`time kind target links detail url done`), `counts.{blocked,done,working,idle,unknown}`, `now`, `selected`, `filter`, `theme`, `state`.
 - `render` reruns only when data, selection, theme or the mod's state change. Budget: 2M operations and 4000 nodes per render.
@@ -67,5 +69,5 @@ fn render(ctx) {
 ## Commands
 
 `artalde commands` lists them. Common: `agent.next`, `agent.select:<id|n>`, `session.focus[:<id>]`,
-`session.ack[:<id>]`, `session.send:<text>`, `space.filter:<repo>`, `spawn.open`, `layout.select:<name>`,
+`session.ack[:<id>]`, `session.tag:<colour|none>` (or `<id>:<colour>`), `session.label:<text>`, `session.send:<text>`, `space.filter:<repo>`, `spawn.open`, `layout.select:<name>`,
 `layout.cycle`, `theme.select:<name>`, `theme.cycle`, `url.open:<url>`, `path.open:<path>`, `palette.open`, `refresh`.

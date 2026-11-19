@@ -44,6 +44,14 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "session.focus",
         "Bring a session's terminal to the front: <session id>",
     ),
+    (
+        "session.tag",
+        "Colour-tag the selected session (also its iTerm tab): <colour|none> or <id>:<colour>",
+    ),
+    (
+        "session.label",
+        "Name the selected session: <text>, empty clears",
+    ),
     ("session.ack", "Mark a done session as seen: <session id>"),
     (
         "session.send",

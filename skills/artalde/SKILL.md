@@ -33,6 +33,18 @@ Agents other than Claude report with
    mod over Rust changes; reach for the engine only for new data or commands.
 4. Commit the folder with the wiki (`*.error` files are gitignored).
 
+## Identify sessions
+
+- Names come from Claude Code itself: `~/.claude/sessions/<pid>.json` (session
+  id, short name, live `busy/idle/waiting` status — artalde shows state even
+  without the hook) and the transcript's `ai-title` (the conversation title).
+- Colour-tag a session (`session.tag:<colour>`, swatches in the Session panel
+  or the palette); the tag also colours its iTerm2 tab. Labels override titles.
+  Both live in `~/.local/state/artalde/tags.json`.
+- Related PRs and tickets are mined from the transcript (GitHub PR URLs, Linear
+  ids for the teams in `os.yaml`, the branch name) and resolved against
+  `<wiki>/graph/raw/{watch,github,linear}.json` — no network calls.
+
 ## Debug state
 
 - Wrong or missing state: `artalde snapshot`, then the record in

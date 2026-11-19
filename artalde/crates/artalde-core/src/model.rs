@@ -106,14 +106,56 @@ pub struct Session {
     pub last_said: Option<String>,
     /// Found as a process with no hook record.
     pub discovered: bool,
+    /// The conversation title Claude Code generated (`ai-title`).
+    pub ai_title: Option<String>,
+    /// Claude Code's short session name, e.g. `thinking-os-a1`.
+    pub handle: Option<String>,
+    /// The user's colour tag (`red`, `blue`, …) and label for the session.
+    pub tag: Option<String>,
+    pub label: Option<String>,
+    /// PRs and tickets the conversation is about, most relevant first.
+    pub resources: Vec<Resource>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResourceKind {
+    Pr,
+    Ticket,
+}
+
+/// A PR or ticket a session touches.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Resource {
+    pub kind: ResourceKind,
+    /// `owner/repo#12` or `THU-123`.
+    pub id: String,
+    pub title: Option<String>,
+    /// `open`, `merged`, `open+red`, `In Progress`, … when the wiki knows it.
+    pub state: Option<String>,
+    pub url: String,
+    /// Times the conversation mentions it.
+    pub mentions: u32,
+}
+
+impl Resource {
+    /// `data#7939` / `THU-123`.
+    pub fn short(&self) -> String {
+        match self.kind {
+            ResourceKind::Pr => self.id.rsplit('/').next().unwrap_or(&self.id).to_owned(),
+            ResourceKind::Ticket => self.id.clone(),
+        }
+    }
 }
 
 impl Session {
     /// The best one-line name for the session.
     pub fn name(&self) -> String {
-        self.task
+        self.label
             .clone()
+            .or_else(|| self.ai_title.clone())
             .or_else(|| self.rec.title.clone())
+            .or_else(|| self.task.clone())
             .unwrap_or_else(|| {
                 let place = self
                     .repo

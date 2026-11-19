@@ -13,6 +13,7 @@ use artalde_core::keys::Chord;
 use artalde_core::layout::Panel;
 use artalde_core::model::{AgentState, Session, Snapshot};
 use artalde_core::store::Store;
+use artalde_core::tags::{self, Tags};
 use artalde_core::text::{clip, shell_quote};
 use artalde_core::theme::Theme;
 use artalde_mods::{Action, Context as ModContext, ModHost, ViewState};
@@ -45,6 +46,12 @@ pub struct App {
     pub(crate) filter: Option<String>,
     /// Done sessions the user has seen: id → the `since` they were seen at.
     acked: HashMap<String, u64>,
+    pub(crate) tags: Tags,
+    /// The tab colour last sent to each session's terminal.
+    tab_colors: HashMap<String, (String, Option<String>)>,
+    pub(crate) label_edit: String,
+    /// The session `label_edit` was filled from.
+    pub(crate) label_for: Option<String>,
     prev_states: HashMap<String, AgentState>,
     have_snapshot: bool,
     pub(crate) log: VecDeque<String>,
@@ -114,6 +121,10 @@ impl App {
             selected: None,
             filter: None,
             acked: HashMap::new(),
+            tags: Tags::load(&artalde_core::store::state_dir()),
+            tab_colors: HashMap::new(),
+            label_edit: String::new(),
+            label_for: None,
             prev_states: HashMap::new(),
             have_snapshot: false,
             log: VecDeque::new(),
@@ -226,6 +237,7 @@ impl App {
             .map(|s| (s.rec.id.clone(), s.rec.state))
             .collect();
         self.acked.retain(|id, _| snap.session(id).is_some());
+        self.tab_colors.retain(|id, _| snap.session(id).is_some());
         for s in &mut snap.sessions {
             if s.rec.state == AgentState::Done && self.acked.get(&s.rec.id) == Some(&s.rec.since) {
                 s.rec.state = AgentState::Idle;
@@ -242,6 +254,7 @@ impl App {
             self.selected = snap.sessions.first().map(|s| s.rec.id.clone());
         }
         self.snap = snap;
+        self.apply_tags();
         self.have_snapshot = true;
         for (name, what, repo) in events {
             let line = format!(
@@ -303,6 +316,50 @@ impl App {
         }
     }
 
+    /// Copy tags onto the snapshot's sessions and mirror colours onto
+    /// their terminal tabs.
+    fn apply_tags(&mut self) {
+        let mut jobs = Vec::new();
+        for s in &mut self.snap.sessions {
+            let tag = self.tags.get(&s.rec.id);
+            s.tag = tag.and_then(|t| t.color.clone());
+            s.label = tag.and_then(|t| t.label.clone());
+            let Some(tty) = s.rec.tty.clone() else {
+                continue;
+            };
+            let want = (tty.clone(), s.tag.clone());
+            let sent = self.tab_colors.get(&s.rec.id);
+            // Untagged sessions are left alone unless artalde coloured them.
+            if sent != Some(&want) && (s.tag.is_some() || sent.is_some()) {
+                let rgb = s
+                    .tag
+                    .as_deref()
+                    .and_then(tags::palette_color)
+                    .map(|c| [c[0], c[1], c[2]]);
+                jobs.push(Job::TabColor { tty, rgb });
+                self.tab_colors.insert(s.rec.id.clone(), want);
+            }
+        }
+        // A screenshot run never touches real terminals.
+        if self.shot.is_none() {
+            for job in jobs {
+                self.submit(job);
+            }
+        }
+        self.mod_ctx = None;
+    }
+
+    fn retag(&mut self, f: impl FnOnce(&mut Tags) -> Result<(), String>) {
+        match f(&mut self.tags).and_then(|()| {
+            self.tags
+                .save(artalde_core::now())
+                .map_err(|e| e.to_string())
+        }) {
+            Ok(()) => self.apply_tags(),
+            Err(e) => self.push_log(format!("tag: {e}")),
+        }
+    }
+
     pub(crate) fn run(&mut self, ctx: &egui::Context, cmd: &Command) {
         let arg = cmd.arg.as_deref();
         match cmd.name.as_str() {
@@ -346,6 +403,27 @@ impl App {
                     }
                 }
             }
+            "session.tag" => {
+                // `<colour>` for the selected session, or `<id>:<colour>`.
+                let (id, color) = match arg.and_then(|a| a.rsplit_once(':')) {
+                    Some((id, c)) => (Some(id.to_owned()), Some(c)),
+                    None => (self.selected.clone(), arg),
+                };
+                match id {
+                    Some(id) => self.retag(|t| t.set_color(&id, color, artalde_core::now())),
+                    None => self.push_log("tag: select a session first"),
+                }
+            }
+            "session.label" => match self.selected.clone() {
+                Some(id) => {
+                    let label = arg.unwrap_or_default().to_owned();
+                    self.retag(|t| {
+                        t.set_label(&id, &label, artalde_core::now());
+                        Ok(())
+                    });
+                }
+                None => self.push_log("label: select a session first"),
+            },
             "session.ack" => {
                 if let Some(id) = self.target_id(arg) {
                     self.ack(&id);
@@ -552,6 +630,30 @@ impl App {
                 .unwrap_or_default()
         };
         let mut out = Vec::new();
+        if let Some(sel) = self.selected_session() {
+            for (name, _) in tags::PALETTE {
+                out.push((
+                    format!("Tag {}: {name}", sel.name()),
+                    String::new(),
+                    Command::new("session.tag", Some(name)),
+                ));
+            }
+            out.push((
+                format!("Untag {}", sel.name()),
+                String::new(),
+                Command::new("session.tag", Some("none")),
+            ));
+        }
+        for s in &self.snap.sessions {
+            for r in &s.resources {
+                let title = r.title.clone().unwrap_or_default();
+                out.push((
+                    format!("Open {} {title} — {}", r.short(), s.name()),
+                    r.state.clone().unwrap_or_default(),
+                    Command::new("url.open", Some(&r.url)),
+                ));
+            }
+        }
         for s in &self.snap.sessions {
             let place = s.repo.clone().unwrap_or_else(|| s.rec.agent.clone());
             out.push((

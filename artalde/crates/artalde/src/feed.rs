@@ -16,8 +16,12 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender, channel, s
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime};
 
+use artalde_core::catalog::{self, Catalog};
+use artalde_core::claude;
 use artalde_core::config::{self, Config};
-use artalde_core::model::{AgentState, Pr, Session, SessionRecord, Snapshot, Space};
+use artalde_core::model::{
+    AgentState, Pr, Resource, ResourceKind, Session, SessionRecord, Snapshot, Space,
+};
 use artalde_core::probe::{self, GitPlace};
 use artalde_core::store::Store;
 use artalde_core::{inbox, now};
@@ -34,6 +38,10 @@ const PIDLESS_TTL_SECS: u64 = 6 * 3600;
 const MAX_PLACE_CACHE: usize = 1024;
 const MAX_WORKTREES_PER_SPACE: usize = 24;
 const UI_QUEUE: usize = 32;
+/// PRs and tickets kept per session, each.
+const MAX_RESOURCES: usize = 6;
+/// A hook record older than Claude's own status by this much yields to it.
+const HOOK_STALE_SECS: u64 = 5;
 
 pub enum Msg {
     Snapshot(Box<Snapshot>),
@@ -154,6 +162,10 @@ struct Prober {
     inbox: MtimeCache<Vec<artalde_core::model::InboxItem>>,
     spaces: Vec<Space>,
     spaces_at: Option<Instant>,
+    scans: HashMap<PathBuf, claude::Scan>,
+    claude_prev: HashMap<String, (AgentState, u64)>,
+    catalog: Catalog,
+    teams: Vec<String>,
     prs: Vec<Pr>,
     errors: Vec<String>,
     last: Option<Snapshot>,
@@ -183,6 +195,10 @@ impl Prober {
             inbox: HashMap::new(),
             spaces: Vec::new(),
             spaces_at: None,
+            scans: HashMap::new(),
+            claude_prev: HashMap::new(),
+            catalog: Catalog::default(),
+            teams: Vec::new(),
             prs: Vec::new(),
             errors: Vec::new(),
             last: None,
@@ -277,6 +293,11 @@ impl Prober {
 
     fn snapshot(&mut self) -> Snapshot {
         let t = now();
+        let wiki = config::wiki_root();
+        self.catalog.refresh(&wiki);
+        if self.teams.is_empty() {
+            self.teams = catalog::linear_teams(&wiki);
+        }
         let procs = probe::processes();
         let alive: HashSet<u32> = procs.iter().map(|p| p.pid).collect();
 
@@ -297,6 +318,34 @@ impl Prober {
             }
         }
 
+        let claude = claude::sessions();
+        // Hook records first; Claude Code's own session file fills in
+        // what the hook does not know, and the state when the hook is
+        // older or absent.
+        for rec in &mut records {
+            let Some(cs) = claude.values().find(|c| c.session_id == rec.id) else {
+                continue;
+            };
+            rec.pid = rec.pid.or(Some(cs.pid));
+            if rec.tty.is_none() {
+                rec.tty = procs
+                    .iter()
+                    .find(|p| p.pid == cs.pid)
+                    .and_then(|p| p.tty.clone());
+            }
+            if rec.transcript.is_none() {
+                rec.transcript = claude::transcript_path(&cs.cwd, &cs.session_id);
+            }
+            if cs.status_since() > rec.updated + HOOK_STALE_SECS {
+                let (state, since) = self.claude_state(cs);
+                rec.state = state;
+                rec.since = since;
+                rec.message = cs
+                    .waiting_for
+                    .clone()
+                    .filter(|_| state == AgentState::Blocked);
+            }
+        }
         let known: HashSet<u32> = records.iter().filter_map(|r| r.pid).collect();
         let fresh: Vec<&probe::Proc> = probe::agent_processes(&procs)
             .into_iter()
@@ -304,12 +353,33 @@ impl Prober {
             .collect();
         let need: Vec<u32> = fresh
             .iter()
+            .filter(|p| !claude.contains_key(&p.pid))
             .map(|p| p.pid)
             .filter(|p| !self.cwds.contains_key(p))
             .collect();
         self.cwds.extend(probe::cwds(&need));
         self.cwds.retain(|pid, _| alive.contains(pid));
         for p in fresh {
+            if let Some(cs) = claude.get(&p.pid) {
+                let (state, since) = self.claude_state(cs);
+                records.push(SessionRecord {
+                    id: cs.session_id.clone(),
+                    agent: p.name.clone(),
+                    pid: Some(p.pid),
+                    tty: p.tty.clone(),
+                    cwd: cs.cwd.clone(),
+                    state,
+                    since,
+                    updated: cs.status_since(),
+                    message: cs
+                        .waiting_for
+                        .clone()
+                        .filter(|_| state == AgentState::Blocked),
+                    transcript: claude::transcript_path(&cs.cwd, &cs.session_id),
+                    ..Default::default()
+                });
+                continue;
+            }
             records.push(SessionRecord {
                 id: format!("pid-{}", p.pid),
                 agent: p.name.clone(),
@@ -322,22 +392,37 @@ impl Prober {
                 ..Default::default()
             });
         }
+        let live: HashSet<&str> = claude.values().map(|c| c.session_id.as_str()).collect();
+        self.claude_prev.retain(|id, _| live.contains(id.as_str()));
 
+        let teams = self.teams.clone();
         let mut sessions: Vec<Session> = records
             .into_iter()
-            .map(|rec| {
-                let discovered = rec.id.starts_with("pid-");
+            .map(|mut rec| {
+                let hooked = self.store.load(&rec.id).is_some();
                 let place = rec
                     .touched
                     .clone()
                     .and_then(|p| self.place(&p))
                     .or_else(|| self.place(&rec.cwd.clone()));
-                let (task, pending_tasks) = if discovered {
+                let (task, pending_tasks) = if rec.id.starts_with("pid-") {
                     (None, 0)
                 } else {
                     probe::tasks(&rec.id)
                 };
                 let last_said = rec.transcript.as_deref().and_then(|p| self.last_said(p));
+                let scan = rec.transcript.as_ref().map(|path| {
+                    let scan = self.scans.entry(path.clone()).or_default();
+                    scan.advance(path, &teams);
+                    scan.clone()
+                });
+                if rec.last_prompt.is_none() {
+                    rec.last_prompt = scan.as_ref().and_then(|s| s.last_prompt.clone());
+                }
+                let handle = rec
+                    .pid
+                    .and_then(|pid| claude.get(&pid))
+                    .and_then(|c| c.name.clone());
                 Session {
                     worktree: place.as_ref().map(|p| p.worktree.clone()),
                     repo: place.as_ref().map(|p| p.repo.clone()),
@@ -345,11 +430,21 @@ impl Prober {
                     task,
                     pending_tasks,
                     last_said,
-                    discovered,
+                    discovered: !hooked,
+                    ai_title: scan.as_ref().and_then(|s| s.ai_title.clone()),
+                    handle,
+                    tag: None,
+                    label: None,
+                    resources: scan.map(|s| self.resources(&s)).unwrap_or_default(),
                     rec,
                 }
             })
             .collect();
+        let transcripts: HashSet<PathBuf> = sessions
+            .iter()
+            .filter_map(|s| s.rec.transcript.clone())
+            .collect();
+        self.scans.retain(|p, _| transcripts.contains(p));
 
         if self.spaces_at.is_none_or(|at| at.elapsed() >= SPACES_EVERY) {
             self.spaces = self.spaces(&sessions);
@@ -363,6 +458,15 @@ impl Prober {
                     .find(|wt| &wt.path == w)
                     .and_then(|wt| wt.branch.clone())
             });
+            if let Some(id) = s
+                .branch
+                .as_deref()
+                .and_then(|b| claude::tickets(b, &self.teams).into_iter().next())
+                && !s.resources.iter().any(|r| r.id == id)
+            {
+                s.resources
+                    .insert(0, self.catalog.resolve(ResourceKind::Ticket, &id, 0));
+            }
         }
         sessions.sort_by(|a, b| {
             b.rec
@@ -383,6 +487,36 @@ impl Prober {
             inbox,
             errors: self.errors.clone(),
         }
+    }
+
+    /// The state a Claude session file reports, with `done` for a turn
+    /// that finished (busy → idle) since it was last busy.
+    fn claude_state(&mut self, cs: &claude::ClaudeSession) -> (AgentState, u64) {
+        let raw = cs.state();
+        let prev = self.claude_prev.get(&cs.session_id).copied();
+        let next = match (raw, prev) {
+            (AgentState::Idle, Some((AgentState::Working, _))) => {
+                (AgentState::Done, cs.status_since())
+            }
+            (AgentState::Idle, Some((AgentState::Done, since))) => (AgentState::Done, since),
+            _ => (raw, cs.status_since()),
+        };
+        self.claude_prev.insert(cs.session_id.clone(), next);
+        next
+    }
+
+    fn resources(&self, scan: &claude::Scan) -> Vec<Resource> {
+        let mut out: Vec<Resource> = scan
+            .top(ResourceKind::Pr, MAX_RESOURCES)
+            .into_iter()
+            .map(|(id, n)| self.catalog.resolve(ResourceKind::Pr, &id, n))
+            .collect();
+        out.extend(
+            scan.top(ResourceKind::Ticket, MAX_RESOURCES)
+                .into_iter()
+                .map(|(id, n)| self.catalog.resolve(ResourceKind::Ticket, &id, n)),
+        );
+        out
     }
 
     fn last_said(&mut self, transcript: &Path) -> Option<String> {

@@ -1,12 +1,16 @@
 //! Built-in panels: agents, spaces, inbox, prs, detail, status, log.
 
 use artalde_core::command::Command;
-use artalde_core::model::{AgentState, Session};
+use artalde_core::model::{AgentState, Resource, ResourceKind, Session};
+use artalde_core::tags;
 use artalde_core::text::{ago, clip};
 use eframe::egui::{self, CornerRadius, RichText, Sense, Stroke, UiBuilder};
 
 use crate::app::App;
 use crate::style::{self, tint};
+
+/// Resource chips shown on an agent card.
+const CARD_RESOURCES: usize = 4;
 
 impl App {
     pub(crate) fn builtin(&mut self, ui: &mut egui::Ui, name: &str) {
@@ -52,14 +56,14 @@ impl App {
             });
             return;
         }
-        if rows.iter().all(|s| s.discovered) {
+        if rows.iter().all(|s| s.rec.state == AgentState::Unknown) {
             egui::Frame::new()
                 .fill(tint(style::c(self.theme.surface), style::c(self.theme.blocked), 0.12))
                 .corner_radius(CornerRadius::same(6))
                 .inner_margin(egui::Margin::same(8))
                 .show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
-                    ui.label("States need the Claude Code hook. Run `artalde hooks` for the settings snippet.");
+                    ui.label("No agent reports a state. Claude Code sessions do on their own; for details (tool in flight, permission prompts) run `artalde hooks`.");
                 });
             ui.add_space(4.0);
         }
@@ -69,7 +73,10 @@ impl App {
             let state = s.rec.state;
             let sc = self.color(state);
             let raised = style::c(self.theme.raised);
-            let fill = if on {
+            let tag_color = s.tag.as_deref().map(|t| style::token(&self.theme, t));
+            let fill = if let (false, Some(tc)) = (on, tag_color) {
+                tint(raised, tc, 0.10)
+            } else if on {
                 tint(raised, style::c(self.theme.accent), 0.14)
             } else {
                 raised
@@ -115,7 +122,16 @@ impl App {
                                         },
                                     );
                                 });
-                                let mut sub = vec![s.repo.clone().unwrap_or_else(|| "—".into())];
+                                let mut sub = Vec::new();
+                                if let Some(h) = &s.handle {
+                                    sub.push(h.clone());
+                                }
+                                if s.label.is_some()
+                                    && let Some(t) = &s.ai_title
+                                {
+                                    sub.push(clip(t, 50));
+                                }
+                                sub.push(s.repo.clone().unwrap_or_else(|| "—".into()));
                                 if let Some(b) = &s.branch {
                                     sub.push(b.clone());
                                 }
@@ -139,6 +155,22 @@ impl App {
                                 {
                                     ui.label(RichText::new(clip(said, 160)).small().italics());
                                 }
+                                if !s.resources.is_empty() {
+                                    ui.horizontal_wrapped(|ui| {
+                                        for r in s.resources.iter().take(CARD_RESOURCES) {
+                                            self.resource_chip(ui, r);
+                                        }
+                                        if s.resources.len() > CARD_RESOURCES {
+                                            ui.label(
+                                                self.dim(format!(
+                                                    "+{}",
+                                                    s.resources.len() - CARD_RESOURCES
+                                                ))
+                                                .small(),
+                                            );
+                                        }
+                                    });
+                                }
                             });
                     },
                 )
@@ -155,6 +187,20 @@ impl App {
             };
             ui.painter()
                 .rect_filled(bar, CornerRadius::same(2), sc.gamma_multiply(pulse));
+            if let Some(tc) = tag_color {
+                let edge =
+                    egui::Rect::from_min_size(resp.rect.min, egui::vec2(4.0, resp.rect.height()));
+                ui.painter().rect_filled(
+                    edge,
+                    CornerRadius {
+                        nw: 8,
+                        sw: 8,
+                        ne: 0,
+                        se: 0,
+                    },
+                    tc,
+                );
+            }
             if resp.clicked() {
                 self.queue.push(Command::new("agent.select", Some(&id)));
             }
@@ -385,6 +431,46 @@ impl App {
             );
         });
         ui.add(egui::Label::new(RichText::new(s.name()).heading()).wrap());
+        if s.label.is_some()
+            && let Some(t) = &s.ai_title
+        {
+            ui.label(self.dim(t));
+        }
+        if self.label_for.as_deref() != Some(s.rec.id.as_str()) {
+            self.label_edit = s.label.clone().unwrap_or_default();
+            self.label_for = Some(s.rec.id.clone());
+        }
+        ui.horizontal(|ui| {
+            for (name, rgba) in tags::PALETTE {
+                let (rect, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::click());
+                let on = s.tag.as_deref() == Some(name);
+                ui.painter().circle_filled(
+                    rect.center(),
+                    if on { 8.0 } else { 6.0 },
+                    style::c(rgba),
+                );
+                if on {
+                    ui.painter().circle_stroke(
+                        rect.center(),
+                        8.5,
+                        Stroke::new(1.5, style::c(self.theme.text)),
+                    );
+                }
+                if resp.on_hover_text(name).clicked() {
+                    let arg = if on { "none" } else { name };
+                    self.queue.push(Command::new("session.tag", Some(arg)));
+                }
+            }
+            let edit = ui.add(
+                egui::TextEdit::singleline(&mut self.label_edit)
+                    .hint_text("label")
+                    .desired_width(ui.available_width().min(200.0)),
+            );
+            if edit.lost_focus() && self.label_edit.trim() != s.label.clone().unwrap_or_default() {
+                self.queue
+                    .push(Command::new("session.label", Some(self.label_edit.trim())));
+            }
+        });
         if let Some(m) = &s.rec.message {
             egui::Frame::new()
                 .fill(tint(style::c(self.theme.surface), sc, 0.16))
@@ -415,6 +501,21 @@ impl App {
                 ui.ctx().copy_text(s.rec.id.clone());
             }
         });
+        if !s.resources.is_empty() {
+            ui.add_space(6.0);
+            ui.label(self.dim("Related").small());
+            for r in &s.resources {
+                ui.horizontal(|ui| {
+                    self.resource_chip(ui, r);
+                    if let Some(state) = &r.state {
+                        ui.label(RichText::new(state).small().color(self.resource_color(r)));
+                    }
+                    if let Some(t) = &r.title {
+                        ui.label(self.dim(clip(t, 60)).small());
+                    }
+                });
+            }
+        }
         if s.rec.tty.is_some() {
             ui.add_space(6.0);
             ui.label(self.dim("Reply in its terminal").small());
@@ -462,6 +563,9 @@ impl App {
                     ui.end_row();
                 };
                 row("agent", s.rec.agent.clone());
+                if let Some(h) = &s.handle {
+                    row("session", h.clone());
+                }
                 if let Some(r) = &s.repo {
                     row("repo", r.clone());
                 }
@@ -570,6 +674,65 @@ impl App {
                 }
             });
         });
+    }
+
+    fn resource_color(&self, r: &Resource) -> egui::Color32 {
+        let st = r.state.as_deref().unwrap_or_default().to_lowercase();
+        let token = if st.contains("red") || st.contains("closed") || st.contains("cancel") {
+            self.theme.danger
+        } else if st.contains("merged")
+            || st.contains("approved")
+            || st.contains("done")
+            || st.contains("production")
+        {
+            self.theme.done
+        } else if st.contains("draft") || st.is_empty() {
+            self.theme.dim
+        } else {
+            self.theme.working
+        };
+        style::c(token)
+    }
+
+    /// `● data#7939`: coloured by state, titled on hover, opens on click.
+    fn resource_chip(&mut self, ui: &mut egui::Ui, r: &Resource) {
+        let color = self.resource_color(r);
+        let text = RichText::new(format!(
+            "{} {}",
+            if r.kind == ResourceKind::Pr {
+                "PR"
+            } else {
+                "#"
+            },
+            r.short()
+        ))
+        .small()
+        .monospace()
+        .color(color);
+        let tip = format!(
+            "{}{}{}",
+            r.title.clone().unwrap_or_else(|| r.id.clone()),
+            r.state
+                .as_ref()
+                .map(|s| format!(" — {s}"))
+                .unwrap_or_default(),
+            if r.mentions > 0 {
+                format!(" · {} mentions", r.mentions)
+            } else {
+                String::new()
+            },
+        );
+        let resp = egui::Frame::new()
+            .fill(tint(style::c(self.theme.surface), color, 0.14))
+            .corner_radius(CornerRadius::same(5))
+            .inner_margin(egui::Margin::symmetric(5, 1))
+            .show(ui, |ui| {
+                ui.add(egui::Label::new(text).sense(Sense::click()))
+            })
+            .inner;
+        if resp.on_hover_text(tip).clicked() {
+            self.queue.push(Command::new("url.open", Some(&r.url)));
+        }
     }
 
     fn log_panel(&mut self, ui: &mut egui::Ui) {
