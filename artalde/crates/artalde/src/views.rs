@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 
 use artalde_core::github::{
-    self, Action, Bucket, Check, DiffFile, Filter, LineKind, MergeMethod, PrDetail, PrRef, PrRow,
+    self, Action, Bucket, Check, DiffFile, Filter, MergeMethod, PrDetail, PrRef, PrRow,
     TimelineItem,
 };
 use artalde_core::probe::Turn;
@@ -26,7 +26,6 @@ const INBOX_EVERY_SECS: u64 = 120;
 const DETAIL_EVERY_SECS: u64 = 60;
 const SESSION_TURNS: usize = 60;
 const SIDE_WIDTH: f32 = 380.0;
-const FILE_LIST_WIDTH: f32 = 280.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Tab {
@@ -87,6 +86,7 @@ pub struct PrView {
     pub busy: Option<String>,
     pub show_resolved: bool,
     pub hide_bots: bool,
+    pub wrap: bool,
 }
 
 #[derive(Default)]
@@ -1012,7 +1012,7 @@ impl App {
         }
         ui.add_space(kit::S2);
         if view.sub == PrSub::Files {
-            self.pr_files(ui, pr, view);
+            self.pr_files_view(ui, pr, view);
             return;
         }
         // Main column plus a metadata sidebar, so prose keeps a readable width.
@@ -1601,145 +1601,6 @@ TimelineItem::Comment(c) => card(ui, &theme, None, |ui| {
                 self.md(ui, &c.body, 13.5);
             }
         });
-    }
-
-    fn pr_files(&mut self, ui: &mut egui::Ui, pr: &PrRef, view: &mut PrView) {
-        let theme = self.theme.clone();
-        if view.diff.is_none() && !view.diff_loading {
-            match self.gh.send(Req::Diff(pr.clone())) {
-                Ok(()) => view.diff_loading = true,
-                Err(e) => view.diff = Some(Err(e)),
-            }
-        }
-        let files = match &view.diff {
-            None => {
-                ui.spinner();
-                return;
-            }
-            Some(Err(e)) => {
-                ui.label(RichText::new(e).color(style::c(theme.danger)));
-                if ui.button("Retry").clicked() {
-                    view.diff = None;
-                }
-                return;
-            }
-            Some(Ok(f)) => f.clone(),
-        };
-        let rect = ui.available_rect_before_wrap();
-        let list = egui::Rect::from_min_max(
-            rect.min,
-            egui::pos2(
-                rect.min.x + FILE_LIST_WIDTH.min(rect.width() * 0.35),
-                rect.max.y,
-            ),
-        );
-        let body = egui::Rect::from_min_max(egui::pos2(list.max.x + 8.0, rect.min.y), rect.max);
-        let mut left = ui.new_child(UiBuilder::new().max_rect(list));
-        left.add(
-            egui::TextEdit::singleline(&mut view.file_filter)
-                .hint_text("filter files")
-                .desired_width(f32::INFINITY),
-        );
-        let needle = view.file_filter.to_lowercase();
-        egui::ScrollArea::vertical()
-            .id_salt(("files", pr.to_string()))
-            .auto_shrink([false, false])
-            .show(&mut left, |ui| {
-                for (i, f) in files.iter().enumerate() {
-                    if !needle.is_empty() && !f.path.to_lowercase().contains(&needle) {
-                        continue;
-                    }
-                    let name = f.path.rsplit('/').next().unwrap_or(&f.path);
-                    let dir = f.path.strip_suffix(name).unwrap_or_default();
-                    let r = ui
-                        .horizontal(|ui| {
-                            let sel = ui.selectable_label(
-                                view.file == i,
-                                RichText::new(name).monospace().small(),
-                            );
-                            ui.label(
-                                RichText::new(format!("+{}", f.added))
-                                    .small()
-                                    .color(style::c(theme.done)),
-                            );
-                            ui.label(
-                                RichText::new(format!("-{}", f.removed))
-                                    .small()
-                                    .color(style::c(theme.danger)),
-                            );
-                            sel
-                        })
-                        .inner
-                        .on_hover_text(&f.path);
-                    if !dir.is_empty() {
-                        ui.label(RichText::new(dir).small().color(style::c(theme.dim)));
-                    }
-                    if r.clicked() {
-                        view.file = i;
-                    }
-                }
-            });
-        let mut right = ui.new_child(UiBuilder::new().max_rect(body));
-        let Some(f) = files.get(view.file).or_else(|| files.first()) else {
-            right.label("No changes.");
-            return;
-        };
-        right.label(RichText::new(&f.path).monospace().strong());
-        let row_h = 18.0;
-        let font = egui::FontId::monospace(12.5);
-        egui::ScrollArea::both()
-            .id_salt(("diff", pr.to_string(), view.file))
-            .auto_shrink([false, false])
-            .show_rows(&mut right, row_h, f.lines.len(), |ui, range| {
-                for line in f.lines.get(range).unwrap_or_default() {
-                    let (bg, fg) = match line.kind {
-                        LineKind::Add => (
-                            tint(style::c(theme.surface), style::c(theme.done), 0.14),
-                            style::c(theme.text),
-                        ),
-                        LineKind::Remove => (
-                            tint(style::c(theme.surface), style::c(theme.danger), 0.14),
-                            style::c(theme.text),
-                        ),
-                        LineKind::Hunk => (
-                            tint(style::c(theme.surface), style::c(theme.accent), 0.10),
-                            style::c(theme.accent),
-                        ),
-                        _ => (Color32::TRANSPARENT, style::c(theme.dim)),
-                    };
-                    let nums = format!(
-                        "{:>5} {:>5} ",
-                        line.old.map(|n| n.to_string()).unwrap_or_default(),
-                        line.new.map(|n| n.to_string()).unwrap_or_default()
-                    );
-                    let (rect, _) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width().max(1600.0), row_h),
-                        Sense::hover(),
-                    );
-                    ui.painter().rect_filled(rect, CornerRadius::ZERO, bg);
-                    let galley_nums =
-                        ui.painter()
-                            .layout_no_wrap(nums, font.clone(), style::c(theme.unknown));
-                    let nw = galley_nums.size().x;
-                    ui.painter().galley(
-                        egui::pos2(rect.min.x + 4.0, rect.min.y + 2.0),
-                        galley_nums,
-                        style::c(theme.unknown),
-                    );
-                    let text_color = if matches!(line.kind, LineKind::Context) {
-                        style::c(theme.text)
-                    } else {
-                        fg
-                    };
-                    ui.painter().text(
-                        egui::pos2(rect.min.x + 10.0 + nw, rect.min.y + 2.0),
-                        egui::Align2::LEFT_TOP,
-                        &line.text,
-                        font.clone(),
-                        text_color,
-                    );
-                }
-            });
     }
 
     fn pr_checks(&mut self, ui: &mut egui::Ui, pr: &PrRef, d: &PrDetail) {

@@ -3,6 +3,7 @@
 
 mod actions;
 mod app;
+mod diff_view;
 mod feed;
 mod fonts;
 mod gfm;

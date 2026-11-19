@@ -921,7 +921,30 @@ pub struct DiffFile {
     pub path: String,
     pub added: u32,
     pub removed: u32,
+    pub status: FileStatus,
+    /// The path before a rename.
+    pub old_path: Option<String>,
     pub lines: Vec<DiffLine>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FileStatus {
+    #[default]
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+}
+
+impl FileStatus {
+    pub fn letter(self) -> &'static str {
+        match self {
+            FileStatus::Modified => "M",
+            FileStatus::Added => "A",
+            FileStatus::Deleted => "D",
+            FileStatus::Renamed => "R",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -964,7 +987,25 @@ pub fn parse_diff(text: &str) -> Vec<DiffFile> {
             p.clone_into(&mut file.path);
             continue;
         }
-        if line.starts_with("+++ ") || line.starts_with("--- ") || line.starts_with("index ") {
+        if line.starts_with("new file mode") {
+            file.status = FileStatus::Added;
+            continue;
+        }
+        if line.starts_with("deleted file mode") {
+            file.status = FileStatus::Deleted;
+            continue;
+        }
+        if let Some(from) = line.strip_prefix("rename from ") {
+            file.status = FileStatus::Renamed;
+            file.old_path = Some(from.to_owned());
+            continue;
+        }
+        if line.starts_with("+++ ")
+            || line.starts_with("--- ")
+            || line.starts_with("index ")
+            || line.starts_with("rename to ")
+            || line.starts_with("similarity index")
+        {
             continue;
         }
         let (kind, o, nn) = if line.starts_with("@@") {
@@ -1439,6 +1480,17 @@ mod tests {
             }
         );
         assert_eq!(d[0].lines[3].new, Some(11));
+        let s = parse_diff(
+            "diff --git a/n b/n\nnew file mode 100644\n@@ -0,0 +1 @@\n+x\ndiff --git a/o b/p\nsimilarity index 90%\nrename from o\nrename to p\n",
+        );
+        assert_eq!(
+            (s[0].status, s[1].status, s[1].old_path.as_deref()),
+            (FileStatus::Added, FileStatus::Renamed, Some("o"))
+        );
+        assert!(
+            s[1].lines.is_empty(),
+            "rename metadata is not shown as lines"
+        );
     }
 
     #[test]
