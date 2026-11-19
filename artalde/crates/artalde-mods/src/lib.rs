@@ -35,6 +35,8 @@ pub enum Kind {
     #[default]
     Text,
     Heading,
+    /// Markdown text.
+    Markdown,
     Row,
     Col,
     Wrap,
@@ -371,6 +373,7 @@ fn to_node(d: &Dynamic, depth: usize, budget: &mut usize) -> Result<UiNode, Stri
     let kind = match s("t").as_deref() {
         Some("text") => Kind::Text,
         Some("heading") => Kind::Heading,
+        Some("md") => Kind::Markdown,
         Some("row") => Kind::Row,
         Some("col") => Kind::Col,
         Some("wrap") => Kind::Wrap,

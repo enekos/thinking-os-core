@@ -6,15 +6,20 @@
 //! - [`inbox`] parses zaindu's proposal files.
 //! - [`config`] loads the live-reloaded layouts, themes, keys and settings.
 
+pub mod catalog;
+pub mod claude;
 pub mod command;
 pub mod config;
+pub mod github;
 pub mod hook;
 pub mod inbox;
 pub mod keys;
 pub mod layout;
 pub mod model;
 pub mod probe;
+pub mod review;
 pub mod store;
+pub mod tags;
 pub mod text;
 pub mod theme;
 

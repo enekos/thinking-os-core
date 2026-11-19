@@ -81,7 +81,7 @@ impl Theme {
             "idle" => self.idle,
             "unknown" => self.unknown,
             "danger" => self.danger,
-            other => return hex(other),
+            other => return crate::tags::palette_color(other).or_else(|| hex(other)),
         })
     }
 

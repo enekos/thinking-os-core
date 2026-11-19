@@ -13,6 +13,7 @@ use artalde_core::keys::Chord;
 use artalde_core::layout::Panel;
 use artalde_core::model::{AgentState, Session, Snapshot};
 use artalde_core::store::Store;
+use artalde_core::tags::{self, Tags};
 use artalde_core::text::{clip, shell_quote};
 use artalde_core::theme::Theme;
 use artalde_mods::{Action, Context as ModContext, ModHost, ViewState};
@@ -20,8 +21,12 @@ use eframe::egui::{self, Key, Modifiers};
 
 use crate::actions::{Actions, Job};
 use crate::feed::{Feed, Msg};
+use crate::gh::Gh;
 use crate::layout_view::{self, LayoutState};
-use crate::{mod_view, style};
+use crate::panels::AgentView;
+use crate::views::{Conversations, InboxState, Logs, PrView, TAB_BAR, Tab};
+use crate::{fonts, mod_view, style};
+use artalde_core::github::{self, PrRef};
 
 const LOG_LINES: usize = 500;
 const TOAST_SECS: f64 = 4.0;
@@ -45,6 +50,20 @@ pub struct App {
     pub(crate) filter: Option<String>,
     /// Done sessions the user has seen: id → the `since` they were seen at.
     acked: HashMap<String, u64>,
+    pub(crate) tags: Tags,
+    /// The tab colour last sent to each session's terminal.
+    tab_colors: HashMap<String, (String, Option<String>)>,
+    pub(crate) label_edit: String,
+    pub(crate) settings_draft: Option<artalde_core::config::Settings>,
+    pub(crate) hook_confirm: bool,
+    pub(crate) reviewer: crate::reviewer::Reviewer,
+    /// A review to start next frame: PR and agent index.
+    pub(crate) queue_review: Option<(PrRef, usize)>,
+    pub(crate) agent_view: AgentView,
+    pub(crate) agent_query: String,
+    pub(crate) spaces_closed: Vec<String>,
+    /// The session `label_edit` was filled from.
+    pub(crate) label_for: Option<String>,
     prev_states: HashMap<String, AgentState>,
     have_snapshot: bool,
     pub(crate) log: VecDeque<String>,
@@ -55,6 +74,15 @@ pub struct App {
     pub(crate) reply: String,
     pub(crate) hide_done: bool,
     shot: Option<Shot>,
+    pub(crate) gh: Gh,
+    pub(crate) tabs: Vec<Tab>,
+    pub(crate) active: usize,
+    pub(crate) prs: HashMap<PrRef, PrView>,
+    pub(crate) repos: HashMap<String, crate::repo_view::RepoView>,
+    pub(crate) inbox: InboxState,
+    pub(crate) logs: Logs,
+    pub(crate) confirm: Option<(PrRef, github::Action)>,
+    pub(crate) conversations: Conversations,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -96,6 +124,9 @@ impl App {
     ) -> anyhow::Result<App> {
         let feed = Feed::start(&cc.egui_ctx, store, config_dir)?;
         let actions = Actions::start(&cc.egui_ctx)?;
+        let gh = Gh::start(&cc.egui_ctx)?;
+        fonts::install(&cc.egui_ctx);
+        let (tabs, active) = App::load_tabs();
         let theme = Theme::graphite();
         style::apply(&cc.egui_ctx, &theme, 13.5);
         Ok(App {
@@ -114,6 +145,17 @@ impl App {
             selected: None,
             filter: None,
             acked: HashMap::new(),
+            tags: Tags::load(&artalde_core::store::state_dir()),
+            tab_colors: HashMap::new(),
+            label_edit: String::new(),
+            settings_draft: None,
+            hook_confirm: false,
+            reviewer: crate::reviewer::Reviewer::new(),
+            queue_review: None,
+            agent_view: AgentView::default(),
+            agent_query: String::new(),
+            spaces_closed: Vec::new(),
+            label_for: None,
             prev_states: HashMap::new(),
             have_snapshot: false,
             log: VecDeque::new(),
@@ -123,6 +165,15 @@ impl App {
             spawn: None,
             reply: String::new(),
             hide_done: true,
+            gh,
+            tabs,
+            active,
+            prs: HashMap::new(),
+            repos: HashMap::new(),
+            inbox: InboxState::default(),
+            logs: Logs::new(),
+            confirm: None,
+            conversations: Conversations::new(),
             shot: std::env::var_os("ARTALDE_SCREENSHOT").map(|p| Shot {
                 path: PathBuf::from(p),
                 requested: false,
@@ -144,6 +195,45 @@ impl App {
             secs % 60,
             line.into()
         ));
+    }
+
+    /// Linear team keys from the wiki's os.yaml.
+    pub(crate) fn linear_teams(&self) -> Vec<String> {
+        artalde_core::catalog::linear_teams(&artalde_core::config::wiki_root())
+    }
+
+    pub(crate) fn palette_open(&self) -> bool {
+        self.palette.is_some() || self.spawn.is_some() || self.confirm.is_some()
+    }
+
+    pub(crate) fn toast_line(&mut self, ctx: &egui::Context, text: String) {
+        self.toast(ctx, text);
+    }
+
+    /// Whether the current layout shows the built-in panel `name`.
+    pub(crate) fn layout_shows(&self, name: &str) -> bool {
+        let Some(cfg) = &self.config else {
+            return false;
+        };
+        let Some(l) = cfg
+            .layout(&self.current_layout_name())
+            .or_else(|| cfg.layouts.first())
+        else {
+            return false;
+        };
+        fn walk(n: &artalde_core::layout::Node, name: &str) -> bool {
+            use artalde_core::layout::Node;
+            match n {
+                Node::Split { children, .. } => children.iter().any(|(_, c)| walk(c, name)),
+                Node::Stack { children, .. } => children.iter().any(|c| walk(c, name)),
+                Node::Block {
+                    panel: Panel::Builtin(b),
+                    ..
+                } => b == name,
+                Node::Block { .. } => false,
+            }
+        }
+        walk(&l.root, name)
     }
 
     fn toast(&mut self, ctx: &egui::Context, text: String) {
@@ -226,6 +316,7 @@ impl App {
             .map(|s| (s.rec.id.clone(), s.rec.state))
             .collect();
         self.acked.retain(|id, _| snap.session(id).is_some());
+        self.tab_colors.retain(|id, _| snap.session(id).is_some());
         for s in &mut snap.sessions {
             if s.rec.state == AgentState::Done && self.acked.get(&s.rec.id) == Some(&s.rec.since) {
                 s.rec.state = AgentState::Idle;
@@ -242,6 +333,7 @@ impl App {
             self.selected = snap.sessions.first().map(|s| s.rec.id.clone());
         }
         self.snap = snap;
+        self.apply_tags();
         self.have_snapshot = true;
         for (name, what, repo) in events {
             let line = format!(
@@ -260,6 +352,10 @@ impl App {
                     .map_err(|e| self.push_log(format!("notify: {e}")));
             }
         }
+    }
+
+    pub(crate) fn submit_job(&mut self, job: Job) {
+        self.submit(job);
     }
 
     fn submit(&mut self, job: Job) {
@@ -300,6 +396,50 @@ impl App {
         match self.tty_of(&id) {
             Some(tty) => self.submit(Job::Type { tty, text, enter }),
             None => self.push_log("send: that session has no terminal"),
+        }
+    }
+
+    /// Copy tags onto the snapshot's sessions and mirror colours onto
+    /// their terminal tabs.
+    fn apply_tags(&mut self) {
+        let mut jobs = Vec::new();
+        for s in &mut self.snap.sessions {
+            let tag = self.tags.get(&s.rec.id);
+            s.tag = tag.and_then(|t| t.color.clone());
+            s.label = tag.and_then(|t| t.label.clone());
+            let Some(tty) = s.rec.tty.clone() else {
+                continue;
+            };
+            let want = (tty.clone(), s.tag.clone());
+            let sent = self.tab_colors.get(&s.rec.id);
+            // Untagged sessions are left alone unless artalde coloured them.
+            if sent != Some(&want) && (s.tag.is_some() || sent.is_some()) {
+                let rgb = s
+                    .tag
+                    .as_deref()
+                    .and_then(tags::palette_color)
+                    .map(|c| [c[0], c[1], c[2]]);
+                jobs.push(Job::TabColor { tty, rgb });
+                self.tab_colors.insert(s.rec.id.clone(), want);
+            }
+        }
+        // A screenshot run never touches real terminals.
+        if self.shot.is_none() {
+            for job in jobs {
+                self.submit(job);
+            }
+        }
+        self.mod_ctx = None;
+    }
+
+    fn retag(&mut self, f: impl FnOnce(&mut Tags) -> Result<(), String>) {
+        match f(&mut self.tags).and_then(|()| {
+            self.tags
+                .save(artalde_core::now())
+                .map_err(|e| e.to_string())
+        }) {
+            Ok(()) => self.apply_tags(),
+            Err(e) => self.push_log(format!("tag: {e}")),
         }
     }
 
@@ -346,6 +486,27 @@ impl App {
                     }
                 }
             }
+            "session.tag" => {
+                // `<colour>` for the selected session, or `<id>:<colour>`.
+                let (id, color) = match arg.and_then(|a| a.rsplit_once(':')) {
+                    Some((id, c)) => (Some(id.to_owned()), Some(c)),
+                    None => (self.selected.clone(), arg),
+                };
+                match id {
+                    Some(id) => self.retag(|t| t.set_color(&id, color, artalde_core::now())),
+                    None => self.push_log("tag: select a session first"),
+                }
+            }
+            "session.label" => match self.selected.clone() {
+                Some(id) => {
+                    let label = arg.unwrap_or_default().to_owned();
+                    self.retag(|t| {
+                        t.set_label(&id, &label, artalde_core::now());
+                        Ok(())
+                    });
+                }
+                None => self.push_log("label: select a session first"),
+            },
             "session.ack" => {
                 if let Some(id) = self.target_id(arg) {
                     self.ack(&id);
@@ -412,6 +573,16 @@ impl App {
                 }
                 _ => self.push_log("url.open: only http(s) URLs"),
             },
+            "path.edit" => match arg.map(PathBuf::from) {
+                Some(p) if p.is_absolute() && p.exists() => {
+                    let app = self.settings().editor;
+                    self.submit(Job::OpenWith {
+                        app,
+                        target: p.display().to_string(),
+                    });
+                }
+                _ => self.push_log("path.edit: no such folder"),
+            },
             "path.open" => match arg.map(PathBuf::from) {
                 Some(p) if p.is_absolute() && p.exists() => self.submit(Job::Open {
                     target: p.display().to_string(),
@@ -422,7 +593,79 @@ impl App {
                 let dir = artalde_core::config::config_dir().display().to_string();
                 self.submit(Job::Open { target: dir });
             }
-            "refresh" => self.feed.refresh(),
+            "refresh" => {
+                self.feed.refresh();
+                self.refresh_inbox();
+                if let Some(Tab::Pr(pr)) = self.tabs.get(self.active).cloned() {
+                    self.load_pr(&pr);
+                }
+            }
+            "tab.close" => {
+                let i = arg.and_then(|a| a.parse().ok()).unwrap_or(self.active);
+                self.close_tab(i);
+            }
+            "tab.next" => self.active = (self.active + 1) % self.tabs.len().max(1),
+            "tab.prev" => {
+                self.active = (self.active + self.tabs.len().max(1) - 1) % self.tabs.len().max(1)
+            }
+            "tab.select" => {
+                if let Some(n) = arg.and_then(|a| a.parse::<usize>().ok()) {
+                    self.active = n.saturating_sub(1).min(self.tabs.len().saturating_sub(1));
+                }
+            }
+            "inbox.open" => self.open_tab(Tab::Inbox),
+            "repo.open" => match arg.and_then(crate::repo_view::parse_repo) {
+                Some(r) => self.open_tab(Tab::Repo(r)),
+                None => self.push_log("repo.open: owner/repo or a GitHub URL"),
+            },
+            "pr.review" => {
+                if let Some(Tab::Pr(pr)) = self.tabs.get(self.active).cloned() {
+                    let agent = self.prs.get(&pr).map_or(0, |v| v.agent);
+                    if let Some(v) = self.prs.get_mut(&pr) {
+                        v.sub = crate::views::PrSub::Review;
+                    }
+                    if !self.reviewer.runs.contains_key(&pr) {
+                        self.queue_review = Some((pr, agent));
+                    }
+                }
+            }
+            "settings.open" => {
+                self.settings_draft = None;
+                self.open_tab(Tab::Settings);
+            }
+            "appearance.toggle" | "appearance.set" => {
+                if let Some(cfg) = &self.config {
+                    let mut s = cfg.settings.clone();
+                    s.appearance = match (cmd.name.as_str(), arg) {
+                        ("appearance.set", Some(m @ ("system" | "light" | "dark"))) => m.to_owned(),
+                        _ => {
+                            if self.theme.dark {
+                                "light".into()
+                            } else {
+                                "dark".into()
+                            }
+                        }
+                    };
+                    self.theme_name = None;
+                    let dir = cfg.dir.clone();
+                    if let Err(e) = artalde_core::config::save_settings(&dir, &s) {
+                        self.push_log(format!("appearance: {e}"));
+                    }
+                    if let Some(c) = &mut self.config {
+                        c.settings = s;
+                    }
+                }
+            }
+            "pr.open" => match arg.and_then(PrRef::parse) {
+                Some(pr) => self.open_tab(Tab::Pr(pr)),
+                None => self.push_log("pr.open: owner/repo#N or a PR URL"),
+            },
+            "session.open" => {
+                if let Some(id) = self.target_id(arg) {
+                    self.select(&id);
+                    self.open_tab(Tab::Session(id));
+                }
+            }
             other => self.push_log(format!("unknown command {other:?}")),
         }
     }
@@ -552,6 +795,30 @@ impl App {
                 .unwrap_or_default()
         };
         let mut out = Vec::new();
+        if let Some(sel) = self.selected_session() {
+            for (name, _) in tags::PALETTE {
+                out.push((
+                    format!("Tag {}: {name}", sel.name()),
+                    String::new(),
+                    Command::new("session.tag", Some(name)),
+                ));
+            }
+            out.push((
+                format!("Untag {}", sel.name()),
+                String::new(),
+                Command::new("session.tag", Some("none")),
+            ));
+        }
+        for s in &self.snap.sessions {
+            for r in &s.resources {
+                let title = r.title.clone().unwrap_or_default();
+                out.push((
+                    format!("Open {} {title} — {}", r.short(), s.name()),
+                    r.state.clone().unwrap_or_default(),
+                    Command::new("url.open", Some(&r.url)),
+                ));
+            }
+        }
         for s in &self.snap.sessions {
             let place = s.repo.clone().unwrap_or_else(|| s.rec.agent.clone());
             out.push((
@@ -589,6 +856,26 @@ impl App {
                 ));
             }
         }
+        let mut repos: Vec<String> = self
+            .inbox
+            .buckets
+            .iter()
+            .flat_map(|(_, rows)| {
+                rows.iter()
+                    .filter_map(|r| r.pr.as_ref().map(|p| p.repo.clone()))
+            })
+            .chain(self.snap.prs.iter().map(|p| p.repo.clone()))
+            .chain(self.snap.spaces.iter().filter_map(|s| s.slug.clone()))
+            .collect();
+        repos.sort();
+        repos.dedup();
+        for r in repos {
+            out.push((
+                format!("Repo: {r}"),
+                "deployments · PRs".into(),
+                Command::new("repo.open", Some(&r)),
+            ));
+        }
         for sp in &self.snap.spaces {
             out.push((
                 format!("Filter: {}", sp.repo),
@@ -608,7 +895,29 @@ impl App {
         let Some(mut p) = self.palette.take() else {
             return;
         };
-        let entries = self.palette_entries();
+        let mut entries = self.palette_entries();
+        if let Some(repo) =
+            crate::repo_view::parse_repo(&p.query).filter(|_| !p.query.contains('#'))
+        {
+            entries.insert(
+                0,
+                (
+                    format!("Open repo {repo}"),
+                    String::new(),
+                    Command::new("repo.open", Some(&repo)),
+                ),
+            );
+        }
+        if let Some(pr) = PrRef::parse(&p.query) {
+            entries.insert(
+                0,
+                (
+                    format!("Open PR {pr}"),
+                    String::new(),
+                    Command::new("pr.open", Some(&pr.to_string())),
+                ),
+            );
+        }
         let mut scored: Vec<(i32, &(String, String, Command))> = entries
             .iter()
             .filter_map(|e| fuzzy(&p.query, &e.0).map(|s| (s, e)))
@@ -791,10 +1100,18 @@ impl App {
 
     fn apply_config_style(&mut self, ctx: &egui::Context) {
         let Some(cfg) = &self.config else { return };
-        let name = self
-            .theme_name
-            .clone()
-            .unwrap_or_else(|| cfg.settings.theme.clone());
+        let dark = match cfg.settings.appearance.as_str() {
+            "light" => false,
+            "dark" => true,
+            _ => ctx.system_theme().is_none_or(|t| t == egui::Theme::Dark),
+        };
+        let name = self.theme_name.clone().unwrap_or_else(|| {
+            if dark {
+                cfg.settings.theme.clone()
+            } else {
+                cfg.settings.light_theme.clone()
+            }
+        });
         let theme = cfg.theme(&name);
         let font = cfg.settings.font_size;
         #[expect(
@@ -904,7 +1221,11 @@ impl App {
         if !self.have_snapshot {
             return;
         }
-        let ready = *shot.ready_at.get_or_insert(now + 1.5);
+        let wait = std::env::var("ARTALDE_SCREENSHOT_WAIT")
+            .ok()
+            .and_then(|w| w.parse::<f64>().ok())
+            .unwrap_or(1.5);
+        let ready = *shot.ready_at.get_or_insert(now + wait);
         if shot.requested || now < ready {
             return;
         }
@@ -980,10 +1301,69 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.drain(&ctx);
+        self.drain_github(&ctx);
+        self.drain_reviews(&ctx);
+        if let Some((pr, agent)) = self.queue_review.take() {
+            self.start_agent_review(&ctx, &pr, agent);
+        }
         self.apply_config_style(&ctx);
         self.keys(&ctx);
+        self.tick_github();
 
-        let rect = ui.max_rect();
+        let full = ui.max_rect();
+        ui.painter().rect_filled(
+            full,
+            egui::CornerRadius::ZERO,
+            style::c(self.theme.background),
+        );
+        let bar = egui::Rect::from_min_size(
+            full.min + egui::vec2(8.0, 4.0),
+            egui::vec2(full.width() - 16.0, TAB_BAR),
+        );
+        self.tab_bar(ui, bar);
+        let rect = egui::Rect::from_min_max(egui::pos2(full.min.x, bar.max.y), full.max);
+        self.active = self.active.min(self.tabs.len().saturating_sub(1));
+        let page = egui::Rect::from_min_max(
+            rect.min + egui::vec2(16.0, 6.0),
+            rect.max - egui::vec2(16.0, 12.0),
+        );
+        match self.tabs.get(self.active).cloned() {
+            Some(Tab::Inbox) => {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(page));
+                child.label(egui::RichText::new("Pull requests").font(fonts::display(22.0)));
+                egui::ScrollArea::vertical()
+                    .id_salt("inbox-page")
+                    .auto_shrink([false, false])
+                    .show(&mut child, |ui| self.inbox_view(ui, false));
+                self.finish_frame(&ctx);
+                return;
+            }
+            Some(Tab::Pr(pr)) => {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(page));
+                self.pr_view(&mut child, &pr);
+                self.finish_frame(&ctx);
+                return;
+            }
+            Some(Tab::Repo(repo)) => {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(page));
+                self.repo_view(&mut child, &repo);
+                self.finish_frame(&ctx);
+                return;
+            }
+            Some(Tab::Settings) => {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(page));
+                self.settings_view(&mut child);
+                self.finish_frame(&ctx);
+                return;
+            }
+            Some(Tab::Session(id)) => {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(page));
+                self.session_view(&mut child, &id);
+                self.finish_frame(&ctx);
+                return;
+            }
+            _ => {}
+        }
         ui.painter().rect_filled(
             rect,
             egui::CornerRadius::ZERO,
@@ -1018,6 +1398,16 @@ impl eframe::App for App {
             }
         }
 
+        self.finish_frame(&ctx);
+    }
+}
+
+impl App {
+    /// Overlays, queued commands and repaint pacing, after any page.
+    fn finish_frame(&mut self, ctx: &egui::Context) {
+        let ctx = ctx.clone();
+        self.confirm_ui(&ctx);
+        self.hook_confirm_ui(&ctx);
         self.palette_ui(&ctx);
         self.spawn_ui(&ctx);
         self.toasts_ui(&ctx);

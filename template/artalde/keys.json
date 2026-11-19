@@ -7,7 +7,7 @@
   "cmd+shift+l": "layout.cycle",
   "cmd+shift+t": "theme.cycle",
   "cmd+r": "refresh",
-  "cmd+Comma": "config.open",
+  "cmd+Comma": "settings.open",
   "cmd+1": "agent.select:1",
   "cmd+2": "agent.select:2",
   "cmd+3": "agent.select:3",
@@ -16,5 +16,15 @@
   "cmd+6": "agent.select:6",
   "cmd+7": "agent.select:7",
   "cmd+8": "agent.select:8",
-  "cmd+9": "agent.select:9"
+  "cmd+9": "agent.select:9",
+  "cmd+t": "palette.open",
+  "cmd+w": "tab.close",
+  "ctrl+Tab": "tab.next",
+  "ctrl+shift+Tab": "tab.prev",
+  "cmd+shift+]": "tab.next",
+  "cmd+shift+[": "tab.prev",
+  "cmd+i": "inbox.open",
+  "cmd+o": "session.open",
+  "cmd+shift+d": "appearance.toggle",
+  "cmd+shift+r": "pr.review"
 }

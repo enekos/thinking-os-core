@@ -44,6 +44,14 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "session.focus",
         "Bring a session's terminal to the front: <session id>",
     ),
+    (
+        "session.tag",
+        "Colour-tag the selected session (also its iTerm tab): <colour|none> or <id>:<colour>",
+    ),
+    (
+        "session.label",
+        "Name the selected session: <text>, empty clears",
+    ),
     ("session.ack", "Mark a done session as seen: <session id>"),
     (
         "session.send",
@@ -65,8 +73,36 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("inbox.toggle", "Tick or untick a proposal: <index>"),
     ("url.open", "Open a URL: <url>"),
     ("path.open", "Open a folder in Finder: <path>"),
+    (
+        "path.edit",
+        "Open a folder in the editor from settings.json: <path>",
+    ),
     ("config.open", "Open the config folder"),
     ("refresh", "Probe everything now"),
+    ("settings.open", "Open Settings"),
+    (
+        "repo.open",
+        "Open a repository: its PRs, deployments and releases: <owner/repo>",
+    ),
+    (
+        "pr.review",
+        "Review the open PR with an agent; you decide on every comment",
+    ),
+    ("appearance.toggle", "Switch between light and dark"),
+    ("appearance.set", "Set the appearance: <system|light|dark>"),
+    ("inbox.open", "Open the pull-request inbox tab"),
+    (
+        "pr.open",
+        "Open a pull request as a tab: <owner/repo#N or URL>",
+    ),
+    (
+        "session.open",
+        "Open the selected agent session as a tab: [<session id>]",
+    ),
+    ("tab.close", "Close the current tab: [<n>]"),
+    ("tab.next", "Next tab"),
+    ("tab.prev", "Previous tab"),
+    ("tab.select", "Go to tab <n>"),
 ];
 
 #[cfg(test)]

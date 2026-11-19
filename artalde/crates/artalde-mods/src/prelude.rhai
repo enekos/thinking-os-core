@@ -3,6 +3,7 @@
 
 fn text(s) { #{ t: "text", text: `${s}` } }
 fn heading(s) { #{ t: "heading", text: `${s}` } }
+fn md(s) { #{ t: "md", text: `${s}` } }
 fn row(c) { #{ t: "row", children: c } }
 fn col(c) { #{ t: "col", children: c } }
 fn wrap(c) { #{ t: "wrap", children: c } }

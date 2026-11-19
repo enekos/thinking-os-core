@@ -53,6 +53,13 @@ fn draw(
             n.bold = true;
             Some(ui.label(rich(theme, &n, None)))
         }
+        Kind::Markdown => {
+            let out = crate::markdown::show(ui, theme, &node.text, node.size.unwrap_or(13.5));
+            clicked.extend(out.clicked_links.into_iter().map(|u| {
+                Action::Command(artalde_core::command::Command::new("url.open", Some(&u)))
+            }));
+            None
+        }
         Kind::Row => Some(
             ui.horizontal(|ui| children(ui, theme, node, clicked, path))
                 .response,

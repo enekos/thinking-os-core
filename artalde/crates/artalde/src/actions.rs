@@ -30,9 +30,24 @@ pub enum Job {
     Open {
         target: String,
     },
+    /// Run a program without a shell; its failure is logged.
+    Run {
+        program: String,
+        args: Vec<String>,
+    },
+    /// `open -a <app> <target>`.
+    OpenWith {
+        app: String,
+        target: String,
+    },
     Notify {
         title: String,
         body: String,
+    },
+    /// Colour the terminal tab on `tty` (iTerm2), or reset it with `None`.
+    TabColor {
+        tty: String,
+        rgb: Option<[u8; 3]>,
     },
 }
 
@@ -204,6 +219,30 @@ fn osascript(script: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// iTerm2's tab-colour escape, written straight to the session's terminal.
+fn tab_color(tty: &str, rgb: Option<[u8; 3]>) -> Result<(), String> {
+    use std::io::Write;
+    let name = tty.trim_start_matches("/dev/");
+    let valid = name.starts_with("tty")
+        && name
+            .get(3..)
+            .is_some_and(|r| r.chars().all(|c| c.is_ascii_alphanumeric()));
+    if !valid {
+        return Err(format!("{tty:?} is not a terminal"));
+    }
+    let seq = match rgb {
+        Some([r, g, b]) => format!(
+            "\x1b]6;1;bg;red;brightness;{r}\x07\x1b]6;1;bg;green;brightness;{g}\x07\x1b]6;1;bg;blue;brightness;{b}\x07"
+        ),
+        None => "\x1b]6;1;bg;*;default\x07".to_owned(),
+    };
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .open(dev(name))
+        .map_err(|e| e.to_string())?;
+    f.write_all(seq.as_bytes()).map_err(|e| e.to_string())
+}
+
 fn dev(tty: &str) -> String {
     if tty.starts_with("/dev/") {
         tty.to_owned()
@@ -222,6 +261,32 @@ fn run(job: &Job) -> Option<String> {
         }
         Job::Spawn { line } => osascript(SPAWN, &[line]).map(|_| Some(format!("started: {line}"))),
         Job::Notify { title, body } => osascript(NOTIFY, &[title, body]).map(|_| None),
+        Job::OpenWith { app, target } => Command::new("open")
+            .args(["-a", app, target])
+            .stdin(Stdio::null())
+            .status()
+            .map_err(|e| e.to_string())
+            .and_then(|s| {
+                if s.success() {
+                    Ok(None)
+                } else {
+                    Err(format!("open -a {app} failed"))
+                }
+            }),
+        Job::Run { program, args } => Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| e.to_string())
+            .and_then(|o| {
+                let text = String::from_utf8_lossy(&o.stdout).trim().to_owned();
+                if o.status.success() {
+                    Ok(Some(text))
+                } else {
+                    Err(String::from_utf8_lossy(&o.stderr).trim().to_owned())
+                }
+            }),
+        Job::TabColor { tty, rgb } => tab_color(tty, *rgb).map(|()| None),
         Job::Open { target } => Command::new("open")
             .arg(target)
             .stdin(Stdio::null())
@@ -248,5 +313,8 @@ fn label(job: &Job) -> &'static str {
         Job::Spawn { .. } => "spawn",
         Job::Open { .. } => "open",
         Job::Notify { .. } => "notify",
+        Job::TabColor { .. } => "tab colour",
+        Job::OpenWith { .. } => "editor",
+        Job::Run { .. } => "run",
     }
 }

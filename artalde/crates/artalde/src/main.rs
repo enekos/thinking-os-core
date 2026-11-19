@@ -3,11 +3,22 @@
 
 mod actions;
 mod app;
+mod diff_view;
 mod feed;
+mod fonts;
+mod gfm;
+mod gh;
+mod kit;
 mod layout_view;
+mod markdown;
 mod mod_view;
 mod panels;
+mod repo_view;
+mod review_view;
+mod reviewer;
+mod settings_view;
 mod style;
+mod views;
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -31,6 +42,11 @@ usage:
                              report state from any other agent (working|blocked|done|idle)
   artalde check              load the config folder, render every mod against live data
   artalde snapshot           print one probe pass as JSON
+  artalde inbox              list your PR inbox (review requested, mine, involved, merged)
+    artalde pr <owner/repo#N|url>  summarise one PR: state, checks, reviews, threads
+    artalde repo <owner/repo>  open PRs, what is deployed where, recent releases
+  artalde review <owner/repo#N> [--agent NAME]  run a read-only agent review; its comments
+                             are saved as proposals for the PR's Review tab (nothing is posted)
   artalde commands           list commands for keys.json and mods
   artalde hooks [--install]  print (or merge into ~/.claude/settings.json) the hook entries
   artalde init               write missing default files into the config folder
@@ -81,6 +97,10 @@ fn main() -> ExitCode {
             }
             Ok(ExitCode::SUCCESS)
         }
+        Some("inbox") => inbox_cli(),
+        Some("pr") => pr_cli(args.get(1).map(String::as_str).unwrap_or_default()),
+        Some("review") => review_cli(args.get(1..).unwrap_or_default()),
+        Some("repo") => repo_cli(args.get(1).map(String::as_str).unwrap_or_default()),
         Some("hooks") => hooks(args.get(1).is_some_and(|a| a == "--install")),
         Some("init") => {
             let dir = config::config_dir();
@@ -325,5 +345,168 @@ fn hooks(install: bool) -> anyhow::Result<ExitCode> {
         added.join(", "),
         backup.display()
     );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn inbox_cli() -> anyhow::Result<ExitCode> {
+    use artalde_core::github::{self, Bucket};
+    let since = since_days(14);
+    for b in Bucket::ALL {
+        let (_, rows) = github::fetch_bucket(b, &since).map_err(|e| anyhow::anyhow!(e))?;
+        println!("## {} ({})", b.label(), rows.len());
+        for r in rows {
+            let pr = r.pr.map(|p| p.to_string()).unwrap_or_default();
+            println!("{pr:32} {:8} {:17} {}", r.checks, r.review, r.title);
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn pr_cli(arg: &str) -> anyhow::Result<ExitCode> {
+    use artalde_core::github::{self, PrRef};
+    let pr = PrRef::parse(arg).ok_or_else(|| anyhow::anyhow!("usage: artalde pr owner/repo#N"))?;
+    let d = github::fetch_detail(&pr).map_err(|e| anyhow::anyhow!(e))?;
+    println!("{pr} — {}", d.title);
+    println!(
+        "{} {}  {} → {}  +{} -{}  {} files",
+        d.state,
+        if d.draft { "draft" } else { "" },
+        d.head,
+        d.base,
+        d.additions,
+        d.deletions,
+        d.changed_files
+    );
+    println!(
+        "merge: {} {}  review: {}  checks: {}",
+        d.mergeable,
+        d.merge_state,
+        d.review,
+        github::checks_summary(&d)
+    );
+    println!(
+        "timeline: {} items · threads: {} ({} open)",
+        d.timeline.len(),
+        d.threads.len(),
+        d.threads.iter().filter(|t| !t.resolved).count()
+    );
+    for c in d.checks.iter().filter(|c| c.failed()) {
+        println!(
+            "  failing: {} / {} (job {:?})",
+            c.workflow, c.name, c.job_id
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `YYYY-MM-DD`, `days` ago.
+fn since_days(days: u64) -> String {
+    civil_date(now().saturating_sub(days * 86_400))
+}
+
+/// `YYYY-MM-DD` for Unix seconds `t`.
+pub(crate) fn civil_date(t: u64) -> String {
+    let (y, m, d) = civil(t / 86_400);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Days since the epoch → (year, month, day).
+fn civil(days: u64) -> (i64, u32, u32) {
+    let z = i64::try_from(days).unwrap_or(0) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = u32::try_from(doy - (153 * mp + 2) / 5 + 1).unwrap_or(1);
+    let m = u32::try_from(if mp < 10 { mp + 3 } else { mp - 9 }).unwrap_or(1);
+    (yoe + era * 400 + i64::from(m <= 2), m, d)
+}
+
+fn review_cli(args: &[String]) -> anyhow::Result<ExitCode> {
+    use artalde_core::github::{self, PrRef};
+    use artalde_core::review;
+    let pr = args
+        .first()
+        .and_then(|a| PrRef::parse(a))
+        .ok_or_else(|| anyhow::anyhow!("usage: artalde review owner/repo#N [--agent NAME]"))?;
+    let cfg = config::Config::load(&config::config_dir(), None);
+    let agents = cfg.settings.review_agents;
+    let agent = match flag(args, "--agent") {
+        Some(name) => agents.iter().find(|a| a.name.eq_ignore_ascii_case(name)),
+        None => agents.first(),
+    }
+    .ok_or_else(|| anyhow::anyhow!("no such review agent in settings.json"))?;
+    let detail = github::fetch_detail(&pr).map_err(|e| anyhow::anyhow!(e))?;
+    let files = github::fetch_diff(&pr).map_err(|e| anyhow::anyhow!(e))?;
+    let dir = review::review_dir(&store::state_dir(), &pr);
+    eprintln!(
+        "{}: {} is reviewing (read-only) in {}",
+        pr,
+        agent.name,
+        dir.display()
+    );
+    let (pid_tx, _pid_rx) = std::sync::mpsc::channel();
+    let reply = reviewer::run(&pr, &agent.command, &detail, &dir, None, &pid_tx)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let run = review::parse_agent_output(&reply).map_err(|e| anyhow::anyhow!(e))?;
+    let mut pending = review::load(&dir);
+    let (anchored, loose) = pending.absorb(run, &files);
+    review::save(&dir, &pending)?;
+    println!("summary: {}", pending.summary);
+    println!("verdict: {}", pending.agent_verdict);
+    for d in pending
+        .drafts
+        .iter()
+        .filter(|d| d.state == review::DraftState::Proposed)
+    {
+        println!(
+            "- [{}] {}:{} {} — {}",
+            d.severity,
+            d.path,
+            d.line,
+            d.title,
+            artalde_core::text::clip(&d.body, 120)
+        );
+    }
+    println!(
+        "{anchored} proposed on lines, {loose} general notes · open the PR's Review tab to decide"
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn repo_cli(repo: &str) -> anyhow::Result<ExitCode> {
+    use artalde_core::github;
+    if !repo.contains('/') {
+        anyhow::bail!("usage: artalde repo owner/repo");
+    }
+    let r = github::fetch_repo(repo).map_err(|e| anyhow::anyhow!(e))?;
+    let t = now();
+    println!("{} — {} ({})", r.name, r.description, r.default_branch);
+    println!("deployed:");
+    for d in r.environments() {
+        println!(
+            "  {:12} {:10} {:8} {} by {}",
+            d.environment,
+            d.reference,
+            d.status,
+            github::age(&d.created, t),
+            d.creator
+        );
+    }
+    println!(
+        "open PRs: {} · merged recently: {} · releases: {}",
+        r.open.len(),
+        r.merged.len(),
+        r.releases.len()
+    );
+    for p in r.open.iter().take(10) {
+        println!(
+            "  #{:<6} {:8} {}",
+            p.pr.as_ref().map_or(0, |x| x.number),
+            p.checks,
+            p.title
+        );
+    }
     Ok(ExitCode::SUCCESS)
 }

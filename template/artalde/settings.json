@@ -1,11 +1,27 @@
 {
   "layout": "main",
   "theme": "graphite",
+  "light_theme": "paper",
+  "appearance": "system",
   "notify": true,
   "inbox_days": 2,
   "gh": true,
   "spawn_worktree": "zz -c {repo}@{branch} {agent} {prompt}",
   "spawn_here": "cd {dir} && {agent} {prompt}",
-  "agents": ["claude", "codex"],
-  "font_size": 13.5
+  "agents": [
+    "claude",
+    "codex"
+  ],
+  "font_size": 13.5,
+  "editor": "Zed",
+  "review_agents": [
+    {
+      "name": "Claude",
+      "command": "claude -p --output-format text --allowedTools Read Grep Glob --add-dir {dir} {checkout}"
+    },
+    {
+      "name": "Codex",
+      "command": "codex exec --sandbox read-only --skip-git-repo-check -C {dir} -"
+    }
+  ]
 }

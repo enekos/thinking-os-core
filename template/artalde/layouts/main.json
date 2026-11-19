@@ -1,21 +1,18 @@
 {
-  "title": "artalde",
+  "title": "Dashboard",
   "root": { "column": [
     { "row": [
       { "column": [
-        { "block": "spaces", "title": "Spaces" },
-        { "block": "inbox", "title": "zaindu" }
-      ], "size": { "px": 290 }, "min": 200, "max": 520, "resizable": true },
-      { "column": [
-        { "block": "mod:pulse", "size": { "px": 44 }, "min": 36, "padding": 6 },
-        { "block": "agents", "title": "Agents" }
-      ] },
+        { "block": "spaces", "title": "Spaces", "size": { "weight": 1 } },
+        { "block": "inbox", "title": "zaindu", "size": { "weight": 1.6 } }
+      ], "size": { "px": 300 }, "min": 220, "max": 520, "resizable": true, "gap": 8 },
+      { "block": "agents", "title": "Agents", "padding": 14 },
       { "stack": [
         { "block": "detail", "title": "Session" },
-        { "block": "prs", "title": "PRs" },
+        { "block": "prs", "title": "Pull requests" },
         { "block": "log", "title": "Log" }
-      ], "size": { "px": 380 }, "min": 260, "max": 700, "resizable": true }
-    ] },
-    { "block": "status", "size": { "px": 28 }, "min": 24, "padding": 5, "border": false, "background": "background" }
+      ], "size": { "px": 400 }, "min": 300, "max": 720, "resizable": true, "padding": 14 }
+    ], "gap": 8 },
+    { "block": "status", "size": { "px": 30 }, "min": 26, "padding": 6, "border": false, "background": "background" }
   ] }
 }

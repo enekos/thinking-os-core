@@ -53,7 +53,10 @@ pub fn apply(ctx: &egui::Context, theme: &Theme, font_size: f32) {
         ),
         (
             TextStyle::Heading,
-            FontId::new(size + 4.0, FontFamily::Proportional),
+            FontId::new(
+                size + 5.0,
+                FontFamily::Name(crate::fonts::DISPLAY_FAMILY.into()),
+            ),
         ),
         (
             TextStyle::Monospace,
