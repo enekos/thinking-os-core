@@ -153,6 +153,7 @@ pub struct PrRow {
     pub checks: String,
     pub labels: Vec<String>,
     pub comments: u64,
+    pub merged_at: String,
 }
 
 fn s(v: &Value, ptr: &str) -> String {
@@ -223,6 +224,7 @@ fn parse_row(v: &Value) -> PrRow {
             .unwrap_or_default(),
         labels: nodes(v, "/labels/nodes").map(|l| s(l, "/name")).collect(),
         comments: n(v, "/comments/totalCount"),
+        merged_at: s(v, "/mergedAt"),
     }
 }
 
@@ -849,6 +851,156 @@ impl Action {
             )],
         })
     }
+}
+
+/// One GitHub deployment and its latest status.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Deployment {
+    pub environment: String,
+    /// `ACTIVE`, `INACTIVE`, `IN_PROGRESS`, `FAILURE`, `ERROR`, `PENDING`, …
+    pub state: String,
+    pub created: String,
+    pub creator: String,
+    /// The deployed ref, usually a version tag.
+    pub reference: String,
+    pub sha: String,
+    pub headline: String,
+    pub status: String,
+    pub description: String,
+    pub env_url: String,
+    pub log_url: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Release {
+    pub tag: String,
+    pub name: String,
+    pub published: String,
+    pub author: String,
+    pub body: String,
+    pub url: String,
+    pub prerelease: bool,
+}
+
+/// A repository's page: open and merged PRs, deployments, releases.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RepoDetail {
+    pub name: String,
+    pub description: String,
+    pub url: String,
+    pub private: bool,
+    pub default_branch: String,
+    pub open: Vec<PrRow>,
+    pub merged: Vec<PrRow>,
+    /// Newest first.
+    pub deployments: Vec<Deployment>,
+    pub releases: Vec<Release>,
+}
+
+impl RepoDetail {
+    /// The newest deployment of each environment, production last.
+    pub fn environments(&self) -> Vec<&Deployment> {
+        let mut seen: Vec<&Deployment> = Vec::new();
+        for d in &self.deployments {
+            if !seen.iter().any(|s| s.environment == d.environment) {
+                seen.push(d);
+            }
+        }
+        let rank = |e: &str| match e.to_lowercase().as_str() {
+            e if e.contains("dev") => 0,
+            e if e.contains("stag") => 1,
+            e if e.contains("prod") => 3,
+            _ => 2,
+        };
+        seen.sort_by_key(|d| (rank(&d.environment), d.environment.clone()));
+        seen
+    }
+}
+
+const REPO_QUERY: &str = "query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    nameWithOwner description url isPrivate defaultBranchRef { name }
+    open: pullRequests(states: OPEN, first: 50, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { SUMMARY } }
+    merged: pullRequests(states: MERGED, first: 25, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { SUMMARY mergedAt } }
+    deployments(last: 40) { nodes {
+      environment state createdAt creator { login } ref { name } commit { abbreviatedOid messageHeadline }
+      latestStatus { state description environmentUrl logUrl }
+    } }
+    releases(first: 15, orderBy: { field: CREATED_AT, direction: DESC }) { nodes {
+      tagName name publishedAt isPrerelease url author { login } description
+    } }
+  }
+}";
+
+pub fn repo_request(repo: &str) -> Value {
+    let (owner, name) = repo.split_once('/').unwrap_or((repo, ""));
+    json!({ "query": REPO_QUERY.replace("SUMMARY", SUMMARY_FIELDS), "variables": { "owner": owner, "name": name } })
+}
+
+pub fn parse_repo(v: &Value) -> Option<RepoDetail> {
+    let r = v.pointer("/data/repository").filter(|r| !r.is_null())?;
+    let rows = |ptr: &str| {
+        nodes(r, ptr)
+            .filter(|n| n.get("number").is_some())
+            .map(parse_row)
+            .collect::<Vec<_>>()
+    };
+    let mut deployments: Vec<Deployment> = nodes(r, "/deployments/nodes")
+        .map(|d| Deployment {
+            environment: s(d, "/environment"),
+            state: s(d, "/state"),
+            created: s(d, "/createdAt"),
+            creator: s(d, "/creator/login"),
+            reference: s(d, "/ref/name"),
+            sha: s(d, "/commit/abbreviatedOid"),
+            headline: s(d, "/commit/messageHeadline"),
+            status: s(d, "/latestStatus/state"),
+            description: s(d, "/latestStatus/description"),
+            env_url: s(d, "/latestStatus/environmentUrl"),
+            log_url: s(d, "/latestStatus/logUrl"),
+        })
+        .collect();
+    deployments.sort_by(|a, b| b.created.cmp(&a.created));
+    Some(RepoDetail {
+        name: s(r, "/nameWithOwner"),
+        description: s(r, "/description"),
+        url: s(r, "/url"),
+        private: b(r, "/isPrivate"),
+        default_branch: s(r, "/defaultBranchRef/name"),
+        open: rows("/open/nodes"),
+        merged: rows("/merged/nodes"),
+        deployments,
+        releases: nodes(r, "/releases/nodes")
+            .map(|x| Release {
+                tag: s(x, "/tagName"),
+                name: s(x, "/name"),
+                published: s(x, "/publishedAt"),
+                author: s(x, "/author/login"),
+                body: s(x, "/description"),
+                url: s(x, "/url"),
+                prerelease: b(x, "/isPrerelease"),
+            })
+            .collect(),
+    })
+}
+
+pub fn fetch_repo(repo: &str) -> Result<RepoDetail, String> {
+    let v = graphql_exec(&repo_request(repo))?;
+    parse_repo(&v).ok_or_else(|| format!("{repo}: not found"))
+}
+
+/// `owner/repo` from a git remote URL (`git@github.com:o/r.git`,
+/// `https://github.com/o/r`).
+pub fn slug_from_remote(url: &str) -> Option<String> {
+    let rest = url
+        .trim()
+        .split("github.com")
+        .nth(1)?
+        .trim_start_matches([':', '/']);
+    let slug = rest.trim_end_matches('/').trim_end_matches(".git");
+    let mut parts = slug.split('/');
+    let (o, r) = (parts.next()?, parts.next()?);
+    (!o.is_empty() && !r.is_empty() && parts.next().is_none()).then(|| format!("{o}/{r}"))
 }
 
 /// Run one `gh` invocation; stdout on success, stderr's last line on failure.
@@ -1534,6 +1686,51 @@ mod tests {
         assert!(t.starts_with("line 42"), "{t}");
         assert!(t.contains("error[E0308]"));
         assert!(!t.contains("2026-11-19T"));
+    }
+
+    #[test]
+    fn repo_parses_deployments_by_environment() {
+        let v: Value = serde_json::from_str(r#"{"data":{"repository":{"nameWithOwner":"o/r","defaultBranchRef":{"name":"master"},
+          "open":{"nodes":[{"number":1,"title":"a","repository":{"nameWithOwner":"o/r"}}]},
+          "merged":{"nodes":[{"number":2,"title":"b","mergedAt":"2026-11-19T10:00:00Z","repository":{"nameWithOwner":"o/r"}}]},
+          "deployments":{"nodes":[
+            {"environment":"production","state":"INACTIVE","createdAt":"2026-11-18T09:00:00Z","ref":{"name":"v1.0.0"}},
+            {"environment":"staging","state":"ACTIVE","createdAt":"2026-11-19T09:00:00Z","ref":{"name":"v1.1.0"}},
+            {"environment":"production","state":"ACTIVE","createdAt":"2026-11-19T10:00:00Z","ref":{"name":"v1.0.3"},"latestStatus":{"state":"SUCCESS"}},
+            {"environment":"dev","state":"ACTIVE","createdAt":"2026-11-19T11:00:00Z","ref":{"name":"v1.2.0"}}]},
+          "releases":{"nodes":[{"tagName":"v1.2.0","author":{"login":"x"}}]}}}}"#).unwrap();
+        let r = parse_repo(&v).unwrap();
+        assert_eq!(
+            (r.open.len(), r.merged[0].merged_at.as_str()),
+            (1, "2026-11-19T10:00:00Z")
+        );
+        let envs: Vec<(&str, &str)> = r
+            .environments()
+            .iter()
+            .map(|d| (d.environment.as_str(), d.reference.as_str()))
+            .collect();
+        assert_eq!(
+            envs,
+            [
+                ("dev", "v1.2.0"),
+                ("staging", "v1.1.0"),
+                ("production", "v1.0.3")
+            ]
+        );
+        assert_eq!(r.releases[0].tag, "v1.2.0");
+    }
+
+    #[test]
+    fn remotes_give_slugs() {
+        assert_eq!(
+            slug_from_remote("git@github.com:join-com/data.git").as_deref(),
+            Some("join-com/data")
+        );
+        assert_eq!(
+            slug_from_remote("https://github.com/enekos/zz").as_deref(),
+            Some("enekos/zz")
+        );
+        assert_eq!(slug_from_remote("https://gitlab.com/a/b"), None);
     }
 
     #[test]

@@ -34,6 +34,7 @@ pub enum Tab {
     Pr(PrRef),
     Session(String),
     Settings,
+    Repo(String),
 }
 
 impl Tab {
@@ -44,6 +45,7 @@ impl Tab {
             Tab::Pr(p) => format!("pr:{p}"),
             Tab::Session(id) => format!("session:{id}"),
             Tab::Settings => "settings".into(),
+            Tab::Repo(r) => format!("repo:{r}"),
         }
     }
 
@@ -54,6 +56,7 @@ impl Tab {
             None if s == "settings" => Some(Tab::Settings),
             Some(("pr", r)) => PrRef::parse(r).map(Tab::Pr),
             Some(("session", id)) if !id.is_empty() => Some(Tab::Session(id.to_owned())),
+            Some(("repo", r)) => crate::repo_view::parse_repo(r).map(Tab::Repo),
             _ => None,
         }
     }
@@ -125,7 +128,7 @@ pub type Logs = HashMap<u64, Option<Result<String, String>>>;
 /// Conversation cache: transcript → (mtime, turns).
 pub type Conversations = HashMap<PathBuf, (SystemTime, Vec<Turn>)>;
 
-fn check_color(theme: &artalde_core::theme::Theme, verdict: &str) -> Color32 {
+pub(crate) fn check_color(theme: &artalde_core::theme::Theme, verdict: &str) -> Color32 {
     style::c(match verdict {
         "SUCCESS" | "NEUTRAL" => theme.done,
         "FAILURE" | "ERROR" | "TIMED_OUT" | "CANCELLED" | "STARTUP_FAILURE" | "ACTION_REQUIRED" => {
@@ -163,6 +166,12 @@ impl App {
             && self.inbox.error.is_none()
         {
             self.refresh_inbox();
+        }
+        if let Some(Tab::Repo(repo)) = self.tabs.get(self.active).cloned() {
+            let v = self.repos.entry(repo.clone()).or_default();
+            if !v.loading && v.loaded_at.is_some() && due(v.loaded_at, DETAIL_EVERY_SECS) {
+                self.load_repo(&repo);
+            }
         }
         if let Some(Tab::Pr(pr)) = self.tabs.get(self.active).cloned() {
             let view = self.prs.entry(pr.clone()).or_default();
@@ -238,6 +247,18 @@ impl App {
                             if v.method.is_none_or(|m| !d.merge_methods.contains(&m)) {
                                 v.method = d.merge_methods.first().copied();
                             }
+                            v.detail = Some(d);
+                            v.error = None;
+                        }
+                        Err(e) => v.error = Some(e),
+                    }
+                }
+                Res::Repo(repo, r) => {
+                    let v = self.repos.entry(repo).or_default();
+                    v.loading = false;
+                    v.loaded_at = Some(Instant::now());
+                    match r {
+                        Ok(d) => {
                             v.detail = Some(d);
                             v.error = None;
                         }
@@ -396,6 +417,7 @@ impl App {
                 )
             }
             Tab::Settings => ("⚙".into(), "Settings".into()),
+            Tab::Repo(r) => ("▣".into(), r.rsplit('/').next().unwrap_or(r).to_owned()),
             Tab::Session(id) => (
                 "●".into(),
                 self.snap
@@ -955,8 +977,19 @@ impl App {
                 _ => ("Open", theme.done),
             };
             pill(ui, state_text, style::c(state_color), &theme);
+            if ui
+                .link(
+                    RichText::new(&pr.repo)
+                        .monospace()
+                        .color(style::c(theme.dim)),
+                )
+                .on_hover_text("Open the repository")
+                .clicked()
+            {
+                self.open_tab(Tab::Repo(pr.repo.clone()));
+            }
             ui.label(
-                RichText::new(pr.to_string())
+                RichText::new(format!("#{}", pr.number))
                     .monospace()
                     .color(style::c(theme.dim)),
             );

@@ -73,4 +73,5 @@ fn render(ctx) {
 `session.ack[:<id>]`, `session.tag:<colour|none>` (or `<id>:<colour>`), `session.label:<text>`, `session.send:<text>`, `space.filter:<repo>`, `spawn.open`, `layout.select:<name>`,
 `layout.cycle`, `theme.select:<name>`, `theme.cycle`, `url.open:<url>`, `path.open:<path>`, `palette.open`, `refresh`,
 `settings.open` (⌘,), `appearance.toggle` (⇧⌘D), `appearance.set:<system|light|dark>`, `path.edit:<path>`,
+`pr.review` (⇧⌘R: agent-assisted review; proposals wait for your decision, nothing posts until Submit), `repo.open:<owner/repo>` (PRs, deployments per environment, releases),
 `inbox.open`, `pr.open:<owner/repo#N>`, `session.open[:<id>]`, `tab.close`, `tab.next`, `tab.prev`, `tab.select:<n>`.

@@ -16,6 +16,7 @@ pub enum Req {
     },
     Detail(PrRef),
     Diff(PrRef),
+    Repo(String),
     Log {
         pr: PrRef,
         job: u64,
@@ -37,6 +38,10 @@ pub enum Res {
     },
     Detail(PrRef, Result<Box<PrDetail>, String>),
     Diff(PrRef, Result<Vec<DiffFile>, String>),
+    Repo(
+        String,
+        Result<Box<artalde_core::github::RepoDetail>, String>,
+    ),
     Log {
         job: u64,
         log: Result<String, String>,
@@ -149,6 +154,10 @@ fn handle(req: Req, emit: &mut dyn FnMut(Res) -> bool) -> bool {
         Req::Diff(pr) => {
             let r = github::fetch_diff(&pr);
             Res::Diff(pr, r)
+        }
+        Req::Repo(repo) => {
+            let r = github::fetch_repo(&repo).map(Box::new);
+            Res::Repo(repo, r)
         }
         Req::Log { pr, job } => Res::Log {
             job,

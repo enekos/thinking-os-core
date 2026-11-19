@@ -528,7 +528,27 @@ impl App {
                 let arg = if filtered { "" } else { sp.repo.as_str() };
                 self.queue.push(Command::new("space.filter", Some(arg)));
             }
-            resp.on_hover_text("Click to expand · double-click to filter agents");
+            let slug = sp.slug.clone();
+            resp.on_hover_text(
+                "Click to expand · double-click to filter agents · right-click for more",
+            )
+            .context_menu(|ui| {
+                if let Some(s) = &slug
+                    && ui.button(format!("Open {s}")).clicked()
+                {
+                    self.queue.push(Command::new("repo.open", Some(s)));
+                    ui.close();
+                }
+                if ui.button("Filter agents to this repo").clicked() {
+                    self.queue
+                        .push(Command::new("space.filter", Some(&sp.repo)));
+                    ui.close();
+                }
+                if ui.button("New agent in a new worktree").clicked() {
+                    self.queue.push(Command::new("spawn.open", Some(&sp.repo)));
+                    ui.close();
+                }
+            });
             if !open {
                 continue;
             }

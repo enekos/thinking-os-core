@@ -187,6 +187,8 @@ pub struct Worktree {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Space {
     pub repo: String,
+    /// `owner/repo` on GitHub, from the `origin` remote.
+    pub slug: Option<String>,
     /// The main checkout.
     pub root: PathBuf,
     pub worktrees: Vec<Worktree>,

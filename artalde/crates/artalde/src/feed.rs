@@ -563,10 +563,12 @@ impl Prober {
                     .iter()
                     .filter_map(|p| probe::worktree_status(p))
                     .collect();
+                let slug = probe::remote_slug(&root);
                 Space {
                     repo,
                     root,
                     worktrees,
+                    slug,
                 }
             })
             .collect()

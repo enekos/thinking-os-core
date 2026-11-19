@@ -56,7 +56,12 @@ Agents other than Claude report with
 - Actions: approve, request changes, comment, review comment, merge (allowed
   methods, delete branch), auto-merge, update branch, ready / draft, close /
   reopen. Irreversible ones ask first; none retries. All go through `gh`.
-- Headless: `artalde inbox`, `artalde pr <owner/repo#N>`.
+- Headless: `artalde inbox`, `artalde pr <owner/repo#N>`, `artalde repo <owner/repo>` (what is
+  deployed where), `artalde review <owner/repo#N> [--agent NAME]` (read-only agent review; its
+  proposals land in the PR's Review tab for the user to accept or dismiss — never posted by itself).
+- Review agents live in settings.json `review_agents` (`{dir}` holds pr.md + pr.diff, `{checkout}`
+  the head-branch worktree if one exists); runs and their logs are under
+  `~/.local/state/artalde/reviews/<owner>__<repo>__<n>/`.
 
 ## Debug state
 

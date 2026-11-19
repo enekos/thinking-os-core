@@ -78,6 +78,7 @@ pub struct App {
     pub(crate) tabs: Vec<Tab>,
     pub(crate) active: usize,
     pub(crate) prs: HashMap<PrRef, PrView>,
+    pub(crate) repos: HashMap<String, crate::repo_view::RepoView>,
     pub(crate) inbox: InboxState,
     pub(crate) logs: Logs,
     pub(crate) confirm: Option<(PrRef, github::Action)>,
@@ -168,6 +169,7 @@ impl App {
             tabs,
             active,
             prs: HashMap::new(),
+            repos: HashMap::new(),
             inbox: InboxState::default(),
             logs: Logs::new(),
             confirm: None,
@@ -612,6 +614,10 @@ impl App {
                 }
             }
             "inbox.open" => self.open_tab(Tab::Inbox),
+            "repo.open" => match arg.and_then(crate::repo_view::parse_repo) {
+                Some(r) => self.open_tab(Tab::Repo(r)),
+                None => self.push_log("repo.open: owner/repo or a GitHub URL"),
+            },
             "pr.review" => {
                 if let Some(Tab::Pr(pr)) = self.tabs.get(self.active).cloned() {
                     let agent = self.prs.get(&pr).map_or(0, |v| v.agent);
@@ -850,6 +856,26 @@ impl App {
                 ));
             }
         }
+        let mut repos: Vec<String> = self
+            .inbox
+            .buckets
+            .iter()
+            .flat_map(|(_, rows)| {
+                rows.iter()
+                    .filter_map(|r| r.pr.as_ref().map(|p| p.repo.clone()))
+            })
+            .chain(self.snap.prs.iter().map(|p| p.repo.clone()))
+            .chain(self.snap.spaces.iter().filter_map(|s| s.slug.clone()))
+            .collect();
+        repos.sort();
+        repos.dedup();
+        for r in repos {
+            out.push((
+                format!("Repo: {r}"),
+                "deployments · PRs".into(),
+                Command::new("repo.open", Some(&r)),
+            ));
+        }
         for sp in &self.snap.spaces {
             out.push((
                 format!("Filter: {}", sp.repo),
@@ -870,6 +896,18 @@ impl App {
             return;
         };
         let mut entries = self.palette_entries();
+        if let Some(repo) =
+            crate::repo_view::parse_repo(&p.query).filter(|_| !p.query.contains('#'))
+        {
+            entries.insert(
+                0,
+                (
+                    format!("Open repo {repo}"),
+                    String::new(),
+                    Command::new("repo.open", Some(&repo)),
+                ),
+            );
+        }
         if let Some(pr) = PrRef::parse(&p.query) {
             entries.insert(
                 0,
@@ -1303,6 +1341,12 @@ impl eframe::App for App {
             Some(Tab::Pr(pr)) => {
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(page));
                 self.pr_view(&mut child, &pr);
+                self.finish_frame(&ctx);
+                return;
+            }
+            Some(Tab::Repo(repo)) => {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(page));
+                self.repo_view(&mut child, &repo);
                 self.finish_frame(&ctx);
                 return;
             }

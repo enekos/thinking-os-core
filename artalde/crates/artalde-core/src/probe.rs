@@ -229,6 +229,17 @@ pub fn worktree_paths(root: &Path) -> Vec<PathBuf> {
     .unwrap_or_default()
 }
 
+/// `owner/repo` of the checkout's `origin` remote, when it is GitHub.
+pub fn remote_slug(root: &Path) -> Option<String> {
+    let url = output(
+        Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["remote", "get-url", "origin"]),
+    )?;
+    crate::github::slug_from_remote(&url)
+}
+
 /// Open PRs the `gh` user authored.
 pub fn my_prs(limit: u32) -> Result<Vec<Pr>, String> {
     let text = output(Command::new("gh").args([

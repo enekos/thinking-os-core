@@ -13,6 +13,7 @@ mod layout_view;
 mod markdown;
 mod mod_view;
 mod panels;
+mod repo_view;
 mod review_view;
 mod reviewer;
 mod settings_view;
@@ -43,6 +44,7 @@ usage:
   artalde snapshot           print one probe pass as JSON
   artalde inbox              list your PR inbox (review requested, mine, involved, merged)
     artalde pr <owner/repo#N|url>  summarise one PR: state, checks, reviews, threads
+    artalde repo <owner/repo>  open PRs, what is deployed where, recent releases
   artalde review <owner/repo#N> [--agent NAME]  run a read-only agent review; its comments
                              are saved as proposals for the PR's Review tab (nothing is posted)
   artalde commands           list commands for keys.json and mods
@@ -98,6 +100,7 @@ fn main() -> ExitCode {
         Some("inbox") => inbox_cli(),
         Some("pr") => pr_cli(args.get(1).map(String::as_str).unwrap_or_default()),
         Some("review") => review_cli(args.get(1..).unwrap_or_default()),
+        Some("repo") => repo_cli(args.get(1).map(String::as_str).unwrap_or_default()),
         Some("hooks") => hooks(args.get(1).is_some_and(|a| a == "--install")),
         Some("init") => {
             let dir = config::config_dir();
@@ -469,5 +472,41 @@ fn review_cli(args: &[String]) -> anyhow::Result<ExitCode> {
     println!(
         "{anchored} proposed on lines, {loose} general notes · open the PR's Review tab to decide"
     );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn repo_cli(repo: &str) -> anyhow::Result<ExitCode> {
+    use artalde_core::github;
+    if !repo.contains('/') {
+        anyhow::bail!("usage: artalde repo owner/repo");
+    }
+    let r = github::fetch_repo(repo).map_err(|e| anyhow::anyhow!(e))?;
+    let t = now();
+    println!("{} — {} ({})", r.name, r.description, r.default_branch);
+    println!("deployed:");
+    for d in r.environments() {
+        println!(
+            "  {:12} {:10} {:8} {} by {}",
+            d.environment,
+            d.reference,
+            d.status,
+            github::age(&d.created, t),
+            d.creator
+        );
+    }
+    println!(
+        "open PRs: {} · merged recently: {} · releases: {}",
+        r.open.len(),
+        r.merged.len(),
+        r.releases.len()
+    );
+    for p in r.open.iter().take(10) {
+        println!(
+            "  #{:<6} {:8} {}",
+            p.pr.as_ref().map_or(0, |x| x.number),
+            p.checks,
+            p.title
+        );
+    }
     Ok(ExitCode::SUCCESS)
 }
