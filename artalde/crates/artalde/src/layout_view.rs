@@ -9,7 +9,7 @@ use eframe::egui::{self, CornerRadius, CursorIcon, Rect, Sense, Stroke, StrokeKi
 
 use crate::style::{self, RADIUS, tint, token};
 
-const TITLE_HEIGHT: f32 = 24.0;
+const TITLE_HEIGHT: f32 = 34.0;
 const TAB_HEIGHT: f32 = 30.0;
 const GRAB: f32 = 4.0;
 
@@ -214,7 +214,7 @@ fn frame(ui: &egui::Ui, rect: Rect, style: &Style, theme: &Theme, title: Option<
     let mut inner = rect.shrink(style.padding);
     if let Some(t) = title {
         p.text(
-            egui::pos2(inner.min.x + 2.0, inner.min.y + TITLE_HEIGHT / 2.0 - 2.0),
+            egui::pos2(inner.min.x + 2.0, inner.min.y + TAB_HEIGHT / 2.0),
             egui::Align2::LEFT_CENTER,
             t.to_uppercase(),
             egui::FontId::proportional(11.0),

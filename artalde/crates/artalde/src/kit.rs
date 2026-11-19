@@ -80,8 +80,9 @@ pub fn row(
             tint(style::c(theme.surface), style::c(theme.text), 0.05),
         );
     }
-    let gap = S2;
-    let inner = rect.shrink2(egui::vec2(S2, 0.0));
+    let inset = S2.min(width.max(0.0) / 2.0);
+    let inner = rect.shrink2(egui::vec2(inset, 0.0));
+    let gap = S2.min(inner.width() / cols.len().max(1) as f32);
     let fixed: f32 = cols
         .iter()
         .map(|c| if let Col::Px(w) = c { *w } else { 0.0 })
@@ -92,11 +93,13 @@ pub fn row(
         .count()
         .max(1) as f32;
     let gaps = gap * cols.len().saturating_sub(1) as f32;
-    let flex_w = ((inner.width() - fixed - gaps) / flex_n).max(0.0);
+    let budget = (inner.width() - gaps).max(0.0);
+    let fixed_scale = if fixed > budget { budget / fixed } else { 1.0 };
+    let flex_w = ((budget - fixed) / flex_n).max(0.0);
     let mut x = inner.min.x;
     for (i, c) in cols.iter().enumerate() {
         let w = match c {
-            Col::Px(w) => *w,
+            Col::Px(w) => *w * fixed_scale,
             Col::Flex => flex_w,
         };
         let r =
@@ -106,7 +109,7 @@ pub fn row(
                 .max_rect(r)
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
-        child.set_clip_rect(r.intersect(ui.clip_rect()));
+        child.set_clip_rect(r.intersect(rect).intersect(ui.clip_rect()));
         fill(i, &mut child);
         x += w + gap;
     }
@@ -347,4 +350,32 @@ pub fn tabs(
         Stroke::new(1.0, style::c(theme.border)),
     );
     clicked
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixed_columns_do_not_escape_a_narrow_row() {
+        egui::__run_test_ui(|ui| {
+            ui.set_width(90.0);
+            let mut columns = Vec::new();
+            let response = row(
+                ui,
+                &Theme::graphite(),
+                "narrow",
+                ROW,
+                false,
+                &[Col::Px(70.0), Col::Flex, Col::Px(80.0)],
+                |_, child| columns.push(child.max_rect()),
+            );
+            for rect in columns {
+                assert!(rect.width() >= 0.0);
+                assert!(rect.min.x >= response.rect.min.x);
+                assert!(rect.max.x <= response.rect.max.x + 0.01);
+                assert!((rect.center().y - response.rect.center().y).abs() < 0.01);
+            }
+        });
+    }
 }

@@ -2,9 +2,9 @@
   "title": "Board",
   "root": { "column": [
     { "row": [
-      { "block": "mod:board", "title": "Board" },
-      { "block": "detail", "title": "Session", "size": { "px": 400 }, "min": 280, "resizable": true }
+      { "block": "mod:board", "title": "Board", "padding": 12 },
+      { "block": "detail", "title": "Session", "padding": 12, "size": { "px": 400 }, "min": 280, "resizable": true }
     ] },
-    { "block": "status", "size": { "px": 28 }, "min": 24, "padding": 5, "border": false, "background": "background" }
+    { "block": "status", "size": { "px": 40 }, "min": 40, "padding": 6, "border": false, "background": "background" }
   ] }
 }

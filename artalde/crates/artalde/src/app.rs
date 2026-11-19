@@ -334,6 +334,16 @@ impl App {
         }
         self.snap = snap;
         self.apply_tags();
+        if !self.have_snapshot && self.shot.is_some() {
+            let command = match std::env::var("ARTALDE_SCREENSHOT_OVERLAY").as_deref() {
+                Ok("palette") => Some("palette.open"),
+                Ok("spawn") => Some("spawn.open"),
+                _ => None,
+            };
+            if let Some(command) = command {
+                self.queue.push(Command::new(command, None));
+            }
+        }
         self.have_snapshot = true;
         for (name, what, repo) in events {
             let line = format!(
@@ -960,18 +970,27 @@ impl App {
                 scored.iter().enumerate().skip(start).take(PALETTE_ROWS)
             {
                 let on = i == p.cursor;
-                let r = ui
-                    .horizontal(|ui| {
-                        let text = egui::RichText::new(label);
-                        let r = ui.selectable_label(on, if on { text.strong() } else { text });
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let r = crate::kit::row(
+                    ui,
+                    &theme,
+                    ("palette-entry", i),
+                    26.0,
+                    on,
+                    &[crate::kit::Col::Flex, crate::kit::Col::Px(108.0)],
+                    |column, ui| {
+                        if column == 0 {
+                            let text = egui::RichText::new(label);
+                            ui.add(
+                                egui::Label::new(if on { text.strong() } else { text }).truncate(),
+                            );
+                        } else {
                             let color = AgentState::parse(hint)
                                 .map_or(style::c(theme.dim), |s| style::state(&theme, s));
-                            ui.label(egui::RichText::new(hint).small().color(color));
-                        });
-                        r
-                    })
-                    .inner;
+                            crate::kit::right(ui, hint, 11.0, color);
+                        }
+                    },
+                )
+                .on_hover_text(label);
                 if r.clicked() {
                     run = Some(cmd.clone());
                 }

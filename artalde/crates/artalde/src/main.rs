@@ -137,10 +137,18 @@ fn gui(store: Store) -> anyhow::Result<ExitCode> {
         let wrote = config::install_defaults(&dir)?;
         eprintln!("artalde: created {} ({} files)", dir.display(), wrote.len());
     }
+    let screenshot_size = std::env::var_os("ARTALDE_SCREENSHOT").and_then(|_| {
+        let raw = std::env::var("ARTALDE_SCREENSHOT_SIZE").ok()?;
+        let (w, h) = raw.split_once('x')?;
+        let size = [w.parse::<f32>().ok()?, h.parse::<f32>().ok()?];
+        size.iter()
+            .all(|n| n.is_finite() && *n >= 1.0 && *n <= 4096.0)
+            .then_some(size)
+    });
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("artalde")
-            .with_inner_size([1440.0, 900.0])
+            .with_inner_size(screenshot_size.unwrap_or([1440.0, 900.0]))
             .with_min_inner_size([760.0, 480.0]),
         ..Default::default()
     };

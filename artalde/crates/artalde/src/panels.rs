@@ -161,7 +161,7 @@ impl App {
         let now = artalde_core::now();
         let t = ui.input(|i| i.time);
         // Toolbar: view switch, search, new.
-        ui.horizontal(|ui| {
+        ui.vertical(|ui| {
             let labels: Vec<(String, Option<usize>)> = AgentView::ALL
                 .iter()
                 .map(|v| {
@@ -181,17 +181,21 @@ impl App {
                 .iter()
                 .position(|v| *v == self.agent_view)
                 .unwrap_or(0);
-            if let Some(i) = kit::tabs(ui, &theme, &labels, sel) {
-                self.agent_view = AgentView::ALL[i.min(3)];
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            egui::ScrollArea::horizontal()
+                .id_salt("agent-views")
+                .show(ui, |ui| {
+                    if let Some(i) = kit::tabs(ui, &theme, &labels, sel) {
+                        self.agent_view = AgentView::ALL[i.min(3)];
+                    }
+                });
+            ui.horizontal(|ui| {
                 if kit::button(ui, &theme, "New agent", Some("⌘N")).clicked() {
                     self.queue.push(Command::new("spawn.open", None));
                 }
                 ui.add(
                     egui::TextEdit::singleline(&mut self.agent_query)
                         .hint_text("Search agents, repos, PRs…")
-                        .desired_width(220.0),
+                        .desired_width(ui.available_width().max(0.0)),
                 );
             });
         });
@@ -237,7 +241,7 @@ impl App {
             }
         }
         ui.add_space(kit::S2);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             kit::hint(ui, &theme, "j k", "move");
             kit::hint(ui, &theme, "↵", "open");
             kit::hint(ui, &theme, "f", "focus terminal");
@@ -300,37 +304,59 @@ impl App {
                     }
                 }
                 (2, _) => {
-                    ui.vertical(|ui| {
-                        ui.add_space(if sub.is_some() { 4.0 } else { 0.0 });
-                        ui.horizontal(|ui| {
-                            kit::text(ui, &s.name(), 13.5, style::c(theme.text));
-                            if let Some(h) = &s.handle {
-                                ui.label(
-                                    RichText::new(h)
-                                        .monospace()
-                                        .size(10.5)
-                                        .color(style::c(theme.unknown)),
-                                );
+                    let content_h = if sub.is_some() { 34.0 } else { 18.0 };
+                    let rect = egui::Rect::from_center_size(
+                        ui.max_rect().center(),
+                        egui::vec2(ui.available_width(), content_h),
+                    );
+                    ui.scope_builder(
+                        egui::UiBuilder::new()
+                            .max_rect(rect)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                        |ui| {
+                            ui.spacing_mut().item_spacing.y = 1.0;
+                            ui.horizontal(|ui| {
+                                kit::text(ui, &s.name(), 13.5, style::c(theme.text));
+                                if let Some(h) = &s.handle {
+                                    ui.label(
+                                        RichText::new(h)
+                                            .monospace()
+                                            .size(10.5)
+                                            .color(style::c(theme.unknown)),
+                                    );
+                                }
+                            });
+                            if let Some(m) = &sub {
+                                let color = if s.rec.message.is_some() {
+                                    style::c(theme.blocked)
+                                } else {
+                                    style::c(theme.dim)
+                                };
+                                kit::text(ui, m, 11.5, color);
                             }
-                        });
-                        if let Some(m) = &sub {
-                            let color = if s.rec.message.is_some() {
-                                style::c(theme.blocked)
-                            } else {
-                                style::c(theme.dim)
-                            };
-                            kit::text(ui, m, 11.5, color);
-                        }
-                    });
+                        },
+                    );
                 }
                 (3, true) => {
+                    let extra = if s.resources.len() > ROW_RESOURCES {
+                        26.0
+                    } else {
+                        0.0
+                    };
+                    let width = ((ui.available_width()
+                        - extra
+                        - ui.spacing().item_spacing.x * resources.len().saturating_sub(1) as f32)
+                        / resources.len().max(1) as f32)
+                        .max(0.0);
                     for r in &resources {
                         let color = self.resource_color(r);
                         let resp = ui
-                            .add(
+                            .add_sized(
+                                [width, 18.0],
                                 egui::Label::new(
                                     RichText::new(r.short()).monospace().size(11.0).color(color),
                                 )
+                                .truncate()
                                 .sense(Sense::click()),
                             )
                             .on_hover_text(r.title.clone().unwrap_or_else(|| r.id.clone()));
@@ -498,7 +524,13 @@ impl App {
                     }
                     1 => kit::dot(ui, style::state(&theme, agg), 4.0),
                     2 => {
-                        ui.label(RichText::new(&sp.repo).font(crate::fonts::semibold(13.0)));
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&sp.repo).font(crate::fonts::semibold(13.0)),
+                            )
+                            .truncate(),
+                        )
+                        .on_hover_text(&sp.repo);
                     }
                     3 => kit::right(
                         ui,
@@ -1010,6 +1042,7 @@ impl App {
             .chain(self.snap.errors.clone())
             .collect();
         let layout = self.current_layout_name();
+        let show_hints = ui.available_width() >= 1100.0;
         ui.horizontal(|ui| {
             for s in [
                 AgentState::Blocked,
@@ -1062,9 +1095,11 @@ impl App {
                     self.queue.push(Command::new("layout.cycle", None));
                 }
                 ui.add_space(kit::S2);
-                kit::hint(ui, &theme, "⌘I", "PRs");
-                kit::hint(ui, &theme, "⌘N", "new agent");
-                kit::hint(ui, &theme, "⌘K", "commands");
+                if show_hints {
+                    kit::hint(ui, &theme, "⌘I", "PRs");
+                    kit::hint(ui, &theme, "⌘N", "new agent");
+                    kit::hint(ui, &theme, "⌘K", "commands");
+                }
             });
         });
     }
