@@ -2,12 +2,12 @@
   "title": "Radar",
   "root": { "column": [
     { "row": [
-      { "block": "mod:radar", "title": "Radar" },
+      { "block": "mod:radar", "title": "Radar", "padding": 12 },
       { "stack": [
-        { "block": "detail", "title": "Session" },
-        { "block": "inbox", "title": "zaindu" }
+        { "block": "detail", "title": "Session", "padding": 12 },
+        { "block": "inbox", "title": "zaindu", "padding": 12 }
       ], "size": { "px": 360 }, "min": 260, "resizable": true }
     ] },
-    { "block": "status", "size": { "px": 28 }, "min": 24, "padding": 5, "border": false, "background": "background" }
+    { "block": "status", "size": { "px": 40 }, "min": 40, "padding": 6, "border": false, "background": "background" }
   ] }
 }

@@ -66,6 +66,23 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "Show only one repo's agents: <repo>, empty clears",
     ),
     ("spawn.open", "Start a new agent in a repo or worktree"),
+    (
+        "session.stop",
+        "Stop the selected agent's turn (Esc in its terminal): [<session id>]",
+    ),
+    (
+        "session.close",
+        "Close an agent: end its process and terminal tab: [<session id>]",
+    ),
+    ("session.sweep", "Close every stale agent"),
+    (
+        "session.reopen",
+        "Reopen the last closed Claude session: [<session id>]",
+    ),
+    (
+        "session.wrap",
+        "Ask the selected agent to /wrap its work: [<session id>]",
+    ),
     ("layout.select", "Switch layout: <name>"),
     ("layout.cycle", "Switch to the next layout"),
     ("theme.select", "Switch theme: <name>"),

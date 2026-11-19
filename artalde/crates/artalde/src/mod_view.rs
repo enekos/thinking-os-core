@@ -61,7 +61,7 @@ fn draw(
             None
         }
         Kind::Row => Some(
-            ui.horizontal(|ui| children(ui, theme, node, clicked, path))
+            ui.horizontal_wrapped(|ui| children(ui, theme, node, clicked, path))
                 .response,
         ),
         Kind::Col => Some(
@@ -83,7 +83,7 @@ fn draw(
             let r = ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(WRAP_GAP, WRAP_GAP);
                 for chunk in node.children.chunks(per_row) {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_top(|ui| {
                         for child in chunk {
                             draw(ui, theme, child, clicked, path);
                         }
@@ -93,14 +93,16 @@ fn draw(
             Some(r.response)
         }
         Kind::Grid => {
-            let cols = node.cols.max(1);
-            ui.columns(cols, |columns| {
-                for (i, child) in node.children.iter().enumerate() {
-                    if let Some(col) = columns.get_mut(i % cols) {
+            // Keep columns readable and align the top of every new row.
+            let fitting = (ui.available_width() / 180.0).floor().max(1.0) as usize;
+            let cols = node.cols.max(1).min(fitting);
+            for row in node.children.chunks(cols) {
+                ui.columns(cols, |columns| {
+                    for (child, col) in row.iter().zip(columns) {
                         draw(col, theme, child, clicked, path);
                     }
-                }
-            });
+                });
+            }
             None
         }
         Kind::Card => {

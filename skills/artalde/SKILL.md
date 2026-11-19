@@ -33,6 +33,14 @@ Agents other than Claude report with
    mod over Rust changes; reach for the engine only for new data or commands.
 4. Commit the folder with the wiki (`*.error` files are gitignored).
 
+## Lifecycle
+
+Start (⌘N, prompt-first, branch from the prompt) → Needs you / Working / Idle → Stale
+(`stale_after_mins`) → Close (`x`: TERM → KILL, iTerm2 tab closed; asks only if working or
+blocked) → Reopen (⇧⌘T: `claude --resume`). Stop a turn with `.`, close every stale agent with
+⇧⌘⌫. Closing kills real processes — never run `session.close`/`session.sweep` for the user
+without their say-so. Closed log: `<state dir>/closed.json`.
+
 ## Identify sessions
 
 - Names come from Claude Code itself: `~/.claude/sessions/<pid>.json` (session

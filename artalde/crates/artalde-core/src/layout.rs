@@ -260,31 +260,92 @@ pub fn distribute(total: f32, gap: f32, slots: &[&Slot], overrides: &[Option<f32
             px.map(|p| p.clamp(s.min, s.max.max(s.min)))
         })
         .collect();
-    let used: f32 = fixed.iter().flatten().sum();
-    let weights: f32 = slots
+    // Reserve flexible minima before distributing remaining space. If the
+    // window cannot fit them, shrink every slot proportionally rather than
+    // drawing panels beyond the viewport or erasing the flexible panel.
+    let mut sizes: Vec<f32> = slots
         .iter()
         .zip(&fixed)
-        .filter(|(_, f)| f.is_none())
-        .map(|(s, _)| match s.size {
-            Size::Weight(w) => w,
-            Size::Px(_) => 0.0,
-        })
-        .sum();
-    let rest = (avail - used).max(0.0);
-    slots
-        .iter()
-        .zip(&fixed)
-        .map(|(s, f)| match (f, s.size) {
-            (Some(px), _) => *px,
-            (None, Size::Weight(w)) if weights > 0.0 => rest * w / weights,
-            _ => 0.0,
-        })
-        .collect()
+        .map(|(s, f)| f.unwrap_or(s.min))
+        .collect();
+    let used: f32 = sizes.iter().sum();
+    if used > avail && used > 0.0 {
+        for size in &mut sizes {
+            *size *= avail / used;
+        }
+        return sizes;
+    }
+    let mut remaining = avail - used;
+    for _ in 0..slots.len() {
+        let eligible: Vec<usize> = slots
+            .iter()
+            .enumerate()
+            .filter(|(i, s)| fixed[*i].is_none() && sizes[*i] < s.max.max(s.min))
+            .map(|(i, _)| i)
+            .collect();
+        let weight: f32 = eligible
+            .iter()
+            .map(|i| match slots[*i].size {
+                Size::Weight(w) => w,
+                Size::Px(_) => 0.0,
+            })
+            .sum();
+        if weight <= 0.0 || remaining <= 0.0 {
+            break;
+        }
+        let budget = remaining;
+        for i in eligible {
+            let Size::Weight(w) = slots[i].size else {
+                continue;
+            };
+            let add = (budget * w / weight).min(slots[i].max.max(slots[i].min) - sizes[i]);
+            sizes[i] += add;
+            remaining -= add;
+        }
+    }
+    sizes
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn narrow_split_keeps_all_panels_inside_viewport() {
+        let side = Slot {
+            size: Size::Px(400.0),
+            min: 280.0,
+            max: 600.0,
+            resizable: true,
+        };
+        let center = Slot {
+            size: Size::Weight(1.0),
+            min: 200.0,
+            max: f32::INFINITY,
+            resizable: false,
+        };
+        let sizes = distribute(760.0, 8.0, &[&side, &center, &side], &[]);
+        assert!(sizes.iter().all(|n| *n > 0.0));
+        assert!((sizes.iter().sum::<f32>() + 16.0 - 760.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn flexible_bounds_redistribute_unused_space() {
+        let small = Slot {
+            size: Size::Weight(1.0),
+            min: 100.0,
+            max: 150.0,
+            resizable: false,
+        };
+        let large = Slot {
+            max: f32::INFINITY,
+            ..small.clone()
+        };
+        assert_eq!(
+            distribute(500.0, 0.0, &[&small, &large], &[]),
+            vec![150.0, 350.0]
+        );
+    }
 
     #[test]
     fn parses_a_tree() {
