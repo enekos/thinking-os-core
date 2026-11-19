@@ -1,5 +1,6 @@
 {
   "cmd+k": "palette.open",
+  "ctrl+k": "palette.open",
   "cmd+shift+p": "palette.open",
   "cmd+j": "agent.next",
   "cmd+Enter": "session.focus",

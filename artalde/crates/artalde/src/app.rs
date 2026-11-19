@@ -11,7 +11,7 @@ use artalde_core::config::Config;
 use artalde_core::inbox;
 use artalde_core::keys::Chord;
 use artalde_core::layout::Panel;
-use artalde_core::model::{AgentState, Session, Snapshot};
+use artalde_core::model::{AgentState, ResourceKind, Session, Snapshot};
 use artalde_core::store::Store;
 use artalde_core::tags::{self, Tags};
 use artalde_core::text::clip;
@@ -24,16 +24,18 @@ use crate::feed::{Feed, Msg};
 use crate::gh::Gh;
 use crate::layout_view::{self, LayoutState};
 use crate::lifecycle_view::{CloseConfirm, SpawnForm};
+use crate::palette::{PaletteEntry, PaletteKind, PaletteQuery};
 use crate::panels::Lane;
 use crate::views::{Conversations, InboxState, Logs, PrView, TAB_BAR, Tab};
-use crate::{fonts, mod_view, style};
+use crate::{fonts, kit, mod_view, style};
 use artalde_core::github::{self, PrRef};
 use artalde_core::lifecycle::{ClosedLog, Launch};
 
 const LOG_LINES: usize = 500;
 const TOAST_SECS: f64 = 4.0;
 const MAX_TOASTS: usize = 4;
-const PALETTE_ROWS: usize = 12;
+const PALETTE_ROWS: usize = 9;
+const PALETTE_RECENTS: usize = 8;
 
 pub struct App {
     pub(crate) feed: Feed,
@@ -76,6 +78,7 @@ pub struct App {
     toasts: VecDeque<(String, f64)>,
     pub(crate) queue: Vec<Command>,
     palette: Option<Palette>,
+    palette_recents: Vec<Command>,
     pub(crate) spawn: Option<SpawnForm>,
     /// Agents started from here that have not shown up yet.
     pub(crate) launches: Vec<Launch>,
@@ -171,6 +174,7 @@ impl App {
             toasts: VecDeque::new(),
             queue: Vec::new(),
             palette: None,
+            palette_recents: Vec::new(),
             spawn: None,
             launches: Vec::new(),
             closed: ClosedLog::load(&artalde_core::store::state_dir()),
@@ -678,6 +682,18 @@ impl App {
                 Some(r) => self.open_tab(Tab::Repo(r)),
                 None => self.push_log("repo.open: owner/repo or a GitHub URL"),
             },
+            "repo.refresh" => {
+                let repo = arg
+                    .and_then(crate::repo_view::parse_repo)
+                    .or_else(|| self.palette_current_repo());
+                match repo {
+                    Some(repo) => {
+                        self.load_repo(&repo);
+                        self.load_repo_activity(&repo);
+                    }
+                    None => self.push_log("repo.refresh: open a repository first"),
+                }
+            }
             "pr.review" => {
                 if let Some(Tab::Pr(pr)) = self.tabs.get(self.active).cloned() {
                     let agent = self.prs.get(&pr).map_or(0, |v| v.agent);
@@ -760,6 +776,12 @@ impl App {
         }
         let Some(cfg) = &self.config else { return };
         let mut fired = Vec::new();
+        let ctrl_k_bound = cfg.keys.bindings.iter().any(|(chord, _)| {
+            chord.ctrl && !chord.cmd && !chord.alt && !chord.shift && chord.key == "k"
+        });
+        if !ctrl_k_bound && ctx.input_mut(|input| input.consume_key(Modifiers::CTRL, Key::K)) {
+            fired.push(Command::new("palette.open", None));
+        }
         for (chord, cmd) in &cfg.keys.bindings {
             let Some(key) = Key::from_name(&chord.key) else {
                 continue;
@@ -771,73 +793,155 @@ impl App {
         self.queue.extend(fired);
     }
 
-    fn palette_entries(&self) -> Vec<(String, String, Command)> {
+    fn palette_current_repo(&self) -> Option<String> {
+        match self.tabs.get(self.active) {
+            Some(Tab::Repo(repo)) => Some(repo.clone()),
+            Some(Tab::Pr(pr)) => Some(pr.repo.clone()),
+            _ => None,
+        }
+    }
+
+    fn palette_entries(&self) -> Vec<PaletteEntry> {
         let keys = self.config.as_ref().map(|c| &c.keys);
         let hint = |cmd: &str| {
             keys.and_then(|k| k.chord_for(cmd))
                 .map(ToString::to_string)
                 .unwrap_or_default()
         };
-        let mut out = self.lifecycle_entries();
+        let mut out = Vec::new();
+        for (title, status, command) in self.lifecycle_entries() {
+            let detail = command.arg.as_ref().map_or_else(
+                || "Agent lifecycle".to_owned(),
+                |id| format!("Agent lifecycle · {id}"),
+            );
+            out.push(
+                PaletteEntry::new(PaletteKind::Action, title, detail, command)
+                    .hint(status)
+                    .keywords("agent close stop reopen stale"),
+            );
+        }
         if let Some(sel) = self.selected_session() {
             for (name, _) in tags::PALETTE {
-                out.push((
-                    format!("Tag {}: {name}", sel.name()),
-                    String::new(),
-                    Command::new("session.tag", Some(name)),
-                ));
+                out.push(
+                    PaletteEntry::new(
+                        PaletteKind::Action,
+                        format!("Tag {}: {name}", sel.name()),
+                        "Selected agent",
+                        Command::new("session.tag", Some(name)),
+                    )
+                    .keywords("color colour tag agent"),
+                );
             }
-            out.push((
-                format!("Untag {}", sel.name()),
-                String::new(),
-                Command::new("session.tag", Some("none")),
-            ));
+            out.push(
+                PaletteEntry::new(
+                    PaletteKind::Action,
+                    format!("Untag {}", sel.name()),
+                    "Selected agent",
+                    Command::new("session.tag", Some("none")),
+                )
+                .keywords("color colour tag agent clear"),
+            );
         }
+        let mut seen_prs = HashSet::new();
         for s in &self.snap.sessions {
             for r in &s.resources {
                 let title = r.title.clone().unwrap_or_default();
-                out.push((
-                    format!("Open {} {title} — {}", r.short(), s.name()),
-                    r.state.clone().unwrap_or_default(),
-                    Command::new("url.open", Some(&r.url)),
-                ));
+                let (kind, command) = match r.kind {
+                    ResourceKind::Pr => {
+                        let command = PrRef::parse(&r.id)
+                            .map(|pr| {
+                                seen_prs.insert(pr.clone());
+                                Command::new("pr.open", Some(&pr.to_string()))
+                            })
+                            .unwrap_or_else(|| Command::new("url.open", Some(&r.url)));
+                        (PaletteKind::PullRequest, command)
+                    }
+                    ResourceKind::Ticket => {
+                        (PaletteKind::Action, Command::new("url.open", Some(&r.url)))
+                    }
+                };
+                out.push(
+                    PaletteEntry::new(
+                        kind,
+                        format!("{} {title}", r.short()),
+                        format!("{} · {}", r.id, s.name()),
+                        command,
+                    )
+                    .hint(r.state.clone().unwrap_or_default())
+                    .keywords(format!("{} {}", r.id, s.name())),
+                );
             }
         }
         for s in &self.snap.sessions {
             let place = s.repo.clone().unwrap_or_else(|| s.rec.agent.clone());
-            out.push((
-                format!("Agent: {} — {place}", s.name()),
-                s.rec.state.as_str().to_owned(),
-                Command::new("agent.select", Some(&s.rec.id)),
-            ));
+            let boost = match s.rec.state {
+                AgentState::Blocked => 2_500,
+                AgentState::Done => 1_800,
+                AgentState::Working => 700,
+                _ => 200,
+            };
+            let detail = s
+                .branch
+                .as_ref()
+                .map(|branch| format!("{place} · {branch}"))
+                .unwrap_or(place);
+            out.push(
+                PaletteEntry::new(
+                    PaletteKind::Agent,
+                    s.name(),
+                    detail,
+                    Command::new("agent.select", Some(&s.rec.id)),
+                )
+                .hint(s.rec.state.as_str())
+                .keywords(format!("agent {} {}", s.rec.agent, s.rec.id))
+                .boost(boost),
+            );
             if s.rec.tty.is_some() {
-                out.push((
-                    format!("Focus terminal: {}", s.name()),
-                    String::new(),
-                    Command::new("session.focus", Some(&s.rec.id)),
-                ));
+                out.push(
+                    PaletteEntry::new(
+                        PaletteKind::Agent,
+                        format!("Focus terminal — {}", s.name()),
+                        "Bring the session's terminal to the front",
+                        Command::new("session.focus", Some(&s.rec.id)),
+                    )
+                    .hint("terminal")
+                    .keywords(format!("agent focus {}", s.rec.id)),
+                );
             }
         }
         for (name, desc) in COMMANDS {
             if desc.contains('<') {
                 continue;
             }
-            out.push(((*desc).to_owned(), hint(name), Command::new(name, None)));
+            out.push(
+                PaletteEntry::new(PaletteKind::Command, *desc, *name, Command::new(name, None))
+                    .hint(hint(name))
+                    .keywords(*name),
+            );
         }
         if let Some(cfg) = &self.config {
             for l in &cfg.layouts {
-                out.push((
-                    format!("Layout: {}", l.title),
-                    l.name.clone(),
-                    Command::new("layout.select", Some(&l.name)),
-                ));
+                out.push(
+                    PaletteEntry::new(
+                        PaletteKind::Layout,
+                        &l.title,
+                        "Switch layout",
+                        Command::new("layout.select", Some(&l.name)),
+                    )
+                    .hint(&l.name)
+                    .keywords(format!("layout {}", l.name)),
+                );
             }
             for t in &cfg.themes {
-                out.push((
-                    format!("Theme: {}", t.name),
-                    String::new(),
-                    Command::new("theme.select", Some(&t.name)),
-                ));
+                out.push(
+                    PaletteEntry::new(
+                        PaletteKind::Theme,
+                        &t.name,
+                        "Switch theme",
+                        Command::new("theme.select", Some(&t.name)),
+                    )
+                    .keywords(format!("theme {}", t.name)),
+                );
             }
         }
         let mut repos: Vec<String> = self
@@ -854,23 +958,130 @@ impl App {
         repos.sort();
         repos.dedup();
         for r in repos {
-            out.push((
-                format!("Repo: {r}"),
-                "deployments · PRs".into(),
-                Command::new("repo.open", Some(&r)),
-            ));
+            let detail = self.repos.get(&r).and_then(|view| {
+                view.detail.as_ref().map(|detail| {
+                    format!(
+                        "{} open PRs · {} environments",
+                        detail.open.len(),
+                        detail.environments().len()
+                    )
+                })
+            });
+            let local = self
+                .snap
+                .spaces
+                .iter()
+                .any(|space| space.slug.as_deref() == Some(&r));
+            out.push(
+                PaletteEntry::new(
+                    PaletteKind::Repository,
+                    &r,
+                    detail.unwrap_or_else(|| "PRs · deployments · releases".into()),
+                    Command::new("repo.open", Some(&r)),
+                )
+                .hint(if local { "local" } else { "GitHub" })
+                .keywords("repo repository github")
+                .boost(if self.palette_current_repo().as_deref() == Some(&r) {
+                    1_500
+                } else {
+                    300
+                }),
+            );
         }
         for sp in &self.snap.spaces {
-            out.push((
-                format!("Filter: {}", sp.repo),
-                String::new(),
-                Command::new("space.filter", Some(&sp.repo)),
-            ));
-            out.push((
-                format!("New agent in {}", sp.repo),
-                String::new(),
-                Command::new("spawn.open", Some(&sp.repo)),
-            ));
+            out.push(
+                PaletteEntry::new(
+                    PaletteKind::Action,
+                    format!("Filter agents: {}", sp.repo),
+                    "Workspace",
+                    Command::new("space.filter", Some(&sp.repo)),
+                )
+                .keywords("filter repo agents"),
+            );
+            out.push(
+                PaletteEntry::new(
+                    PaletteKind::Action,
+                    format!("New agent in {}", sp.repo),
+                    sp.root.display().to_string(),
+                    Command::new("spawn.open", Some(&sp.repo)),
+                )
+                .keywords("spawn start agent worktree"),
+            );
+        }
+        for (_, rows) in &self.inbox.buckets {
+            for row in rows {
+                let Some(pr) = row.pr.clone().filter(|pr| seen_prs.insert(pr.clone())) else {
+                    continue;
+                };
+                out.push(
+                    PaletteEntry::new(
+                        PaletteKind::PullRequest,
+                        format!("#{} {}", pr.number, row.title),
+                        format!("{} · @{}", pr.repo, row.author),
+                        Command::new("pr.open", Some(&pr.to_string())),
+                    )
+                    .hint(if row.checks.is_empty() {
+                        row.state.clone()
+                    } else {
+                        row.checks.clone()
+                    })
+                    .keywords(format!("{} {} PR pull request", pr, row.head)),
+                );
+            }
+        }
+        if let Some(repo) = self.palette_current_repo() {
+            out.push(
+                PaletteEntry::new(
+                    PaletteKind::Action,
+                    format!("Open {repo} on GitHub"),
+                    "Current repository",
+                    Command::new("url.open", Some(&format!("https://github.com/{repo}"))),
+                )
+                .keywords("browser remote github")
+                .boost(4_000),
+            );
+            out.push(
+                PaletteEntry::new(
+                    PaletteKind::Action,
+                    "Reload current repository",
+                    &repo,
+                    Command::new("repo.refresh", None),
+                )
+                .hint(hint("repo.refresh"))
+                .keywords("refresh reload pull requests deployments releases")
+                .boost(4_000),
+            );
+            if let Some(path) = self.local_space(&repo) {
+                let path = path.display().to_string();
+                out.push(
+                    PaletteEntry::new(
+                        PaletteKind::Action,
+                        format!("Open {repo} in editor"),
+                        &path,
+                        Command::new("path.edit", Some(&path)),
+                    )
+                    .keywords("local workspace code")
+                    .boost(4_000),
+                );
+            }
+        }
+        let mut unique = HashMap::new();
+        for entry in out {
+            unique
+                .entry(entry.command.clone())
+                .and_modify(|current: &mut PaletteEntry| {
+                    if entry.boost > current.boost {
+                        *current = entry.clone();
+                    }
+                })
+                .or_insert(entry);
+        }
+        let mut out: Vec<PaletteEntry> = unique.into_values().collect();
+        for entry in &mut out {
+            entry.recent = self
+                .palette_recents
+                .iter()
+                .position(|command| *command == entry.command);
         }
         out
     }
@@ -880,106 +1091,218 @@ impl App {
             return;
         };
         let mut entries = self.palette_entries();
-        if let Some(repo) =
-            crate::repo_view::parse_repo(&p.query).filter(|_| !p.query.contains('#'))
+        let query = PaletteQuery::parse(&p.query);
+        if query.scope == crate::palette::PaletteScope::All
+            && let Some(repo) =
+                crate::repo_view::parse_repo(&query.text).filter(|_| !query.text.contains('#'))
         {
             entries.insert(
                 0,
-                (
-                    format!("Open repo {repo}"),
-                    String::new(),
+                PaletteEntry::new(
+                    PaletteKind::Repository,
+                    format!("Open {repo}"),
+                    "Repository · PRs, deployments and releases",
                     Command::new("repo.open", Some(&repo)),
-                ),
+                )
+                .keywords("direct repository github")
+                .boost(60_000),
             );
         }
-        if let Some(pr) = PrRef::parse(&p.query) {
+        let direct_pr = PrRef::parse(&query.text).or_else(|| {
+            (query.scope == crate::palette::PaletteScope::PullRequests
+                && !query.text.is_empty()
+                && query.text.chars().all(|c| c.is_ascii_digit()))
+            .then(|| {
+                self.palette_current_repo().and_then(|repo| {
+                    PrRef::parse(&format!("{repo}#{}", query.text.trim_start_matches('#')))
+                })
+            })
+            .flatten()
+        });
+        if let Some(pr) = direct_pr {
             entries.insert(
                 0,
-                (
-                    format!("Open PR {pr}"),
-                    String::new(),
+                PaletteEntry::new(
+                    PaletteKind::PullRequest,
+                    format!("Open pull request #{}", pr.number),
+                    &pr.repo,
                     Command::new("pr.open", Some(&pr.to_string())),
-                ),
+                )
+                .keywords(format!("{pr} direct github"))
+                .boost(70_000),
             );
         }
-        let mut scored: Vec<(i32, &(String, String, Command))> = entries
-            .iter()
-            .filter_map(|e| fuzzy(&p.query, &e.0).map(|s| (s, e)))
-            .collect();
-        scored.sort_by_key(|e| std::cmp::Reverse(e.0));
-        scored.truncate(PALETTE_ROWS * 4);
-        let (down, up, enter, esc) = ctx.input_mut(|i| {
+        let scored = crate::palette::rank(entries, &p.query);
+        let len = scored.len();
+        let height = ctx.content_rect().height();
+        let visible_rows = if height < 600.0 {
+            4
+        } else if height < 800.0 {
+            7
+        } else {
+            PALETTE_ROWS
+        };
+        let (down, up, next_page, previous_page, home, end, enter, esc) = ctx.input_mut(|i| {
             (
-                i.consume_key(Modifiers::NONE, Key::ArrowDown),
-                i.consume_key(Modifiers::NONE, Key::ArrowUp),
+                i.consume_key(Modifiers::NONE, Key::ArrowDown)
+                    || i.consume_key(Modifiers::CTRL, Key::N)
+                    || i.consume_key(Modifiers::NONE, Key::Tab),
+                i.consume_key(Modifiers::NONE, Key::ArrowUp)
+                    || i.consume_key(Modifiers::CTRL, Key::P)
+                    || i.consume_key(Modifiers::SHIFT, Key::Tab),
+                i.consume_key(Modifiers::NONE, Key::PageDown),
+                i.consume_key(Modifiers::NONE, Key::PageUp),
+                i.consume_key(Modifiers::NONE, Key::Home),
+                i.consume_key(Modifiers::NONE, Key::End),
                 i.consume_key(Modifiers::NONE, Key::Enter),
                 i.consume_key(Modifiers::NONE, Key::Escape),
             )
         });
-        if down {
-            p.cursor = (p.cursor + 1).min(scored.len().saturating_sub(1));
+        if down && len > 0 {
+            p.cursor = (p.cursor + 1) % len;
         }
-        if up {
-            p.cursor = p.cursor.saturating_sub(1);
+        if up && len > 0 {
+            p.cursor = (p.cursor + len - 1) % len;
+        }
+        if next_page {
+            p.cursor = (p.cursor + visible_rows).min(len.saturating_sub(1));
+        }
+        if previous_page {
+            p.cursor = p.cursor.saturating_sub(visible_rows);
+        }
+        if home {
+            p.cursor = 0;
+        }
+        if end {
+            p.cursor = len.saturating_sub(1);
         }
         let mut run = None;
         if enter {
-            run = scored.get(p.cursor).map(|(_, e)| e.2.clone());
+            run = scored.get(p.cursor).map(|entry| entry.command.clone());
         }
         let theme = self.theme.clone();
         let modal = egui::Modal::new(egui::Id::unique("palette")).show(ctx, |ui| {
-            ui.set_width(560.0);
+            let width = (ctx.content_rect().width() - 48.0).clamp(280.0, 740.0);
+            ui.set_width(width);
             let w = ui.available_width();
             let edit = crate::kit::search(
                 ui,
                 &theme,
                 &mut p.query,
-                "Type a command, agent, layout…",
+                "Jump anywhere…  > commands  @ agents  # PRs",
                 w,
             );
             edit.request_focus();
             if edit.changed() {
                 p.cursor = 0;
             }
-            ui.add_space(6.0);
-            let start = p.cursor.saturating_sub(PALETTE_ROWS - 1);
-            for (i, (_, (label, hint, cmd))) in
-                scored.iter().enumerate().skip(start).take(PALETTE_ROWS)
-            {
+            ui.add_space(kit::S2);
+            p.cursor = p.cursor.min(len.saturating_sub(1));
+            let start = p.cursor.saturating_add(1).saturating_sub(visible_rows);
+            let mut section = None;
+            for (i, entry) in scored.iter().enumerate().skip(start).take(visible_rows) {
                 let on = i == p.cursor;
+                let next_section = entry.section(&query);
+                if section != Some(next_section) {
+                    section = Some(next_section);
+                    crate::kit::text(
+                        ui,
+                        &next_section.to_uppercase(),
+                        10.0,
+                        style::c(theme.faint),
+                    );
+                    ui.add_space(2.0);
+                }
+                let icon = match entry.kind {
+                    PaletteKind::Action | PaletteKind::Command => kit::Icon::ChevronRight,
+                    PaletteKind::Agent => kit::Icon::Terminal,
+                    PaletteKind::Repository => kit::Icon::Branch,
+                    PaletteKind::PullRequest => kit::Icon::Editor,
+                    PaletteKind::Layout => kit::Icon::More,
+                    PaletteKind::Theme => kit::Icon::Sun,
+                };
                 let r = crate::kit::row(
                     ui,
                     &theme,
-                    ("palette-entry", i),
-                    26.0,
+                    ("palette-entry", &entry.command),
+                    kit::ROW2,
                     on,
-                    &[crate::kit::Col::Flex, crate::kit::Col::Px(108.0)],
-                    |column, ui| {
-                        if column == 0 {
-                            let text = egui::RichText::new(label);
-                            ui.add(
-                                egui::Label::new(if on { text.strong() } else { text }).truncate(),
-                            );
-                        } else {
-                            let color = AgentState::parse(hint)
+                    &[
+                        crate::kit::Col::Px(28.0),
+                        crate::kit::Col::Flex,
+                        crate::kit::Col::Px(116.0),
+                    ],
+                    |column, ui| match column {
+                        0 => kit::icon(ui, icon, 16.0, style::c(theme.dim)),
+                        1 => {
+                            ui.vertical(|ui| {
+                                let text = egui::RichText::new(&entry.title).size(13.0);
+                                ui.add(
+                                    egui::Label::new(if on { text.strong() } else { text })
+                                        .truncate(),
+                                );
+                                if !entry.detail.is_empty() {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(&entry.detail)
+                                                .size(10.5)
+                                                .color(style::c(theme.dim)),
+                                        )
+                                        .truncate(),
+                                    );
+                                }
+                            });
+                        }
+                        _ => {
+                            let color = AgentState::parse(&entry.hint)
                                 .map_or(style::c(theme.dim), |s| style::state(&theme, s));
-                            crate::kit::right(ui, hint, 11.0, color);
+                            crate::kit::right(ui, &entry.hint, 10.5, color);
                         }
                     },
                 )
-                .on_hover_text(label);
+                .on_hover_text(entry.command.to_string());
+                if r.hovered() && ctx.input(|input| input.pointer.delta().length_sq() > 0.0) {
+                    p.cursor = i;
+                }
                 if r.clicked() {
-                    run = Some(cmd.clone());
+                    run = Some(entry.command.clone());
                 }
             }
             if scored.is_empty() {
-                ui.weak("nothing matches");
+                ui.add_space(kit::S4);
+                ui.vertical_centered(|ui| {
+                    ui.label(egui::RichText::new("No matching destination").strong());
+                    ui.add_space(kit::S1);
+                    crate::kit::text(
+                        ui,
+                        "Try owner/repo, owner/repo#123, > a command, or @ an agent",
+                        11.5,
+                        style::c(theme.dim),
+                    );
+                });
+                ui.add_space(kit::S4);
             }
+            ui.add_space(kit::S1);
+            ui.separator();
+            ui.horizontal(|ui| {
+                crate::kit::text(
+                    ui,
+                    "Arrows navigate   Enter open   Esc close",
+                    10.5,
+                    style::c(theme.faint),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    crate::kit::text(ui, &format!("{len} results"), 10.5, style::c(theme.faint));
+                });
+            });
         });
         if esc || modal.should_close() {
             return;
         }
         if let Some(cmd) = run {
+            self.palette_recents.retain(|recent| *recent != cmd);
+            self.palette_recents.insert(0, cmd.clone());
+            self.palette_recents.truncate(PALETTE_RECENTS);
             self.queue.push(cmd);
             return;
         }
@@ -1164,32 +1487,6 @@ fn modifiers(c: &Chord) -> Modifiers {
     m
 }
 
-/// Subsequence match: `Some(score)` if every query char appears in order.
-fn fuzzy(query: &str, text: &str) -> Option<i32> {
-    let q = query.trim().to_lowercase();
-    if q.is_empty() {
-        return Some(0);
-    }
-    let t = text.to_lowercase();
-    if let Some(at) = t.find(&q) {
-        return Some(1000 - i32::try_from(at).unwrap_or(999));
-    }
-    let mut chars = t.chars();
-    let mut score = 0;
-    for qc in q.chars() {
-        let mut gap = 0;
-        loop {
-            match chars.next() {
-                Some(tc) if tc == qc => break,
-                Some(_) => gap += 1,
-                None => return None,
-            }
-        }
-        score -= gap;
-    }
-    Some(score)
-}
-
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -1318,17 +1615,5 @@ impl App {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
         self.screenshot(&ctx);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fuzzy_prefers_substrings() {
-        assert!(fuzzy("lay", "Layout: Radar").unwrap() > fuzzy("lyt", "Layout: Radar").unwrap());
-        assert_eq!(fuzzy("zzz", "Layout"), None);
-        assert_eq!(fuzzy("", "x"), Some(0));
     }
 }

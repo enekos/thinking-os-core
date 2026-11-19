@@ -15,6 +15,7 @@ mod layout_view;
 mod lifecycle_view;
 mod markdown;
 mod mod_view;
+mod palette;
 mod panels;
 mod repo_view;
 mod review_view;

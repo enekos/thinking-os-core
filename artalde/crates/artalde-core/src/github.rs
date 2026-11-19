@@ -882,6 +882,13 @@ pub struct Release {
     pub prerelease: bool,
 }
 
+/// Repository activity loaded after the pull requests are already visible.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RepoActivity {
+    pub deployments: Vec<Deployment>,
+    pub releases: Vec<Release>,
+}
+
 /// A repository's page: open and merged PRs, deployments, releases.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RepoDetail {
@@ -890,6 +897,7 @@ pub struct RepoDetail {
     pub url: String,
     pub private: bool,
     pub default_branch: String,
+    pub open_total: u64,
     pub open: Vec<PrRow>,
     pub merged: Vec<PrRow>,
     /// Newest first.
@@ -920,8 +928,13 @@ impl RepoDetail {
 const REPO_QUERY: &str = "query($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
     nameWithOwner description url isPrivate defaultBranchRef { name }
-    open: pullRequests(states: OPEN, first: 50, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { SUMMARY } }
-    merged: pullRequests(states: MERGED, first: 25, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { SUMMARY mergedAt } }
+    open: pullRequests(states: OPEN, first: 50, orderBy: { field: UPDATED_AT, direction: DESC }) { totalCount nodes { SUMMARY } }
+    merged: pullRequests(states: MERGED, first: 15, orderBy: { field: UPDATED_AT, direction: DESC }) { totalCount nodes { SUMMARY mergedAt } }
+  }
+}";
+
+const REPO_ACTIVITY_QUERY: &str = "query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
     deployments(last: 40) { nodes {
       environment state createdAt creator { login } ref { name } commit { abbreviatedOid messageHeadline }
       latestStatus { state description environmentUrl logUrl }
@@ -937,14 +950,12 @@ pub fn repo_request(repo: &str) -> Value {
     json!({ "query": REPO_QUERY.replace("SUMMARY", SUMMARY_FIELDS), "variables": { "owner": owner, "name": name } })
 }
 
-pub fn parse_repo(v: &Value) -> Option<RepoDetail> {
-    let r = v.pointer("/data/repository").filter(|r| !r.is_null())?;
-    let rows = |ptr: &str| {
-        nodes(r, ptr)
-            .filter(|n| n.get("number").is_some())
-            .map(parse_row)
-            .collect::<Vec<_>>()
-    };
+pub fn repo_activity_request(repo: &str) -> Value {
+    let (owner, name) = repo.split_once('/').unwrap_or((repo, ""));
+    json!({ "query": REPO_ACTIVITY_QUERY, "variables": { "owner": owner, "name": name } })
+}
+
+fn repo_deployments(r: &Value) -> Vec<Deployment> {
     let mut deployments: Vec<Deployment> = nodes(r, "/deployments/nodes")
         .map(|d| Deployment {
             environment: s(d, "/environment"),
@@ -961,32 +972,61 @@ pub fn parse_repo(v: &Value) -> Option<RepoDetail> {
         })
         .collect();
     deployments.sort_by(|a, b| b.created.cmp(&a.created));
+    deployments
+}
+
+fn repo_releases(r: &Value) -> Vec<Release> {
+    nodes(r, "/releases/nodes")
+        .map(|x| Release {
+            tag: s(x, "/tagName"),
+            name: s(x, "/name"),
+            published: s(x, "/publishedAt"),
+            author: s(x, "/author/login"),
+            body: s(x, "/description"),
+            url: s(x, "/url"),
+            prerelease: b(x, "/isPrerelease"),
+        })
+        .collect()
+}
+
+pub fn parse_repo(v: &Value) -> Option<RepoDetail> {
+    let r = v.pointer("/data/repository").filter(|r| !r.is_null())?;
+    let rows = |ptr: &str| {
+        nodes(r, ptr)
+            .filter(|n| n.get("number").is_some())
+            .map(parse_row)
+            .collect::<Vec<_>>()
+    };
     Some(RepoDetail {
         name: s(r, "/nameWithOwner"),
         description: s(r, "/description"),
         url: s(r, "/url"),
         private: b(r, "/isPrivate"),
         default_branch: s(r, "/defaultBranchRef/name"),
+        open_total: n(r, "/open/totalCount"),
         open: rows("/open/nodes"),
         merged: rows("/merged/nodes"),
-        deployments,
-        releases: nodes(r, "/releases/nodes")
-            .map(|x| Release {
-                tag: s(x, "/tagName"),
-                name: s(x, "/name"),
-                published: s(x, "/publishedAt"),
-                author: s(x, "/author/login"),
-                body: s(x, "/description"),
-                url: s(x, "/url"),
-                prerelease: b(x, "/isPrerelease"),
-            })
-            .collect(),
+        deployments: repo_deployments(r),
+        releases: repo_releases(r),
+    })
+}
+
+pub fn parse_repo_activity(v: &Value) -> Option<RepoActivity> {
+    let r = v.pointer("/data/repository").filter(|r| !r.is_null())?;
+    Some(RepoActivity {
+        deployments: repo_deployments(r),
+        releases: repo_releases(r),
     })
 }
 
 pub fn fetch_repo(repo: &str) -> Result<RepoDetail, String> {
     let v = graphql_exec(&repo_request(repo))?;
     parse_repo(&v).ok_or_else(|| format!("{repo}: not found"))
+}
+
+pub fn fetch_repo_activity(repo: &str) -> Result<RepoActivity, String> {
+    let v = graphql_exec(&repo_activity_request(repo))?;
+    parse_repo_activity(&v).ok_or_else(|| format!("{repo}: not found"))
 }
 
 /// `owner/repo` from a git remote URL (`git@github.com:o/r.git`,
@@ -1718,6 +1758,41 @@ mod tests {
             ]
         );
         assert_eq!(r.releases[0].tag, "v1.2.0");
+    }
+
+    #[test]
+    fn repo_activity_is_deferred_to_a_second_query() {
+        let fast = repo_request("o/r");
+        let fast_query = fast["query"].as_str().unwrap();
+        assert!(fast_query.contains("pullRequests"));
+        assert!(fast_query.contains("totalCount"));
+        assert!(!fast_query.contains("deployments"));
+        assert!(!fast_query.contains("releases"));
+
+        let activity = repo_activity_request("o/r");
+        let activity_query = activity["query"].as_str().unwrap();
+        assert!(activity_query.contains("deployments"));
+        assert!(activity_query.contains("releases"));
+        assert!(!activity_query.contains("pullRequests"));
+        assert_eq!(activity["variables"]["owner"], "o");
+        assert_eq!(activity["variables"]["name"], "r");
+
+        let base: Value = serde_json::from_str(
+            r#"{"data":{"repository":{"nameWithOwner":"o/r","open":{"totalCount":17,"nodes":[]},"merged":{"nodes":[]}}}}"#,
+        )
+        .unwrap();
+        let detail = parse_repo(&base).unwrap();
+        assert_eq!(detail.open_total, 17);
+        assert!(detail.deployments.is_empty());
+        assert!(detail.releases.is_empty());
+
+        let deferred: Value = serde_json::from_str(
+            r#"{"data":{"repository":{"deployments":{"nodes":[{"environment":"production","ref":{"name":"v2"}}]},"releases":{"nodes":[{"tagName":"v2","name":"v2"}]}}}}"#,
+        )
+        .unwrap();
+        let activity = parse_repo_activity(&deferred).unwrap();
+        assert_eq!(activity.deployments[0].environment, "production");
+        assert_eq!(activity.releases[0].tag, "v2");
     }
 
     #[test]

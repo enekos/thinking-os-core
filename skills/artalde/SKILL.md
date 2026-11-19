@@ -70,6 +70,10 @@ without their say-so. Closed log: `<state dir>/closed.json`.
 - Review agents live in settings.json `review_agents` (`{dir}` holds pr.md + pr.diff, `{checkout}`
   the head-branch worktree if one exists); runs and their logs are under
   `~/.local/state/artalde/reviews/<owner>__<repo>__<n>/`.
+- Navigation: Ctrl+K/Cmd+K opens the palette. `>`, `@` and `#` scope searches
+  to commands, agents and PRs; `owner/repo`, `owner/repo#123` and GitHub PR
+  URLs jump directly. Repository tabs load PRs first and delivery activity in
+  a second request.
 
 ## Debug state
 

@@ -31,7 +31,22 @@ good version and the reason lands next to it in `<file>.error`.
 - Child props: `size` (`{"px": n}` or `{"weight": n}`, default weight 1), `min`, `max`, `resizable`, `hidden`.
 - Block/stack props: `title`, `padding`, `background` (token or `#hex`), `border` (default true). Splits: `gap`.
 - Built-in panels: `agents`, `spaces`, `inbox` (zaindu), `prs` (the pull-request inbox, compact), `detail` (selected session + reply box), `status`, `log`. Mods: `mod:<name>`.
-- Layouts fill the first tab. Pull requests (`inbox.open`, Cmd+I), single PRs (`pr.open:<owner/repo#N>`, or paste a PR URL into Cmd+K) and agent sessions (`session.open`, double-click a card) open as tabs; Cmd+W closes, Ctrl+Tab cycles.
+- Layouts fill the first tab. Pull requests (`inbox.open`, Cmd+I), single PRs (`pr.open:<owner/repo#N>`, or paste a PR URL into the palette) and agent sessions (`session.open`, double-click a card) open as tabs; Cmd+W closes, Ctrl+Tab cycles.
+
+## Palette and repositories
+
+- Ctrl+K and Cmd+K open the palette. Search every destination, or prefix with
+  `>` for commands/actions, `@` for agents and `#` for pull requests.
+  Multi-token fuzzy queries match titles, repository metadata and commands;
+  recent destinations rank first on an empty query.
+- Direct navigation accepts `owner/repo`, `owner/repo#123`, a GitHub PR URL,
+  and `#123` while a repository tab is active. Enter runs the selected result;
+  arrows or Ctrl+N/P navigate, Tab/Shift+Tab cycle, and PageUp/PageDown,
+  Home/End move through longer result sets.
+- Repository tabs combine local worktrees and agents with GitHub PR health,
+  delivery environments and releases. Pull requests and metadata load in the
+  first request; deployments and releases arrive independently, so slow
+  activity never blocks the initial repository view.
 
 ## Themes
 
