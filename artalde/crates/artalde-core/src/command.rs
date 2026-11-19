@@ -75,6 +75,19 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("path.open", "Open a folder in Finder: <path>"),
     ("config.open", "Open the config folder"),
     ("refresh", "Probe everything now"),
+    ("inbox.open", "Open the pull-request inbox tab"),
+    (
+        "pr.open",
+        "Open a pull request as a tab: <owner/repo#N or URL>",
+    ),
+    (
+        "session.open",
+        "Open the selected agent session as a tab: [<session id>]",
+    ),
+    ("tab.close", "Close the current tab: [<n>]"),
+    ("tab.next", "Next tab"),
+    ("tab.prev", "Previous tab"),
+    ("tab.select", "Go to tab <n>"),
 ];
 
 #[cfg(test)]

@@ -30,7 +30,8 @@ good version and the reason lands next to it in `<file>.error`.
 - Nodes: `row`, `column` (split), `stack` (tabs), `block` (a panel).
 - Child props: `size` (`{"px": n}` or `{"weight": n}`, default weight 1), `min`, `max`, `resizable`, `hidden`.
 - Block/stack props: `title`, `padding`, `background` (token or `#hex`), `border` (default true). Splits: `gap`.
-- Built-in panels: `agents`, `spaces`, `inbox` (zaindu), `prs`, `detail` (selected session + reply box), `status`, `log`. Mods: `mod:<name>`.
+- Built-in panels: `agents`, `spaces`, `inbox` (zaindu), `prs` (the pull-request inbox, compact), `detail` (selected session + reply box), `status`, `log`. Mods: `mod:<name>`.
+- Layouts fill the first tab. Pull requests (`inbox.open`, Cmd+I), single PRs (`pr.open:<owner/repo#N>`, or paste a PR URL into Cmd+K) and agent sessions (`session.open`, double-click a card) open as tabs; Cmd+W closes, Ctrl+Tab cycles.
 
 ## Themes
 
@@ -54,7 +55,7 @@ fn render(ctx) {
 }
 ```
 
-- Nodes: `text(s)` `heading(s)` `row([..])` `col([..])` `wrap([..])` `grid(n, [..])` `card([..])`
+- Nodes: `text(s)` `heading(s)` `md(s)` (rendered markdown) `row([..])` `col([..])` `wrap([..])` `grid(n, [..])` `card([..])`
   `button(label, action)` `badge(s)` `dot()` `sep()` `space(px)` `bar(0.0..1.0)`. A bare string is text; an array is a column.
 - Colours: theme tokens, tag names (`blue`, `pink`, …) or `#rrggbb`.
 - Modifiers: `.color(token)` `.fill(token)` (tinted background for cards/badges) `.size(px)` `.bold()` `.mono()` `.tip(s)` `.on_click(action)`.
@@ -70,4 +71,5 @@ fn render(ctx) {
 
 `artalde commands` lists them. Common: `agent.next`, `agent.select:<id|n>`, `session.focus[:<id>]`,
 `session.ack[:<id>]`, `session.tag:<colour|none>` (or `<id>:<colour>`), `session.label:<text>`, `session.send:<text>`, `space.filter:<repo>`, `spawn.open`, `layout.select:<name>`,
-`layout.cycle`, `theme.select:<name>`, `theme.cycle`, `url.open:<url>`, `path.open:<path>`, `palette.open`, `refresh`.
+`layout.cycle`, `theme.select:<name>`, `theme.cycle`, `url.open:<url>`, `path.open:<path>`, `palette.open`, `refresh`,
+`inbox.open`, `pr.open:<owner/repo#N>`, `session.open[:<id>]`, `tab.close`, `tab.next`, `tab.prev`, `tab.select:<n>`.

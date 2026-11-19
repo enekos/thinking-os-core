@@ -21,8 +21,11 @@ use eframe::egui::{self, Key, Modifiers};
 
 use crate::actions::{Actions, Job};
 use crate::feed::{Feed, Msg};
+use crate::gh::Gh;
 use crate::layout_view::{self, LayoutState};
-use crate::{mod_view, style};
+use crate::views::{Conversations, InboxState, Logs, PrView, TAB_BAR, Tab};
+use crate::{fonts, mod_view, style};
+use artalde_core::github::{self, PrRef};
 
 const LOG_LINES: usize = 500;
 const TOAST_SECS: f64 = 4.0;
@@ -62,6 +65,14 @@ pub struct App {
     pub(crate) reply: String,
     pub(crate) hide_done: bool,
     shot: Option<Shot>,
+    pub(crate) gh: Gh,
+    pub(crate) tabs: Vec<Tab>,
+    pub(crate) active: usize,
+    pub(crate) prs: HashMap<PrRef, PrView>,
+    pub(crate) inbox: InboxState,
+    pub(crate) logs: Logs,
+    pub(crate) confirm: Option<(PrRef, github::Action)>,
+    pub(crate) conversations: Conversations,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -103,6 +114,9 @@ impl App {
     ) -> anyhow::Result<App> {
         let feed = Feed::start(&cc.egui_ctx, store, config_dir)?;
         let actions = Actions::start(&cc.egui_ctx)?;
+        let gh = Gh::start(&cc.egui_ctx)?;
+        fonts::install(&cc.egui_ctx);
+        let (tabs, active) = App::load_tabs();
         let theme = Theme::graphite();
         style::apply(&cc.egui_ctx, &theme, 13.5);
         Ok(App {
@@ -134,6 +148,14 @@ impl App {
             spawn: None,
             reply: String::new(),
             hide_done: true,
+            gh,
+            tabs,
+            active,
+            prs: HashMap::new(),
+            inbox: InboxState::default(),
+            logs: Logs::new(),
+            confirm: None,
+            conversations: Conversations::new(),
             shot: std::env::var_os("ARTALDE_SCREENSHOT").map(|p| Shot {
                 path: PathBuf::from(p),
                 requested: false,
@@ -155,6 +177,36 @@ impl App {
             secs % 60,
             line.into()
         ));
+    }
+
+    pub(crate) fn toast_line(&mut self, ctx: &egui::Context, text: String) {
+        self.toast(ctx, text);
+    }
+
+    /// Whether the current layout shows the built-in panel `name`.
+    pub(crate) fn layout_shows(&self, name: &str) -> bool {
+        let Some(cfg) = &self.config else {
+            return false;
+        };
+        let Some(l) = cfg
+            .layout(&self.current_layout_name())
+            .or_else(|| cfg.layouts.first())
+        else {
+            return false;
+        };
+        fn walk(n: &artalde_core::layout::Node, name: &str) -> bool {
+            use artalde_core::layout::Node;
+            match n {
+                Node::Split { children, .. } => children.iter().any(|(_, c)| walk(c, name)),
+                Node::Stack { children, .. } => children.iter().any(|c| walk(c, name)),
+                Node::Block {
+                    panel: Panel::Builtin(b),
+                    ..
+                } => b == name,
+                Node::Block { .. } => false,
+            }
+        }
+        walk(&l.root, name)
     }
 
     fn toast(&mut self, ctx: &egui::Context, text: String) {
@@ -500,7 +552,37 @@ impl App {
                 let dir = artalde_core::config::config_dir().display().to_string();
                 self.submit(Job::Open { target: dir });
             }
-            "refresh" => self.feed.refresh(),
+            "refresh" => {
+                self.feed.refresh();
+                self.refresh_inbox();
+                if let Some(Tab::Pr(pr)) = self.tabs.get(self.active).cloned() {
+                    self.load_pr(&pr);
+                }
+            }
+            "tab.close" => {
+                let i = arg.and_then(|a| a.parse().ok()).unwrap_or(self.active);
+                self.close_tab(i);
+            }
+            "tab.next" => self.active = (self.active + 1) % self.tabs.len().max(1),
+            "tab.prev" => {
+                self.active = (self.active + self.tabs.len().max(1) - 1) % self.tabs.len().max(1)
+            }
+            "tab.select" => {
+                if let Some(n) = arg.and_then(|a| a.parse::<usize>().ok()) {
+                    self.active = n.saturating_sub(1).min(self.tabs.len().saturating_sub(1));
+                }
+            }
+            "inbox.open" => self.open_tab(Tab::Inbox),
+            "pr.open" => match arg.and_then(PrRef::parse) {
+                Some(pr) => self.open_tab(Tab::Pr(pr)),
+                None => self.push_log("pr.open: owner/repo#N or a PR URL"),
+            },
+            "session.open" => {
+                if let Some(id) = self.target_id(arg) {
+                    self.select(&id);
+                    self.open_tab(Tab::Session(id));
+                }
+            }
             other => self.push_log(format!("unknown command {other:?}")),
         }
     }
@@ -710,7 +792,17 @@ impl App {
         let Some(mut p) = self.palette.take() else {
             return;
         };
-        let entries = self.palette_entries();
+        let mut entries = self.palette_entries();
+        if let Some(pr) = PrRef::parse(&p.query) {
+            entries.insert(
+                0,
+                (
+                    format!("Open PR {pr}"),
+                    String::new(),
+                    Command::new("pr.open", Some(&pr.to_string())),
+                ),
+            );
+        }
         let mut scored: Vec<(i32, &(String, String, Command))> = entries
             .iter()
             .filter_map(|e| fuzzy(&p.query, &e.0).map(|s| (s, e)))
@@ -1006,7 +1098,11 @@ impl App {
         if !self.have_snapshot {
             return;
         }
-        let ready = *shot.ready_at.get_or_insert(now + 1.5);
+        let wait = std::env::var("ARTALDE_SCREENSHOT_WAIT")
+            .ok()
+            .and_then(|w| w.parse::<f64>().ok())
+            .unwrap_or(1.5);
+        let ready = *shot.ready_at.get_or_insert(now + wait);
         if shot.requested || now < ready {
             return;
         }
@@ -1082,10 +1178,53 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.drain(&ctx);
+        self.drain_github(&ctx);
         self.apply_config_style(&ctx);
         self.keys(&ctx);
+        self.tick_github();
 
-        let rect = ui.max_rect();
+        let full = ui.max_rect();
+        ui.painter().rect_filled(
+            full,
+            egui::CornerRadius::ZERO,
+            style::c(self.theme.background),
+        );
+        let bar = egui::Rect::from_min_size(
+            full.min + egui::vec2(8.0, 4.0),
+            egui::vec2(full.width() - 16.0, TAB_BAR),
+        );
+        self.tab_bar(ui, bar);
+        let rect = egui::Rect::from_min_max(egui::pos2(full.min.x, bar.max.y), full.max);
+        self.active = self.active.min(self.tabs.len().saturating_sub(1));
+        let page = egui::Rect::from_min_max(
+            rect.min + egui::vec2(16.0, 6.0),
+            rect.max - egui::vec2(16.0, 12.0),
+        );
+        match self.tabs.get(self.active).cloned() {
+            Some(Tab::Inbox) => {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(page));
+                child.label(egui::RichText::new("Pull requests").font(fonts::display(22.0)));
+                egui::ScrollArea::vertical()
+                    .id_salt("inbox-page")
+                    .auto_shrink([false, false])
+                    .show(&mut child, |ui| self.inbox_view(ui, false));
+                self.finish_frame(&ctx);
+                return;
+            }
+            Some(Tab::Pr(pr)) => {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(page));
+                self.pr_view(&mut child, &pr);
+                self.finish_frame(&ctx);
+                return;
+            }
+            Some(Tab::Session(id)) => {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(page));
+                self.session_view(&mut child, &id);
+                self.finish_frame(&ctx);
+                return;
+            }
+            _ => {}
+        }
         ui.painter().rect_filled(
             rect,
             egui::CornerRadius::ZERO,
@@ -1120,6 +1259,15 @@ impl eframe::App for App {
             }
         }
 
+        self.finish_frame(&ctx);
+    }
+}
+
+impl App {
+    /// Overlays, queued commands and repaint pacing, after any page.
+    fn finish_frame(&mut self, ctx: &egui::Context) {
+        let ctx = ctx.clone();
+        self.confirm_ui(&ctx);
         self.palette_ui(&ctx);
         self.spawn_ui(&ctx);
         self.toasts_ui(&ctx);

@@ -45,6 +45,19 @@ Agents other than Claude report with
   ids for the teams in `os.yaml`, the branch name) and resolved against
   `<wiki>/graph/raw/{watch,github,linear}.json` — no network calls.
 
+## Pull requests (after adar)
+
+- Cmd+I opens the inbox (review requested, mine, involved, recently merged)
+  with adar's filter qualifiers (`repo:data ci:red review:changes @alice
+  -is:bot size:<100 in:review "words"`). Rows open PR tabs.
+- A PR tab has Conversation (rendered body, review threads with reply /
+  resolve, timeline, comment composer with preview), Files (diff + file list)
+  and Checks (by workflow, failed-step logs inline, re-run job / failed).
+- Actions: approve, request changes, comment, review comment, merge (allowed
+  methods, delete branch), auto-merge, update branch, ready / draft, close /
+  reopen. Irreversible ones ask first; none retries. All go through `gh`.
+- Headless: `artalde inbox`, `artalde pr <owner/repo#N>`.
+
 ## Debug state
 
 - Wrong or missing state: `artalde snapshot`, then the record in

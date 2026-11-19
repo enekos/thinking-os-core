@@ -18,7 +18,7 @@ impl App {
             "agents" => self.agents(ui),
             "spaces" => self.spaces(ui),
             "inbox" => self.inbox(ui),
-            "prs" => self.prs(ui),
+            "prs" => self.inbox_view(ui, true),
             "detail" => self.detail(ui),
             "status" => self.status(ui),
             "log" => self.log_panel(ui),
@@ -205,7 +205,7 @@ impl App {
                 self.queue.push(Command::new("agent.select", Some(&id)));
             }
             if resp.double_clicked() {
-                self.queue.push(Command::new("session.focus", Some(&id)));
+                self.queue.push(Command::new("session.open", Some(&id)));
             }
             ui.add_space(2.0);
         }
@@ -383,38 +383,6 @@ impl App {
         }
     }
 
-    fn prs(&mut self, ui: &mut egui::Ui) {
-        let prs = self.snap.prs.clone();
-        if prs.is_empty() {
-            ui.label(self.dim(if self.settings().gh {
-                "No open PRs (gh refreshes every 2 minutes)."
-            } else {
-                "gh is off in settings.json."
-            }));
-        }
-        for pr in &prs {
-            ui.horizontal(|ui| {
-                if pr.draft {
-                    chip(ui, "draft", style::c(self.theme.dim), &self.theme);
-                }
-                let r = ui.link(
-                    RichText::new(format!(
-                        "{}#{}",
-                        pr.repo.rsplit('/').next().unwrap_or(&pr.repo),
-                        pr.number
-                    ))
-                    .monospace()
-                    .small(),
-                );
-                if r.on_hover_text(&pr.url).clicked() {
-                    self.queue.push(Command::new("url.open", Some(&pr.url)));
-                }
-            });
-            ui.label(clip(&pr.title, 90));
-            ui.add_space(4.0);
-        }
-    }
-
     fn detail(&mut self, ui: &mut egui::Ui) {
         let Some(s) = self.selected_session().cloned() else {
             ui.add_space(12.0);
@@ -496,6 +464,14 @@ impl App {
             {
                 self.queue
                     .push(Command::new("path.open", Some(&w.display().to_string())));
+            }
+            if !matches!(
+                self.tabs.get(self.active),
+                Some(crate::views::Tab::Session(_))
+            ) && ui.button("Open as tab").clicked()
+            {
+                self.queue
+                    .push(Command::new("session.open", Some(&s.rec.id)));
             }
             if ui.button("Copy id").clicked() {
                 ui.ctx().copy_text(s.rec.id.clone());
@@ -592,7 +568,8 @@ impl App {
         if let Some(p) = &s.rec.last_prompt {
             ui.add_space(8.0);
             ui.label(self.dim("Last prompt").small());
-            ui.label(RichText::new(p).italics());
+            let p = p.clone();
+            self.md(ui, &p, 13.0);
         }
         if let Some(said) = &s.last_said {
             ui.add_space(8.0);
@@ -603,7 +580,8 @@ impl App {
                 .inner_margin(egui::Margin::same(8))
                 .show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
-                    ui.add(egui::Label::new(said).wrap());
+                    let said = said.clone();
+                    self.md(ui, &said, 13.0);
                 });
         }
         if s.discovered {
@@ -731,7 +709,10 @@ impl App {
             })
             .inner;
         if resp.on_hover_text(tip).clicked() {
-            self.queue.push(Command::new("url.open", Some(&r.url)));
+            match r.kind {
+                ResourceKind::Pr => self.queue.push(Command::new("pr.open", Some(&r.id))),
+                ResourceKind::Ticket => self.queue.push(Command::new("url.open", Some(&r.url))),
+            }
         }
     }
 

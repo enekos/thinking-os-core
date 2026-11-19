@@ -10,6 +10,7 @@ pub mod catalog;
 pub mod claude;
 pub mod command;
 pub mod config;
+pub mod github;
 pub mod hook;
 pub mod inbox;
 pub mod keys;

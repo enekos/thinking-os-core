@@ -309,6 +309,88 @@ pub fn last_said_in(jsonl: &str) -> Option<String> {
     })
 }
 
+/// How much of a transcript's end a session tab shows.
+const CONVERSATION_TAIL_BYTES: u64 = 1024 * 1024;
+
+/// One message of a conversation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Turn {
+    pub user: bool,
+    pub text: String,
+    pub at: String,
+}
+
+/// The recent conversation in a Claude transcript: what the user typed and
+/// what the agent said, oldest first; tool calls and results left out.
+pub fn conversation(transcript: &Path, max_turns: usize) -> Vec<Turn> {
+    let Ok(mut file) = fs::File::open(transcript) else {
+        return Vec::new();
+    };
+    let Ok(len) = file.metadata().map(|m| m.len()) else {
+        return Vec::new();
+    };
+    if file
+        .seek(SeekFrom::Start(len.saturating_sub(CONVERSATION_TAIL_BYTES)))
+        .is_err()
+    {
+        return Vec::new();
+    }
+    let mut buf = Vec::new();
+    if file
+        .take(CONVERSATION_TAIL_BYTES)
+        .read_to_end(&mut buf)
+        .is_err()
+    {
+        return Vec::new();
+    }
+    let mut turns = conversation_in(&String::from_utf8_lossy(&buf));
+    let skip = turns.len().saturating_sub(max_turns);
+    turns.drain(..skip);
+    turns
+}
+
+pub fn conversation_in(jsonl: &str) -> Vec<Turn> {
+    jsonl
+        .lines()
+        .filter_map(|line| {
+            let v: Value = serde_json::from_str(line).ok()?;
+            let user = match v.get("type")?.as_str()? {
+                "user" => true,
+                "assistant" => false,
+                _ => return None,
+            };
+            if v.get("isMeta").and_then(Value::as_bool) == Some(true) {
+                return None;
+            }
+            let text = match v.get("message")?.get("content")? {
+                Value::String(s) => s.clone(),
+                Value::Array(parts) => parts
+                    .iter()
+                    .filter(|p| p.get("type").and_then(Value::as_str) == Some("text"))
+                    .filter_map(|p| p.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+                _ => return None,
+            };
+            let text = text.trim();
+            // Harness wrappers (command output, reminders) are not conversation.
+            if text.is_empty() || text.starts_with('<') {
+                return None;
+            }
+            let at = v
+                .get("timestamp")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            Some(Turn {
+                user,
+                text: text.to_owned(),
+                at,
+            })
+        })
+        .collect()
+}
+
 /// The task in progress and how many are pending, from
 /// `~/.claude/tasks/<session>/*.json`.
 pub fn tasks(session_id: &str) -> (Option<String>, u32) {
@@ -400,6 +482,22 @@ mod tests {
         .unwrap();
         assert_eq!(prs[0].repo, "o/r");
         assert!(prs[0].draft);
+    }
+
+    #[test]
+    fn conversation_keeps_words_not_tools() {
+        let jsonl = [
+            r#"{"type":"user","message":{"content":"fix **the** bug"},"timestamp":"t1"}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash"}]}}"#,
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]}}"#,
+            r#"{"type":"user","message":{"content":"<command-name>/clear</command-name>"}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Done."}]}}"#,
+        ]
+        .join("\n");
+        let turns = conversation_in(&jsonl);
+        assert_eq!(turns.len(), 2);
+        assert!(turns[0].user && turns[0].text == "fix **the** bug" && turns[0].at == "t1");
+        assert!(!turns[1].user);
     }
 
     #[test]
