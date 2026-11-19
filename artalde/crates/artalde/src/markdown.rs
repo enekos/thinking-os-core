@@ -56,8 +56,95 @@ pub struct Output {
     pub clicked_links: Vec<String>,
 }
 
-/// Render `md` into `ui` with `theme`'s colours at body size `size`.
+/// Render `md` (GitHub-flavoured, HTML included) into `ui`.
 pub fn show(ui: &mut egui::Ui, theme: &Theme, md: &str, size: f32) -> Output {
+    let mut out = Output::default();
+    let segments = crate::gfm::parse(md);
+    ui.vertical(|ui| segments_ui(ui, theme, &segments, size, &mut out, 0));
+    out
+}
+
+fn segments_ui(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    segs: &[crate::gfm::Segment],
+    size: f32,
+    out: &mut Output,
+    salt: u64,
+) {
+    use crate::gfm::Segment;
+    for (i, seg) in segs.iter().enumerate() {
+        let id = salt.wrapping_mul(31).wrapping_add(i as u64 + 1);
+        match seg {
+            Segment::Markdown(text) => {
+                let o = show_plain(ui, theme, text, size);
+                out.clicked_links.extend(o.clicked_links);
+            }
+            Segment::Details {
+                summary,
+                open,
+                body,
+            } => {
+                let header = egui::RichText::new(summary)
+                    .font(fonts::semibold(size * 0.95))
+                    .color(style::c(theme.text));
+                egui::CollapsingHeader::new(header)
+                    .id_salt(("details", id, summary))
+                    .default_open(*open)
+                    .show(ui, |ui| segments_ui(ui, theme, body, size, out, id));
+            }
+            Segment::Callout { kind, body } => {
+                let color = alert_color(theme, kind);
+                let resp = egui::Frame::new()
+                    .fill(tint(style::c(theme.surface), color, 0.07))
+                    .corner_radius(CornerRadius::same(6))
+                    .inner_margin(egui::Margin {
+                        left: 14,
+                        right: 10,
+                        top: 8,
+                        bottom: 8,
+                    })
+                    .show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        if !kind.is_empty() {
+                            ui.label(
+                                egui::RichText::new(kind.to_lowercase())
+                                    .font(fonts::semibold(size * 0.85))
+                                    .color(color),
+                            );
+                        }
+                        segments_ui(ui, theme, body, size, out, id);
+                    })
+                    .response;
+                let bar =
+                    egui::Rect::from_min_size(resp.rect.min, egui::vec2(3.0, resp.rect.height()));
+                ui.painter().rect_filled(
+                    bar,
+                    CornerRadius {
+                        nw: 6,
+                        sw: 6,
+                        ne: 0,
+                        se: 0,
+                    },
+                    color,
+                );
+            }
+        }
+    }
+}
+
+fn alert_color(theme: &Theme, kind: &str) -> Color32 {
+    style::c(match kind {
+        "WARNING" | "CAUTION" => theme.blocked,
+        "IMPORTANT" => theme.danger,
+        "TIP" => theme.done,
+        "NOTE" => theme.accent,
+        _ => theme.border,
+    })
+}
+
+/// Plain markdown (no `<details>` left) into `ui`.
+fn show_plain(ui: &mut egui::Ui, theme: &Theme, md: &str, size: f32) -> Output {
     let text = if md.len() > MAX_CHARS {
         let cut = md
             .char_indices()
@@ -83,6 +170,7 @@ pub fn show(ui: &mut egui::Ui, theme: &Theme, md: &str, size: f32) -> Output {
         table: None,
         code: None,
         alert: None,
+        image: None,
     };
     ui.spacing_mut().item_spacing.y = (size * 0.45).max(4.0);
     let opts = Options::ENABLE_TABLES
@@ -119,6 +207,8 @@ struct Renderer<'a> {
     table: Option<Table>,
     code: Option<(String, String)>,
     alert: Option<BlockQuoteKind>,
+    /// Inside `![alt](url)`: its url and alt text so far.
+    image: Option<(String, String)>,
 }
 
 impl Renderer<'_> {
@@ -204,8 +294,7 @@ impl Renderer<'_> {
             Tag::Strikethrough => self.inline.strike += 1,
             Tag::Link { dest_url, .. } => self.links.push(dest_url.to_string()),
             Tag::Image { dest_url, .. } => {
-                self.links.push(dest_url.to_string());
-                self.text("🖼 ");
+                self.image = Some((dest_url.to_string(), String::new()));
             }
             Tag::Table(align) => {
                 self.flush(ui);
@@ -255,8 +344,26 @@ impl Renderer<'_> {
             TagEnd::Emphasis => self.inline.emph = self.inline.emph.saturating_sub(1),
             TagEnd::Strong => self.inline.strong = self.inline.strong.saturating_sub(1),
             TagEnd::Strikethrough => self.inline.strike = self.inline.strike.saturating_sub(1),
-            TagEnd::Link | TagEnd::Image => {
+            TagEnd::Link => {
                 self.links.pop();
+            }
+            TagEnd::Image => {
+                // Badges inside links vanish (the link text says it);
+                // pass/fail badges become marks; others link to the image.
+                if let Some((url, alt)) = self.image.take()
+                    && self.links.is_empty()
+                {
+                    let a = alt.trim().to_lowercase();
+                    if a.contains("passed") || a == "success" {
+                        self.text("✅ ");
+                    } else if a.contains("failed") || a.contains("error") {
+                        self.text("❌ ");
+                    } else if !a.is_empty() {
+                        self.links.push(url);
+                        self.text(&format!("🖼 {} ", alt.trim()));
+                        self.links.pop();
+                    }
+                }
             }
             TagEnd::TableCell => {
                 if let Some(t) = &mut self.table {
@@ -277,6 +384,10 @@ impl Renderer<'_> {
     }
 
     fn text(&mut self, t: &str) {
+        if let Some((_, alt)) = &mut self.image {
+            alt.push_str(t);
+            return;
+        }
         let run = Run {
             text: t.to_owned(),
             style: self.inline,
@@ -444,7 +555,14 @@ impl Renderer<'_> {
             .inner_margin(egui::Margin::same(10))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
-                if !lang.is_empty() {
+                let suggestion = lang == "suggestion";
+                if suggestion {
+                    ui.label(
+                        egui::RichText::new("Suggested change")
+                            .font(fonts::semibold(self.size * 0.85))
+                            .color(style::c(t.done)),
+                    );
+                } else if !lang.is_empty() {
                     ui.label(egui::RichText::new(lang).small().color(style::c(t.dim)));
                 }
                 egui::ScrollArea::horizontal()
@@ -455,6 +573,7 @@ impl Renderer<'_> {
                             let color = match line.chars().next() {
                                 Some('+') if lang == "diff" => style::c(t.done),
                                 Some('-') if lang == "diff" => style::c(t.danger),
+                                _ if suggestion => style::c(t.done),
                                 _ => style::c(t.text),
                             };
                             job.append(
@@ -492,7 +611,16 @@ impl Renderer<'_> {
                                             _ => egui::Layout::left_to_right(egui::Align::Center),
                                         };
                                         ui.with_layout(layout, |ui| {
+                                            let natural = ui.fonts_mut(|f| {
+                                                f.layout_job(LayoutJob {
+                                                    wrap: TextWrapping::no_max_width(),
+                                                    ..job.clone()
+                                                })
+                                                .size()
+                                                .x
+                                            });
                                             let mut label = egui::Label::new(job).wrap();
+                                            ui.set_min_width(natural.min(320.0));
                                             if i < t.head_rows {
                                                 label = label.selectable(false);
                                             }

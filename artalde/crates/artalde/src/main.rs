@@ -5,11 +5,14 @@ mod actions;
 mod app;
 mod feed;
 mod fonts;
+mod gfm;
 mod gh;
+mod kit;
 mod layout_view;
 mod markdown;
 mod mod_view;
 mod panels;
+mod settings_view;
 mod style;
 mod views;
 

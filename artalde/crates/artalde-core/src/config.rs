@@ -120,11 +120,16 @@ pub fn install_defaults(dir: &Path) -> std::io::Result<Vec<String>> {
     Ok(wrote)
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
     pub layout: String,
+    /// The dark theme.
     pub theme: String,
+    /// The light theme.
+    pub light_theme: String,
+    /// `system`, `light` or `dark`.
+    pub appearance: String,
     /// macOS notifications when an agent blocks or finishes unseen.
     pub notify: bool,
     /// Days of zaindu proposal files to show.
@@ -139,6 +144,8 @@ pub struct Settings {
     /// Agents offered when spawning.
     pub agents: Vec<String>,
     pub font_size: f32,
+    /// The app `path.edit` opens folders in (`open -a <editor>`).
+    pub editor: String,
 }
 
 impl Default for Settings {
@@ -146,6 +153,8 @@ impl Default for Settings {
         Settings {
             layout: "main".into(),
             theme: "graphite".into(),
+            light_theme: "paper".into(),
+            appearance: "system".into(),
             notify: true,
             inbox_days: 2,
             gh: true,
@@ -153,8 +162,19 @@ impl Default for Settings {
             spawn_here: "cd {dir} && {agent} {prompt}".into(),
             agents: vec!["claude".into(), "codex".into()],
             font_size: 13.5,
+            editor: "Zed".into(),
         }
     }
+}
+
+/// Write `settings` to `<dir>/settings.json`, atomically; the window's
+/// watcher picks it up like any other edit.
+pub fn save_settings(dir: &Path, settings: &Settings) -> std::io::Result<()> {
+    let body = serde_json::to_string_pretty(settings).map_err(std::io::Error::other)? + "\n";
+    let path = dir.join("settings.json");
+    let tmp = dir.join("settings.json.tmp");
+    fs::write(&tmp, body)?;
+    fs::rename(&tmp, &path)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -410,6 +430,19 @@ mod tests {
             !dir.join("layouts/main.json.error").exists(),
             "fixing clears the error file"
         );
+    }
+
+    #[test]
+    fn settings_round_trip() {
+        let dir = scratch("settings");
+        fs::create_dir_all(&dir).unwrap();
+        let s = Settings {
+            appearance: "light".into(),
+            font_size: 15.0,
+            ..Settings::default()
+        };
+        save_settings(&dir, &s).unwrap();
+        assert_eq!(Config::load(&dir, None).settings, s);
     }
 
     #[test]

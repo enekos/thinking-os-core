@@ -97,6 +97,7 @@ dependencies = [
  "artalde-core",
  "artalde-mods",
  "eframe",
+ "egui",
  "png 0.17.16",
  "pulldown-cmark",
  "serde_json",

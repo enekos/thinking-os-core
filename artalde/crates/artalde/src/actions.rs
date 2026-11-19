@@ -30,6 +30,16 @@ pub enum Job {
     Open {
         target: String,
     },
+    /// Run a program without a shell; its failure is logged.
+    Run {
+        program: String,
+        args: Vec<String>,
+    },
+    /// `open -a <app> <target>`.
+    OpenWith {
+        app: String,
+        target: String,
+    },
     Notify {
         title: String,
         body: String,
@@ -251,6 +261,31 @@ fn run(job: &Job) -> Option<String> {
         }
         Job::Spawn { line } => osascript(SPAWN, &[line]).map(|_| Some(format!("started: {line}"))),
         Job::Notify { title, body } => osascript(NOTIFY, &[title, body]).map(|_| None),
+        Job::OpenWith { app, target } => Command::new("open")
+            .args(["-a", app, target])
+            .stdin(Stdio::null())
+            .status()
+            .map_err(|e| e.to_string())
+            .and_then(|s| {
+                if s.success() {
+                    Ok(None)
+                } else {
+                    Err(format!("open -a {app} failed"))
+                }
+            }),
+        Job::Run { program, args } => Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| e.to_string())
+            .and_then(|o| {
+                let text = String::from_utf8_lossy(&o.stdout).trim().to_owned();
+                if o.status.success() {
+                    Ok(Some(text))
+                } else {
+                    Err(String::from_utf8_lossy(&o.stderr).trim().to_owned())
+                }
+            }),
         Job::TabColor { tty, rgb } => tab_color(tty, *rgb).map(|()| None),
         Job::Open { target } => Command::new("open")
             .arg(target)
@@ -279,5 +314,7 @@ fn label(job: &Job) -> &'static str {
         Job::Open { .. } => "open",
         Job::Notify { .. } => "notify",
         Job::TabColor { .. } => "tab colour",
+        Job::OpenWith { .. } => "editor",
+        Job::Run { .. } => "run",
     }
 }

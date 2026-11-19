@@ -23,6 +23,7 @@ use crate::actions::{Actions, Job};
 use crate::feed::{Feed, Msg};
 use crate::gh::Gh;
 use crate::layout_view::{self, LayoutState};
+use crate::panels::AgentView;
 use crate::views::{Conversations, InboxState, Logs, PrView, TAB_BAR, Tab};
 use crate::{fonts, mod_view, style};
 use artalde_core::github::{self, PrRef};
@@ -53,6 +54,11 @@ pub struct App {
     /// The tab colour last sent to each session's terminal.
     tab_colors: HashMap<String, (String, Option<String>)>,
     pub(crate) label_edit: String,
+    pub(crate) settings_draft: Option<artalde_core::config::Settings>,
+    pub(crate) hook_confirm: bool,
+    pub(crate) agent_view: AgentView,
+    pub(crate) agent_query: String,
+    pub(crate) spaces_closed: Vec<String>,
     /// The session `label_edit` was filled from.
     pub(crate) label_for: Option<String>,
     prev_states: HashMap<String, AgentState>,
@@ -138,6 +144,11 @@ impl App {
             tags: Tags::load(&artalde_core::store::state_dir()),
             tab_colors: HashMap::new(),
             label_edit: String::new(),
+            settings_draft: None,
+            hook_confirm: false,
+            agent_view: AgentView::default(),
+            agent_query: String::new(),
+            spaces_closed: Vec::new(),
             label_for: None,
             prev_states: HashMap::new(),
             have_snapshot: false,
@@ -177,6 +188,15 @@ impl App {
             secs % 60,
             line.into()
         ));
+    }
+
+    /// Linear team keys from the wiki's os.yaml.
+    pub(crate) fn linear_teams(&self) -> Vec<String> {
+        artalde_core::catalog::linear_teams(&artalde_core::config::wiki_root())
+    }
+
+    pub(crate) fn palette_open(&self) -> bool {
+        self.palette.is_some() || self.spawn.is_some() || self.confirm.is_some()
     }
 
     pub(crate) fn toast_line(&mut self, ctx: &egui::Context, text: String) {
@@ -325,6 +345,10 @@ impl App {
                     .map_err(|e| self.push_log(format!("notify: {e}")));
             }
         }
+    }
+
+    pub(crate) fn submit_job(&mut self, job: Job) {
+        self.submit(job);
     }
 
     fn submit(&mut self, job: Job) {
@@ -542,6 +566,16 @@ impl App {
                 }
                 _ => self.push_log("url.open: only http(s) URLs"),
             },
+            "path.edit" => match arg.map(PathBuf::from) {
+                Some(p) if p.is_absolute() && p.exists() => {
+                    let app = self.settings().editor;
+                    self.submit(Job::OpenWith {
+                        app,
+                        target: p.display().to_string(),
+                    });
+                }
+                _ => self.push_log("path.edit: no such folder"),
+            },
             "path.open" => match arg.map(PathBuf::from) {
                 Some(p) if p.is_absolute() && p.exists() => self.submit(Job::Open {
                     target: p.display().to_string(),
@@ -573,6 +607,33 @@ impl App {
                 }
             }
             "inbox.open" => self.open_tab(Tab::Inbox),
+            "settings.open" => {
+                self.settings_draft = None;
+                self.open_tab(Tab::Settings);
+            }
+            "appearance.toggle" | "appearance.set" => {
+                if let Some(cfg) = &self.config {
+                    let mut s = cfg.settings.clone();
+                    s.appearance = match (cmd.name.as_str(), arg) {
+                        ("appearance.set", Some(m @ ("system" | "light" | "dark"))) => m.to_owned(),
+                        _ => {
+                            if self.theme.dark {
+                                "light".into()
+                            } else {
+                                "dark".into()
+                            }
+                        }
+                    };
+                    self.theme_name = None;
+                    let dir = cfg.dir.clone();
+                    if let Err(e) = artalde_core::config::save_settings(&dir, &s) {
+                        self.push_log(format!("appearance: {e}"));
+                    }
+                    if let Some(c) = &mut self.config {
+                        c.settings = s;
+                    }
+                }
+            }
             "pr.open" => match arg.and_then(PrRef::parse) {
                 Some(pr) => self.open_tab(Tab::Pr(pr)),
                 None => self.push_log("pr.open: owner/repo#N or a PR URL"),
@@ -985,10 +1046,18 @@ impl App {
 
     fn apply_config_style(&mut self, ctx: &egui::Context) {
         let Some(cfg) = &self.config else { return };
-        let name = self
-            .theme_name
-            .clone()
-            .unwrap_or_else(|| cfg.settings.theme.clone());
+        let dark = match cfg.settings.appearance.as_str() {
+            "light" => false,
+            "dark" => true,
+            _ => ctx.system_theme().is_none_or(|t| t == egui::Theme::Dark),
+        };
+        let name = self.theme_name.clone().unwrap_or_else(|| {
+            if dark {
+                cfg.settings.theme.clone()
+            } else {
+                cfg.settings.light_theme.clone()
+            }
+        });
         let theme = cfg.theme(&name);
         let font = cfg.settings.font_size;
         #[expect(
@@ -1217,6 +1286,12 @@ impl eframe::App for App {
                 self.finish_frame(&ctx);
                 return;
             }
+            Some(Tab::Settings) => {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(page));
+                self.settings_view(&mut child);
+                self.finish_frame(&ctx);
+                return;
+            }
             Some(Tab::Session(id)) => {
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(page));
                 self.session_view(&mut child, &id);
@@ -1268,6 +1343,7 @@ impl App {
     fn finish_frame(&mut self, ctx: &egui::Context) {
         let ctx = ctx.clone();
         self.confirm_ui(&ctx);
+        self.hook_confirm_ui(&ctx);
         self.palette_ui(&ctx);
         self.spawn_ui(&ctx);
         self.toasts_ui(&ctx);

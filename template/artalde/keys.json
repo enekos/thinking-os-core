@@ -7,7 +7,7 @@
   "cmd+shift+l": "layout.cycle",
   "cmd+shift+t": "theme.cycle",
   "cmd+r": "refresh",
-  "cmd+Comma": "config.open",
+  "cmd+Comma": "settings.open",
   "cmd+1": "agent.select:1",
   "cmd+2": "agent.select:2",
   "cmd+3": "agent.select:3",
@@ -24,5 +24,6 @@
   "cmd+shift+]": "tab.next",
   "cmd+shift+[": "tab.prev",
   "cmd+i": "inbox.open",
-  "cmd+o": "session.open"
+  "cmd+o": "session.open",
+  "cmd+shift+d": "appearance.toggle"
 }

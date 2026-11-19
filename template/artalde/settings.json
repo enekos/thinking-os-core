@@ -1,11 +1,17 @@
 {
   "layout": "main",
   "theme": "graphite",
+  "light_theme": "paper",
+  "appearance": "system",
   "notify": true,
   "inbox_days": 2,
   "gh": true,
   "spawn_worktree": "zz -c {repo}@{branch} {agent} {prompt}",
   "spawn_here": "cd {dir} && {agent} {prompt}",
-  "agents": ["claude", "codex"],
-  "font_size": 13.5
+  "agents": [
+    "claude",
+    "codex"
+  ],
+  "font_size": 13.5,
+  "editor": "Zed"
 }

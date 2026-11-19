@@ -11,7 +11,7 @@ good version and the reason lands next to it in `<file>.error`.
 
 | file | what |
 |---|---|
-| `settings.json` | default layout/theme, notifications, spawn command lines, font size |
+| `settings.json` | appearance (`system`/`light`/`dark`), `theme` (dark) + `light_theme`, default layout, `editor`, notifications, spawn command lines, font size |
 | `keys.json` | `"cmd+shift+l": "layout.cycle"` — chord → command |
 | `layouts/<name>.json` | window trees; `layout.cycle` / `layout.select:<name>` |
 | `themes/<name>.json` | colour tokens; missing tokens inherit graphite |
@@ -72,4 +72,5 @@ fn render(ctx) {
 `artalde commands` lists them. Common: `agent.next`, `agent.select:<id|n>`, `session.focus[:<id>]`,
 `session.ack[:<id>]`, `session.tag:<colour|none>` (or `<id>:<colour>`), `session.label:<text>`, `session.send:<text>`, `space.filter:<repo>`, `spawn.open`, `layout.select:<name>`,
 `layout.cycle`, `theme.select:<name>`, `theme.cycle`, `url.open:<url>`, `path.open:<path>`, `palette.open`, `refresh`,
+`settings.open` (⌘,), `appearance.toggle` (⇧⌘D), `appearance.set:<system|light|dark>`, `path.edit:<path>`,
 `inbox.open`, `pr.open:<owner/repo#N>`, `session.open[:<id>]`, `tab.close`, `tab.next`, `tab.prev`, `tab.select:<n>`.

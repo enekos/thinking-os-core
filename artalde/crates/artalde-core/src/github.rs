@@ -242,8 +242,8 @@ const DETAIL_QUERY: &str = "query($owner: String!, $name: String!, $number: Int!
       timelineItems(last: 100, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, MERGED_EVENT, CLOSED_EVENT, REOPENED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT, READY_FOR_REVIEW_EVENT, PULL_REQUEST_COMMIT]) {
         nodes {
           __typename
-          ... on IssueComment { id author { login } body createdAt url }
-          ... on PullRequestReview { id author { login } body state createdAt url }
+          ... on IssueComment { id author { __typename login } body createdAt url }
+          ... on PullRequestReview { id author { __typename login } body state createdAt url }
           ... on MergedEvent { actor { login } createdAt }
           ... on ClosedEvent { actor { login } createdAt }
           ... on ReopenedEvent { actor { login } createdAt }
@@ -255,7 +255,7 @@ const DETAIL_QUERY: &str = "query($owner: String!, $name: String!, $number: Int!
       reviewThreads(first: 100) {
         nodes {
           id isResolved isOutdated path line originalLine viewerCanResolve viewerCanUnresolve viewerCanReply
-          comments(first: 50) { nodes { id author { login } body createdAt url diffHunk } }
+          comments(first: 50) { nodes { id author { __typename login } body createdAt url diffHunk } }
         }
       }
       commits(last: 1) { nodes { commit { oid statusCheckRollup { state contexts(first: 100) { nodes {
@@ -305,6 +305,30 @@ pub struct Comment {
     pub created: String,
     pub url: String,
     pub diff_hunk: String,
+    /// Written by an app (CodeRabbit, Bender, …), not a person.
+    pub bot: bool,
+}
+
+/// A friendly name for a bot login.
+pub fn bot_name(login: &str) -> String {
+    let l = login.trim_end_matches("[bot]").to_lowercase();
+    let known = [
+        ("coderabbit", "CodeRabbit"),
+        ("bender", "Bender"),
+        ("sonarqube", "SonarQube"),
+        ("linear", "Linear"),
+        ("cursor", "Cursor Bugbot"),
+        ("github-actions", "GitHub Actions"),
+        ("dependabot", "Dependabot"),
+        ("renovate", "Renovate"),
+        ("copilot", "Copilot"),
+        ("codecov", "Codecov"),
+        ("vercel", "Vercel"),
+    ];
+    known.iter().find(|(k, _)| l.contains(k)).map_or_else(
+        || login.trim_end_matches("[bot]").to_owned(),
+        |(_, n)| (*n).to_owned(),
+    )
 }
 
 /// One entry of the conversation, oldest first.
@@ -438,6 +462,7 @@ fn comment(v: &Value) -> Comment {
         created: s(v, "/createdAt"),
         url: s(v, "/url"),
         diff_hunk: s(v, "/diffHunk"),
+        bot: s(v, "/author/__typename") == "Bot" || s(v, "/author/login").ends_with("[bot]"),
     }
 }
 

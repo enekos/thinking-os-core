@@ -73,8 +73,15 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("inbox.toggle", "Tick or untick a proposal: <index>"),
     ("url.open", "Open a URL: <url>"),
     ("path.open", "Open a folder in Finder: <path>"),
+    (
+        "path.edit",
+        "Open a folder in the editor from settings.json: <path>",
+    ),
     ("config.open", "Open the config folder"),
     ("refresh", "Probe everything now"),
+    ("settings.open", "Open Settings"),
+    ("appearance.toggle", "Switch between light and dark"),
+    ("appearance.set", "Set the appearance: <system|light|dark>"),
     ("inbox.open", "Open the pull-request inbox tab"),
     (
         "pr.open",

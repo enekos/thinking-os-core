@@ -17,6 +17,7 @@ use eframe::egui::{self, Color32, CornerRadius, RichText, Sense, Stroke, UiBuild
 
 use crate::app::App;
 use crate::gh::Req;
+use crate::kit::{self, Col};
 use crate::style::{self, tint};
 use crate::{fonts, markdown};
 
@@ -33,6 +34,7 @@ pub enum Tab {
     Inbox,
     Pr(PrRef),
     Session(String),
+    Settings,
 }
 
 impl Tab {
@@ -42,6 +44,7 @@ impl Tab {
             Tab::Inbox => "inbox".into(),
             Tab::Pr(p) => format!("pr:{p}"),
             Tab::Session(id) => format!("session:{id}"),
+            Tab::Settings => "settings".into(),
         }
     }
 
@@ -49,6 +52,7 @@ impl Tab {
         match s.split_once(':') {
             None if s == "home" => Some(Tab::Home),
             None if s == "inbox" => Some(Tab::Inbox),
+            None if s == "settings" => Some(Tab::Settings),
             Some(("pr", r)) => PrRef::parse(r).map(Tab::Pr),
             Some(("session", id)) if !id.is_empty() => Some(Tab::Session(id.to_owned())),
             _ => None,
@@ -82,6 +86,7 @@ pub struct PrView {
     pub delete_branch: bool,
     pub busy: Option<String>,
     pub show_resolved: bool,
+    pub hide_bots: bool,
 }
 
 #[derive(Default)]
@@ -354,6 +359,7 @@ impl App {
                     ),
                 )
             }
+            Tab::Settings => ("⚙".into(), "Settings".into()),
             Tab::Session(id) => (
                 "●".into(),
                 self.snap
@@ -484,6 +490,60 @@ impl App {
         if presp.clicked() {
             self.queue
                 .push(artalde_core::command::Command::new("palette.open", None));
+        }
+        painter.hline(
+            rect.min.x..=rect.max.x,
+            rect.max.y + 2.0,
+            Stroke::new(1.0, style::c(theme.border)),
+        );
+        // Right end: appearance and settings.
+        let btn = |painter: &egui::Painter,
+                   ui: &mut egui::Ui,
+                   x: f32,
+                   glyph: &str,
+                   tip: &str,
+                   key: &str|
+         -> bool {
+            let r = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(h, h));
+            let resp = ui
+                .interact(r, egui::Id::unique(("tabbar", key)), Sense::click())
+                .on_hover_text(tip);
+            if resp.hovered() {
+                painter.rect_filled(r, CornerRadius::same(7), style::c(theme.raised));
+            }
+            painter.text(
+                r.center(),
+                egui::Align2::CENTER_CENTER,
+                glyph,
+                egui::FontId::proportional(15.0),
+                style::c(theme.dim),
+            );
+            resp.clicked()
+        };
+        if btn(
+            &painter,
+            ui,
+            rect.max.x - h,
+            "⚙",
+            "Settings (⌘,)",
+            "settings",
+        ) {
+            self.queue
+                .push(artalde_core::command::Command::new("settings.open", None));
+        }
+        let glyph = if theme.dark { "☀" } else { "☾" };
+        if btn(
+            &painter,
+            ui,
+            rect.max.x - 2.0 * h - 4.0,
+            glyph,
+            "Light / dark (⇧⌘D)",
+            "mode",
+        ) {
+            self.queue.push(artalde_core::command::Command::new(
+                "appearance.toggle",
+                None,
+            ));
         }
         if let Some(i) = select {
             self.active = i;
@@ -697,104 +757,118 @@ impl App {
         let theme = self.theme.clone();
         let Some(pr) = row.pr.clone() else { return };
         let open = self.tabs.contains(&Tab::Pr(pr.clone()));
-        let resp = ui
-            .scope_builder(
-                UiBuilder::new()
-                    .id_salt(("inbox-row", pr.to_string(), compact))
-                    .sense(Sense::click()),
-                |ui| {
-                    egui::Frame::new()
-                        .fill(if open {
-                            tint(style::c(theme.surface), style::c(theme.accent), 0.08)
-                        } else {
-                            Color32::TRANSPARENT
-                        })
-                        .corner_radius(CornerRadius::same(6))
-                        .inner_margin(egui::Margin::symmetric(6, 4))
-                        .show(ui, |ui| {
-                            ui.set_min_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                let (dot, _) =
-                                    ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
-                                ui.painter().circle_filled(
-                                    dot.center(),
-                                    4.0,
-                                    check_color(&theme, &row.checks),
-                                );
-                                ui.label(
-                                    RichText::new(pr.short())
-                                        .monospace()
-                                        .small()
-                                        .color(style::c(theme.dim)),
-                                );
-                                if row.draft {
-                                    ui.label(
-                                        RichText::new("draft").small().color(style::c(theme.dim)),
-                                    );
-                                }
-                                ui.add(
-                                    egui::Label::new(RichText::new(clip(
-                                        &row.title,
-                                        if compact { 60 } else { 110 },
-                                    )))
-                                    .truncate(),
-                                );
-                            });
-                            if !compact || !row.review.is_empty() {
-                                ui.horizontal(|ui| {
-                                    ui.add_space(16.0);
-                                    let (rl, rc) = review_label(&row.review);
-                                    if !rl.is_empty() {
-                                        ui.label(
-                                            RichText::new(rl)
-                                                .small()
-                                                .color(style::token(&theme, rc)),
-                                        );
-                                    }
-                                    ui.label(
-                                        RichText::new(format!("@{}", row.author))
-                                            .small()
-                                            .color(style::c(theme.dim)),
-                                    );
-                                    ui.label(
-                                        RichText::new(format!(
-                                            "+{} -{}",
-                                            row.additions, row.deletions
-                                        ))
-                                        .small()
-                                        .monospace()
-                                        .color(style::c(theme.dim)),
-                                    );
-                                    ui.label(
-                                        RichText::new(github::age(&row.updated, now))
-                                            .small()
-                                            .color(style::c(theme.dim)),
-                                    );
-                                    if !compact {
-                                        for l in row.labels.iter().take(3) {
-                                            ui.label(
-                                                RichText::new(l)
-                                                    .small()
-                                                    .color(style::c(theme.accent)),
-                                            );
-                                        }
-                                    }
-                                });
-                            }
-                        });
-                },
-            )
-            .response;
-        if resp.hovered() {
-            ui.painter().rect_stroke(
-                resp.rect,
-                CornerRadius::same(6),
-                Stroke::new(1.0, style::c(theme.border)),
-                egui::StrokeKind::Inside,
-            );
-        }
+        let cols: &[Col] = if compact {
+            &[Col::Px(12.0), Col::Px(112.0), Col::Flex, Col::Px(34.0)]
+        } else {
+            &[
+                Col::Px(12.0),
+                Col::Px(220.0),
+                Col::Flex,
+                Col::Px(118.0),
+                Col::Px(120.0),
+                Col::Px(92.0),
+                Col::Px(36.0),
+            ]
+        };
+        let (rl, rc) = review_label(&row.review);
+        let repo_label = if compact { pr.short() } else { pr.to_string() };
+        let resp = kit::row(
+            ui,
+            &theme,
+            ("inbox-row", pr.to_string(), compact),
+            kit::ROW,
+            open,
+            cols,
+            |c, ui| match (c, compact) {
+                (0, _) => kit::dot(ui, check_color(&theme, &row.checks), 4.0),
+                (1, _) => {
+                    kit::mono(ui, &repo_label, 11.5, style::c(theme.dim));
+                }
+                (2, _) => {
+                    if row.draft {
+                        ui.label(
+                            RichText::new("draft")
+                                .size(11.0)
+                                .color(style::c(theme.unknown)),
+                        );
+                    }
+                    kit::text(ui, &row.title, 13.0, style::c(theme.text));
+                }
+                (3, false) => {
+                    if !rl.is_empty() {
+                        kit::text(ui, rl, 11.5, style::token(&theme, rc));
+                    }
+                }
+                (4, false) => {
+                    kit::text(ui, &format!("@{}", row.author), 11.5, style::c(theme.dim));
+                }
+                (5, false) => {
+                    ui.label(
+                        RichText::new(format!("+{}", row.additions))
+                            .monospace()
+                            .size(11.0)
+                            .color(style::c(theme.done)),
+                    );
+                    ui.label(
+                        RichText::new(format!("-{}", row.deletions))
+                            .monospace()
+                            .size(11.0)
+                            .color(style::c(theme.danger)),
+                    );
+                }
+                _ => kit::right(
+                    ui,
+                    &github::age(&row.updated, now),
+                    11.0,
+                    style::c(theme.dim),
+                ),
+            },
+        );
+        let tip = format!(
+            "{}\n{} → {}{}",
+            row.title,
+            row.head,
+            row.base,
+            if row.labels.is_empty() {
+                String::new()
+            } else {
+                format!("\nlabels: {}", row.labels.join(", "))
+            }
+        );
+        let resp = resp.on_hover_text(tip);
+        resp.context_menu(|ui| self.pr_copy_menu(ui, &pr, &row.head, &row.url));
         if resp.clicked() {
             self.open_tab(Tab::Pr(pr));
+        }
+    }
+
+    /// The things a developer copies about a PR.
+    fn pr_copy_menu(&mut self, ui: &mut egui::Ui, pr: &PrRef, head: &str, url: &str) {
+        let repo_name = pr.repo.rsplit('/').next().unwrap_or(&pr.repo).to_owned();
+        let items = [
+            ("Copy URL", url.to_owned()),
+            ("Copy owner/repo#N", pr.to_string()),
+            ("Copy branch", head.to_owned()),
+            (
+                "Copy gh pr checkout",
+                format!("gh pr checkout {} --repo {}", pr.number, pr.repo),
+            ),
+            (
+                "Copy zz worktree command",
+                format!("zz -c {repo_name}@{head} claude"),
+            ),
+        ];
+        for (label, value) in items {
+            if !value.is_empty() && ui.button(label).on_hover_text(&value).clicked() {
+                ui.ctx().copy_text(value);
+                ui.close();
+            }
+        }
+        ui.separator();
+        if ui.button("Open on GitHub").clicked() {
+            self.queue
+                .push(artalde_core::command::Command::new("url.open", Some(url)));
+            ui.close();
         }
     }
 
@@ -916,38 +990,186 @@ impl App {
         // Sub-tabs.
         let open_threads = d.threads.iter().filter(|t| !t.resolved).count();
         let failing = d.checks.iter().filter(|c| c.failed()).count();
-        ui.horizontal(|ui| {
-            for (sub, label) in [
-                (
-                    PrSub::Conversation,
-                    format!("Conversation  {}", d.timeline.len() + open_threads),
-                ),
-                (PrSub::Files, format!("Files  {}", d.changed_files)),
-                (
-                    PrSub::Checks,
-                    if failing > 0 {
-                        format!("Checks  {failing} failing")
-                    } else {
-                        format!("Checks  {}", d.checks.len())
-                    },
-                ),
-            ] {
+        let subs = [PrSub::Conversation, PrSub::Files, PrSub::Checks];
+        let labels = vec![
+            (
+                "Conversation".to_owned(),
+                Some(d.timeline.len() + open_threads),
+            ),
+            ("Files".to_owned(), usize::try_from(d.changed_files).ok()),
+            (
+                if failing > 0 {
+                    format!("Checks · {failing} failing")
+                } else {
+                    "Checks".to_owned()
+                },
+                Some(d.checks.len()),
+            ),
+        ];
+        let sel = subs.iter().position(|s| *s == view.sub).unwrap_or(0);
+        if let Some(i) = kit::tabs(ui, &theme, &labels, sel) {
+            view.sub = subs[i.min(2)];
+        }
+        ui.add_space(kit::S2);
+        if view.sub == PrSub::Files {
+            self.pr_files(ui, pr, view);
+            return;
+        }
+        // Main column plus a metadata sidebar, so prose keeps a readable width.
+        let rect = ui.available_rect_before_wrap();
+        let side_w = if rect.width() > 980.0 { 290.0 } else { 0.0 };
+        let main = egui::Rect::from_min_max(
+            rect.min,
+            egui::pos2(
+                rect.max.x - if side_w > 0.0 { side_w + 20.0 } else { 0.0 },
+                rect.max.y,
+            ),
+        );
+        let mut left = ui.new_child(UiBuilder::new().max_rect(main));
+        match view.sub {
+            PrSub::Checks => self.pr_checks(&mut left, pr, &d),
+            _ => self.pr_conversation(&mut left, pr, view, &d),
+        }
+        if side_w > 0.0 {
+            let side =
+                egui::Rect::from_min_max(egui::pos2(rect.max.x - side_w, rect.min.y), rect.max);
+            let mut right = ui.new_child(UiBuilder::new().max_rect(side));
+            egui::ScrollArea::vertical()
+                .id_salt(("pr-side", pr.to_string()))
+                .auto_shrink([false, false])
+                .show(&mut right, |ui| self.pr_sidebar(ui, &d));
+        }
+    }
+
+    fn pr_sidebar(&mut self, ui: &mut egui::Ui, d: &PrDetail) {
+        let theme = self.theme.clone();
+        let dim = style::c(theme.dim);
+        kit::section(
+            ui,
+            &theme,
+            "Reviewers",
+            Some(d.reviews.len() + d.requested.len()),
+            |_| {},
+        );
+        if d.reviews.is_empty() && d.requested.is_empty() {
+            ui.label(RichText::new("No reviews yet").size(12.0).color(dim));
+        }
+        for (who, state) in &d.reviews {
+            let (label, token) = review_label(state);
+            ui.horizontal(|ui| {
+                kit::dot(ui, style::token(&theme, token), 3.5);
+                ui.label(RichText::new(format!("@{who}")).size(12.5));
+                kit::right(ui, label, 11.5, style::token(&theme, token));
+            });
+        }
+        for who in &d.requested {
+            ui.horizontal(|ui| {
+                kit::dot(ui, style::c(theme.unknown), 3.5);
+                ui.label(RichText::new(format!("@{who}")).size(12.5));
+                kit::right(ui, "requested", 11.5, dim);
+            });
+        }
+        ui.add_space(kit::S3);
+        kit::section(ui, &theme, "Merge", None, |_| {});
+        let (merge_text, merge_color) = match (d.mergeable.as_str(), d.merge_state.as_str()) {
+            ("CONFLICTING", _) => ("Conflicts with base", theme.danger),
+            (_, "BEHIND") => ("Behind base", theme.blocked),
+            (_, "BLOCKED") => ("Blocked by rules or reviews", theme.blocked),
+            (_, "UNSTABLE") => ("Checks not passing", theme.blocked),
+            (_, "CLEAN") => ("Ready to merge", theme.done),
+            _ if d.state == "MERGED" => ("Merged", theme.accent),
+            _ => ("Unknown", theme.dim),
+        };
+        ui.label(
+            RichText::new(merge_text)
+                .size(12.5)
+                .color(style::c(merge_color)),
+        );
+        if let Some(m) = &d.auto_merge {
+            ui.label(
+                RichText::new(format!("auto-merge: {}", m.to_lowercase()))
+                    .size(11.5)
+                    .color(dim),
+            );
+        }
+        ui.add_space(kit::S3);
+        kit::section(ui, &theme, "Checks", Some(d.checks.len()), |_| {});
+        let failing = d.checks.iter().filter(|c| c.failed()).count();
+        let running = d.checks.iter().filter(|c| c.running()).count();
+        let passed = d.checks.len().saturating_sub(failing + running);
+        for (n, label, color) in [
+            (failing, "failing", theme.danger),
+            (running, "running", theme.working),
+            (passed, "passed or skipped", theme.done),
+        ] {
+            if n > 0 {
+                ui.horizontal(|ui| {
+                    kit::dot(ui, style::c(color), 3.5);
+                    ui.label(RichText::new(format!("{n} {label}")).size(12.5));
+                });
+            }
+        }
+        ui.add_space(kit::S3);
+        kit::section(ui, &theme, "Branch", None, |_| {});
+        let mut copied = kit::kv(ui, &theme, "head", &d.head, 44.0);
+        copied |= kit::kv(ui, &theme, "base", &d.base, 44.0);
+        if !d.head_oid.is_empty() {
+            copied |= kit::kv(
+                ui,
+                &theme,
+                "sha",
+                d.head_oid.get(..12).unwrap_or(&d.head_oid),
+                44.0,
+            );
+        }
+        if copied {
+            let ctx = ui.ctx().clone();
+            self.toast_line(&ctx, "copied".into());
+        }
+        if !d.labels.is_empty() {
+            ui.add_space(kit::S3);
+            kit::section(ui, &theme, "Labels", Some(d.labels.len()), |_| {});
+            ui.horizontal_wrapped(|ui| {
+                for l in &d.labels {
+                    kit::pill(ui, &theme, l, style::c(theme.accent));
+                }
+            });
+        }
+        let tickets =
+            artalde_core::claude::tickets(&format!("{} {}", d.title, d.head), &self.linear_teams());
+        if !tickets.is_empty() {
+            ui.add_space(kit::S3);
+            kit::section(ui, &theme, "Tickets", Some(tickets.len()), |_| {});
+            for t in tickets {
+                let known = self
+                    .snap
+                    .sessions
+                    .iter()
+                    .flat_map(|s| &s.resources)
+                    .find(|r| r.id == t)
+                    .map(|r| r.url.clone());
+                let base = self
+                    .snap
+                    .sessions
+                    .iter()
+                    .flat_map(|s| &s.resources)
+                    .find_map(|r| {
+                        r.url
+                            .find("/issue/")
+                            .and_then(|i| r.url.get(..i))
+                            .map(str::to_owned)
+                    })
+                    .unwrap_or_else(|| "https://linear.app".into());
+                let url = known.unwrap_or_else(|| format!("{base}/issue/{t}"));
                 if ui
-                    .selectable_label(
-                        view.sub == sub,
-                        RichText::new(label).font(fonts::semibold(13.5)),
-                    )
+                    .link(RichText::new(&t).monospace().size(12.0))
+                    .on_hover_text(&url)
                     .clicked()
                 {
-                    view.sub = sub;
+                    self.queue
+                        .push(artalde_core::command::Command::new("url.open", Some(&url)));
                 }
             }
-        });
-        ui.separator();
-        match view.sub {
-            PrSub::Conversation => self.pr_conversation(ui, pr, view, &d),
-            PrSub::Files => self.pr_files(ui, pr, view),
-            PrSub::Checks => self.pr_checks(ui, pr, &d),
         }
     }
 
@@ -955,27 +1177,18 @@ impl App {
         let theme = self.theme.clone();
         let busy = view.busy.is_some();
         ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             ui.add_enabled_ui(!busy, |ui| {
                 if d.open() {
-                    if !d.viewer_is_author && ui.button("✓ Approve").clicked() {
-                        self.act(pr, Action::Approve(view.composer.trim().to_owned()));
-                    }
-                    if !d.viewer_is_author
-                        && ui
-                            .button("Request changes")
-                            .on_hover_text("Uses the comment box below as the review body")
-                            .clicked()
-                    {
-                        self.act(pr, Action::RequestChanges(view.composer.trim().to_owned()));
-                    }
                     if d.can_write && !d.draft && !d.merge_methods.is_empty() {
                         let method = view.method.unwrap_or(MergeMethod::Squash);
-                        let merge = egui::Button::new(
-                            RichText::new(format!("Merge · {}", method.label().to_lowercase()))
-                                .color(style::c(theme.background)),
-                        )
-                        .fill(style::c(theme.done));
-                        if ui.add(merge).clicked() {
+                        let ready = d.mergeable != "CONFLICTING";
+                        let color = if ready {
+                            style::c(theme.done)
+                        } else {
+                            style::c(theme.dim)
+                        };
+                        if kit::primary(ui, &theme, method.label(), color).clicked() {
                             self.act(
                                 pr,
                                 Action::Merge {
@@ -984,70 +1197,91 @@ impl App {
                                 },
                             );
                         }
-                        egui::ComboBox::from_id_salt(("merge-method", pr.to_string()))
-                            .selected_text("")
-                            .width(24.0)
-                            .show_ui(ui, |ui| {
-                                for m in &d.merge_methods {
-                                    ui.selectable_value(&mut view.method, Some(*m), m.label());
-                                }
-                                ui.separator();
-                                ui.checkbox(&mut view.delete_branch, "Delete branch");
-                                ui.separator();
-                                if d.auto_merge.is_some() {
-                                    if ui.button("Disable auto-merge").clicked() {
-                                        self.act(pr, Action::DisableAutoMerge);
-                                    }
-                                } else if ui.button("Auto-merge when ready").clicked() {
-                                    self.act(
-                                        pr,
-                                        Action::AutoMerge {
-                                            method,
-                                            delete_branch: view.delete_branch,
-                                        },
-                                    );
-                                }
-                            });
-                    }
-                    if d.can_update_branch && d.merge_state == "BEHIND" {
-                        if ui.button("Update branch").clicked() {
-                            self.act(pr, Action::UpdateBranch { rebase: false });
-                        }
-                        if ui.small_button("rebase").clicked() {
-                            self.act(pr, Action::UpdateBranch { rebase: true });
-                        }
-                    }
-                    if d.viewer_is_author || d.can_write {
-                        if d.draft {
-                            if ui.button("Ready for review").clicked() {
-                                self.act(pr, Action::Ready);
+                        let r = kit::button(ui, &theme, "▾", None).on_hover_text("Merge options");
+                        egui::Popup::menu(&r).show(|ui| {
+                            for m in &d.merge_methods {
+                                ui.selectable_value(&mut view.method, Some(*m), m.label());
                             }
-                        } else if ui.button("To draft").clicked() {
-                            self.act(pr, Action::ToDraft);
+                            ui.separator();
+                            ui.checkbox(&mut view.delete_branch, "Delete branch after merge");
+                            ui.separator();
+                            if d.auto_merge.is_some() {
+                                if ui.button("Disable auto-merge").clicked() {
+                                    self.act(pr, Action::DisableAutoMerge);
+                                }
+                            } else if ui.button("Auto-merge when ready").clicked() {
+                                self.act(
+                                    pr,
+                                    Action::AutoMerge {
+                                        method,
+                                        delete_branch: view.delete_branch,
+                                    },
+                                );
+                            }
+                        });
+                    }
+                    if !d.viewer_is_author {
+                        if kit::button(ui, &theme, "Approve", None).clicked() {
+                            self.act(pr, Action::Approve(view.composer.trim().to_owned()));
                         }
-                        if ui.button("Close").clicked() {
-                            self.act(pr, Action::Close);
+                        if kit::button(ui, &theme, "Request changes", None)
+                            .on_hover_text("Uses the comment box as the review body")
+                            .clicked()
+                        {
+                            self.act(pr, Action::RequestChanges(view.composer.trim().to_owned()));
                         }
+                    }
+                    if d.can_update_branch
+                        && d.merge_state == "BEHIND"
+                        && kit::button(ui, &theme, "Update branch", None).clicked()
+                    {
+                        self.act(pr, Action::UpdateBranch { rebase: false });
                     }
                     let failed = d.failed_runs();
                     if !failed.is_empty()
-                        && ui
-                            .button(format!("Re-run failed ({})", failed.len()))
-                            .clicked()
+                        && kit::button(
+                            ui,
+                            &theme,
+                            &format!("Re-run failed ({})", failed.len()),
+                            None,
+                        )
+                        .clicked()
                     {
                         self.act(pr, Action::RerunFailed(failed));
                     }
-                } else if d.state == "CLOSED" && ui.button("Reopen").clicked() {
+                    if d.viewer_is_author || d.can_write {
+                        let r = kit::button(ui, &theme, "More ▾", None);
+                        egui::Popup::menu(&r).show(|ui| {
+                            if d.draft {
+                                if ui.button("Mark ready for review").clicked() {
+                                    self.act(pr, Action::Ready);
+                                }
+                            } else if ui.button("Convert to draft").clicked() {
+                                self.act(pr, Action::ToDraft);
+                            }
+                            if d.can_update_branch && ui.button("Update branch (rebase)").clicked()
+                            {
+                                self.act(pr, Action::UpdateBranch { rebase: true });
+                            }
+                            ui.separator();
+                            if ui.button("Close pull request").clicked() {
+                                self.act(pr, Action::Close);
+                            }
+                        });
+                    }
+                } else if d.state == "CLOSED" && kit::button(ui, &theme, "Reopen", None).clicked() {
                     self.act(pr, Action::Reopen);
                 }
             });
-            if ui.button("Open on GitHub").clicked() {
+            let r = kit::button(ui, &theme, "Copy ▾", None);
+            egui::Popup::menu(&r).show(|ui| self.pr_copy_menu(ui, pr, &d.head, &d.url));
+            if kit::button(ui, &theme, "GitHub ↗", None).clicked() {
                 self.queue.push(artalde_core::command::Command::new(
                     "url.open",
                     Some(&d.url),
                 ));
             }
-            if ui.button("⟳").on_hover_text("Reload").clicked() {
+            if kit::button(ui, &theme, "Reload", Some("⌘R")).clicked() {
                 self.load_pr(pr);
             }
         });
@@ -1056,9 +1290,15 @@ impl App {
     fn pr_conversation(&mut self, ui: &mut egui::Ui, pr: &PrRef, view: &mut PrView, d: &PrDetail) {
         let theme = self.theme.clone();
         let now = artalde_core::now();
-        egui::ScrollArea::vertical()
-            .id_salt(("pr-convo", pr.to_string()))
-            .auto_shrink([false, false])
+        let mut area = egui::ScrollArea::vertical().id_salt(("pr-convo", pr.to_string()));
+        if std::env::var_os("ARTALDE_SCREENSHOT").is_some()
+            && let Some(y) = std::env::var("ARTALDE_PR_SCROLL")
+                .ok()
+                .and_then(|v| v.parse::<f32>().ok())
+        {
+            area = area.vertical_scroll_offset(y);
+        }
+        area.auto_shrink([false, false])
             .show(ui, |ui| {
                 // Description.
                 card(ui, &theme, None, |ui| {
@@ -1146,7 +1386,8 @@ impl App {
                             self.md(ui, &format!("```diff\n{}\n```", tail.join("\n")), 12.5);
                         }
                         for c in &t.comments {
-                            author_line(ui, &theme, &c.author, &github::age(&c.created, now), None);
+    let who = if c.bot { github::bot_name(&c.author) } else { c.author.clone() };
+    author_line(ui, &theme, &who, &github::age(&c.created, now), c.bot.then(|| ("bot", style::c(theme.unknown))));
                             self.md(ui, &c.body, 13.5);
                         }
                         let reply = view.replies.entry(t.id.clone()).or_default();
@@ -1178,10 +1419,30 @@ impl App {
                     });
                 }
                 // Timeline.
-                ui.add_space(6.0);
+ui.add_space(6.0);
+let bots = d.timeline.iter().filter(|t| matches!(t, TimelineItem::Comment(c) | TimelineItem::Review { comment: c, .. } if c.bot)).count();
+ui.horizontal(|ui| {
+    ui.label(RichText::new("Activity").font(fonts::semibold(14.0)));
+    if bots > 0 {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.checkbox(&mut view.hide_bots, RichText::new(format!("hide {bots} bot comments")).size(12.0));
+        });
+    }
+});
                 for item in &d.timeline {
                     match item {
-                        TimelineItem::Comment(c) => card(ui, &theme, None, |ui| {
+                        TimelineItem::Comment(c) if c.bot => {
+    if !view.hide_bots {
+        self.bot_card(ui, c, None, now);
+    }
+}
+TimelineItem::Review { comment: c, state } if c.bot && !c.body.trim().is_empty() => {
+    if !view.hide_bots {
+        let (label, token) = review_label(state);
+        self.bot_card(ui, c, Some((label, style::token(&theme, token))), now);
+    }
+}
+TimelineItem::Comment(c) => card(ui, &theme, None, |ui| {
                             author_line(ui, &theme, &c.author, &github::age(&c.created, now), None);
                             self.md(ui, &c.body, 14.0);
                         }),
@@ -1276,6 +1537,70 @@ impl App {
                     }
                 });
             });
+    }
+
+    /// A bot comment: named, badged, and folded to one line when long.
+    fn bot_card(
+        &mut self,
+        ui: &mut egui::Ui,
+        c: &github::Comment,
+        badge: Option<(&str, Color32)>,
+        now: u64,
+    ) {
+        let theme = self.theme.clone();
+        let name = github::bot_name(&c.author);
+        let summary = crate::gfm::parse(&c.body)
+            .iter()
+            .find_map(|seg| match seg {
+                crate::gfm::Segment::Markdown(m) => m
+                    .lines()
+                    .map(|l| l.trim().trim_start_matches(['#', '>', '-', '*', ' ']))
+                    .find(|l| !l.is_empty())
+                    .map(crate::gfm::plain)
+                    .filter(|l| !l.is_empty()),
+                crate::gfm::Segment::Details { summary, .. } => Some(summary.clone()),
+                crate::gfm::Segment::Callout { kind, .. } => Some(kind.to_lowercase()),
+            })
+            .unwrap_or_default();
+        let long = c.body.len() > 600;
+        card(ui, &theme, Some(style::c(theme.unknown)), |ui| {
+            let header = |ui: &mut egui::Ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(&name).font(fonts::semibold(13.0)));
+                    kit::pill(ui, &theme, "bot", style::c(theme.dim));
+                    if let Some((b, col)) = badge {
+                        ui.label(RichText::new(b).size(11.5).color(col));
+                    }
+                    ui.label(
+                        RichText::new(github::age(&c.created, now))
+                            .size(11.5)
+                            .color(style::c(theme.dim)),
+                    );
+                });
+            };
+            if long {
+                let id = ui.make_persistent_id(("bot-card", &c.id));
+                let state = egui::collapsing_header::CollapsingState::load_with_default_open(
+                    ui.ctx(),
+                    id,
+                    false,
+                );
+                let open = state.is_open();
+                state
+                    .show_header(ui, |ui| header(ui))
+                    .body(|ui| self.md(ui, &c.body, 13.5));
+                if !open && !summary.is_empty() {
+                    ui.label(
+                        RichText::new(clip(&summary, 160))
+                            .size(12.0)
+                            .color(style::c(theme.dim)),
+                    );
+                }
+            } else {
+                header(ui);
+                self.md(ui, &c.body, 13.5);
+            }
+        });
     }
 
     fn pr_files(&mut self, ui: &mut egui::Ui, pr: &PrRef, view: &mut PrView) {
