@@ -4,6 +4,7 @@
 //! - [`store`] keeps those records as one JSON file per session.
 //! - [`probe`] reads processes, git, `gh`, transcripts and task lists.
 //! - [`inbox`] parses zaindu's proposal files.
+//! - [`lifecycle`] holds the spawn → stale → close → reopen rules.
 //! - [`config`] loads the live-reloaded layouts, themes, keys and settings.
 
 pub mod catalog;
@@ -15,6 +16,7 @@ pub mod hook;
 pub mod inbox;
 pub mod keys;
 pub mod layout;
+pub mod lifecycle;
 pub mod model;
 pub mod probe;
 pub mod review;

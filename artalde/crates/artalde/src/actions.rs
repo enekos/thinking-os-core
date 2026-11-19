@@ -1,5 +1,5 @@
 //! Side effects outside the window: bringing a terminal forward, typing
-//! into it, opening a tab for a new agent, URLs, notifications.
+//! into it, opening a tab for a new agent, ending one, URLs, notifications.
 //!
 //! They run on one worker thread so a slow `osascript` never stalls a
 //! frame. Arguments reach AppleScript as `argv`, never spliced into the
@@ -8,6 +8,7 @@
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 const QUEUE: usize = 32;
 
@@ -43,6 +44,15 @@ pub enum Job {
     Notify {
         title: String,
         body: String,
+    },
+    /// End an agent: TERM, then KILL if it lingers, then close its iTerm2
+    /// tab when `close_tab`. The pid is checked to still be `agent` first.
+    Close {
+        pid: Option<u32>,
+        agent: String,
+        tty: Option<String>,
+        close_tab: bool,
+        name: String,
     },
     /// Colour the terminal tab on `tty` (iTerm2), or reset it with `None`.
     TabColor {
@@ -193,6 +203,98 @@ on run argv
 end run
 "#;
 
+const CLOSE_TAB: &str = r#"
+on run argv
+  set target to item 1 of argv
+  if application "iTerm2" is running then
+    tell application "iTerm2"
+      repeat with w in windows
+        repeat with t in tabs of w
+          repeat with s in sessions of t
+            if tty of s is target then
+              close s
+              return "ok"
+            end if
+          end repeat
+        end repeat
+      end repeat
+    end tell
+  end if
+  return "no iTerm2 tab on " & target
+end run
+"#;
+
+/// How long an agent gets to exit after TERM before KILL.
+const TERM_GRACE: Duration = Duration::from_secs(4);
+const POLL: Duration = Duration::from_millis(200);
+
+fn alive(pid: u32) -> bool {
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+fn signal(pid: u32, sig: &str) -> Result<(), String> {
+    let ok = Command::new("kill")
+        .args([sig, &pid.to_string()])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|e| e.to_string())?
+        .success();
+    if ok || !alive(pid) {
+        Ok(())
+    } else {
+        Err(format!("kill {sig} {pid} failed"))
+    }
+}
+
+/// End `pid` if it is still `agent`; `Ok(false)` when it was already gone.
+fn end_process(pid: u32, agent: &str) -> Result<bool, String> {
+    let comm = Command::new("ps")
+        .args(["-o", "comm=", "-p", &pid.to_string()])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| e.to_string())?;
+    let comm = String::from_utf8_lossy(&comm.stdout);
+    if comm.trim().is_empty() {
+        return Ok(false);
+    }
+    if !artalde_core::lifecycle::pid_is_agent(&comm, agent) {
+        return Err(format!("pid {pid} is now {:?}, not {agent}", comm.trim()));
+    }
+    signal(pid, "-TERM")?;
+    let deadline = Instant::now() + TERM_GRACE;
+    while Instant::now() < deadline {
+        if !alive(pid) {
+            return Ok(true);
+        }
+        std::thread::sleep(POLL);
+    }
+    signal(pid, "-KILL")?;
+    Ok(true)
+}
+
+fn close(
+    pid: Option<u32>,
+    agent: &str,
+    tty: Option<&str>,
+    close_tab: bool,
+    name: &str,
+) -> Result<Option<String>, String> {
+    if let Some(pid) = pid {
+        end_process(pid, agent)?;
+    }
+    if close_tab && let Some(tty) = tty {
+        // The tab may already be gone with its process; that is fine.
+        let _gone_or_closed = osascript(CLOSE_TAB, &[&dev(tty)]);
+    }
+    Ok(Some(format!("closed {name}")))
+}
+
 const NOTIFY: &str = r#"
 on run argv
   display notification (item 2 of argv) with title (item 1 of argv) sound name "Glass"
@@ -287,6 +389,13 @@ fn run(job: &Job) -> Option<String> {
                 }
             }),
         Job::TabColor { tty, rgb } => tab_color(tty, *rgb).map(|()| None),
+        Job::Close {
+            pid,
+            agent,
+            tty,
+            close_tab,
+            name,
+        } => close(*pid, agent, tty.as_deref(), *close_tab, name),
         Job::Open { target } => Command::new("open")
             .arg(target)
             .stdin(Stdio::null())
@@ -316,5 +425,50 @@ fn label(job: &Job) -> &'static str {
         Job::TabColor { .. } => "tab colour",
         Job::OpenWith { .. } => "editor",
         Job::Run { .. } => "run",
+        Job::Close { .. } => "close",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(target_os = "macos")]
+    /// A copy of `sleep` named `name`, so `ps` reports it as that agent.
+    fn fake_agent(name: &str) -> (std::process::Child, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("artalde-close-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join(name);
+        std::fs::copy("/bin/sleep", &bin).unwrap();
+        // A copied platform binary is killed on launch until re-signed.
+        let signed = Command::new("codesign")
+            .args(["-s", "-", "-f"])
+            .arg(&bin)
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(signed.success());
+        let child = Command::new(&bin).arg("60").spawn().unwrap();
+        (child, dir)
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn close_ends_the_agent_and_refuses_a_stranger() {
+        let (mut agent, dir) = fake_agent("codex");
+        let pid = agent.id();
+        // Reap it as soon as it exits, so `kill -0` stops seeing a zombie.
+        let reaper = std::thread::spawn(move || agent.wait());
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(
+            end_process(pid, "claude").map_err(|e| e.contains("not claude")),
+            Err(true)
+        );
+        assert!(alive(pid), "a mismatched name is never signalled");
+        assert_eq!(end_process(pid, "codex"), Ok(true));
+        let status = reaper.join().unwrap().unwrap();
+        assert!(!status.success(), "ended by a signal");
+        assert_eq!(end_process(pid, "codex"), Ok(false), "already gone");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

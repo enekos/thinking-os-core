@@ -10,6 +10,7 @@ mod gfm;
 mod gh;
 mod kit;
 mod layout_view;
+mod lifecycle_view;
 mod markdown;
 mod mod_view;
 mod panels;

@@ -5,7 +5,7 @@
   "cmd+Enter": "session.focus",
   "cmd+n": "spawn.open",
   "cmd+shift+l": "layout.cycle",
-  "cmd+shift+t": "theme.cycle",
+  "cmd+shift+t": "session.reopen",
   "cmd+r": "refresh",
   "cmd+Comma": "settings.open",
   "cmd+1": "agent.select:1",
@@ -26,5 +26,9 @@
   "cmd+i": "inbox.open",
   "cmd+o": "session.open",
   "cmd+shift+d": "appearance.toggle",
-  "cmd+shift+r": "pr.review"
+  "cmd+shift+r": "pr.review",
+  "cmd+alt+t": "theme.cycle",
+  "cmd+Period": "session.stop",
+  "cmd+Backspace": "session.close",
+  "cmd+shift+Backspace": "session.sweep"
 }

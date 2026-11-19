@@ -149,6 +149,11 @@ pub struct Settings {
     /// Agents that can review a PR. Each runs read-only with the prompt on
     /// stdin; `{dir}` (pr.md + pr.diff) and `{checkout}` are filled in.
     pub review_agents: Vec<ReviewAgent>,
+    /// Minutes idle before a session counts as stale and is offered for
+    /// closing; 0 turns it off.
+    pub stale_after_mins: u64,
+    /// Close the agent's iTerm2 tab too when closing a session.
+    pub close_terminal: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, serde::Serialize)]
@@ -184,6 +189,8 @@ impl Default for Settings {
             font_size: 13.5,
             editor: "Zed".into(),
             review_agents: default_review_agents(),
+            stale_after_mins: 60,
+            close_terminal: true,
         }
     }
 }

@@ -2,63 +2,53 @@
 //! lists use the kit's fixed-height rows so columns line up.
 
 use artalde_core::command::Command;
+use artalde_core::lifecycle::{Launch, Stage};
 use artalde_core::model::{AgentState, Resource, ResourceKind, Session};
 use artalde_core::tags;
 use artalde_core::text::{ago, shell_quote};
 use eframe::egui::{self, CornerRadius, RichText, Sense, Stroke};
 
 use crate::app::App;
-use crate::kit::{self, Col};
+use crate::kit::{self, Col, Icon};
 use crate::style::{self, tint};
 use crate::views::Tab;
 
 /// Resource chips on an agent row.
 const ROW_RESOURCES: usize = 2;
-const LABEL_W: f32 = 72.0;
+const LABEL_W: f32 = 76.0;
+/// Closed sessions the list shows under "Recently closed".
+const CLOSED_ROWS: usize = 6;
+/// Width of the row's last column: the age, or the hover actions.
+const ACTIONS_W: f32 = 84.0;
 
-/// Which agents the list shows.
+/// Which lane of the lifecycle the list shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum AgentView {
+pub enum Lane {
     #[default]
     All,
-    NeedsYou,
-    Working,
-    Idle,
+    Only(Stage),
 }
 
-impl AgentView {
-    const ALL: [AgentView; 4] = [
-        AgentView::All,
-        AgentView::NeedsYou,
-        AgentView::Working,
-        AgentView::Idle,
+impl Lane {
+    const ALL: [Lane; 5] = [
+        Lane::All,
+        Lane::Only(Stage::NeedsYou),
+        Lane::Only(Stage::Working),
+        Lane::Only(Stage::Idle),
+        Lane::Only(Stage::Stale),
     ];
 
     fn label(self) -> &'static str {
         match self {
-            AgentView::All => "All",
-            AgentView::NeedsYou => "Needs you",
-            AgentView::Working => "Working",
-            AgentView::Idle => "Idle",
+            Lane::All => "All",
+            Lane::Only(s) => s.label(),
         }
     }
 
-    fn admits(self, s: AgentState) -> bool {
-        match self {
-            AgentView::All => true,
-            AgentView::NeedsYou => matches!(s, AgentState::Blocked | AgentState::Done),
-            AgentView::Working => s == AgentState::Working,
-            AgentView::Idle => matches!(s, AgentState::Idle | AgentState::Unknown),
-        }
+    fn admits(self, s: Stage) -> bool {
+        self == Lane::All || self == Lane::Only(s)
     }
 }
-
-/// The groups the list shows, in order.
-const GROUPS: [(&str, &[AgentState]); 3] = [
-    ("Needs you", &[AgentState::Blocked, AgentState::Done]),
-    ("Working", &[AgentState::Working]),
-    ("Idle", &[AgentState::Idle, AgentState::Unknown]),
-];
 
 impl App {
     pub(crate) fn builtin(&mut self, ui: &mut egui::Ui, name: &str) {
@@ -84,22 +74,31 @@ impl App {
         style::c(self.theme.dim)
     }
 
+    fn stage_color(&self, stage: Stage, state: AgentState) -> egui::Color32 {
+        match stage {
+            Stage::Stale => style::c(self.theme.faint),
+            _ => self.color(state),
+        }
+    }
+
     /// Sessions the agent list shows, in display order.
     pub(crate) fn listed_sessions(&self) -> Vec<Session> {
         let q = self.agent_query.trim().to_lowercase();
         let mut out = Vec::new();
-        for (_, states) in GROUPS {
+        for stage in Stage::ALL {
             for s in self.visible_sessions() {
-                if !states.contains(&s.rec.state) || !self.agent_view.admits(s.rec.state) {
+                let st = self.stage(s);
+                if st != stage || !self.lane.admits(st) {
                     continue;
                 }
                 if !q.is_empty() {
                     let hay = format!(
-                        "{} {} {} {} {}",
+                        "{} {} {} {} {} {}",
                         s.name(),
                         s.handle.clone().unwrap_or_default(),
                         s.repo.clone().unwrap_or_default(),
                         s.branch.clone().unwrap_or_default(),
+                        s.rec.agent,
                         s.resources
                             .iter()
                             .map(|r| r.id.as_str())
@@ -122,14 +121,15 @@ impl App {
         if typing || rows.is_empty() || self.palette_open() {
             return;
         }
-        let (down, up, enter, focus) = ui.input_mut(|i| {
+        let none = egui::Modifiers::NONE;
+        let (down, up, enter, focus, close, stop) = ui.input_mut(|i| {
             (
-                i.consume_key(egui::Modifiers::NONE, egui::Key::J)
-                    || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
-                i.consume_key(egui::Modifiers::NONE, egui::Key::K)
-                    || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
-                i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
-                i.consume_key(egui::Modifiers::NONE, egui::Key::F),
+                i.consume_key(none, egui::Key::J) || i.consume_key(none, egui::Key::ArrowDown),
+                i.consume_key(none, egui::Key::K) || i.consume_key(none, egui::Key::ArrowUp),
+                i.consume_key(none, egui::Key::Enter),
+                i.consume_key(none, egui::Key::F),
+                i.consume_key(none, egui::Key::X),
+                i.consume_key(none, egui::Key::Period),
             )
         });
         let pos = self
@@ -147,11 +147,15 @@ impl App {
                 .push(Command::new("agent.select", Some(&n.rec.id)));
         }
         if let Some(id) = self.selected.clone() {
-            if enter {
-                self.queue.push(Command::new("session.open", Some(&id)));
-            }
-            if focus {
-                self.queue.push(Command::new("session.focus", Some(&id)));
+            for (pressed, cmd) in [
+                (enter, "session.open"),
+                (focus, "session.focus"),
+                (close, "session.close"),
+                (stop, "session.stop"),
+            ] {
+                if pressed {
+                    self.queue.push(Command::new(cmd, Some(&id)));
+                }
             }
         }
     }
@@ -160,122 +164,340 @@ impl App {
         let theme = self.theme.clone();
         let now = artalde_core::now();
         let t = ui.input(|i| i.time);
-        // Toolbar: view switch, search, new.
-        ui.vertical(|ui| {
-            let labels: Vec<(String, Option<usize>)> = AgentView::ALL
-                .iter()
-                .map(|v| {
-                    (
-                        v.label().to_owned(),
-                        Some(
-                            self.snap
-                                .sessions
-                                .iter()
-                                .filter(|s| v.admits(s.rec.state))
-                                .count(),
-                        ),
-                    )
-                })
-                .collect();
-            let sel = AgentView::ALL
-                .iter()
-                .position(|v| *v == self.agent_view)
-                .unwrap_or(0);
-            egui::ScrollArea::horizontal()
-                .id_salt("agent-views")
-                .show(ui, |ui| {
-                    if let Some(i) = kit::tabs(ui, &theme, &labels, sel) {
-                        self.agent_view = AgentView::ALL[i.min(3)];
-                    }
-                });
+        // Toolbar: lanes on the left, search and New agent on the right.
+        let counts: Vec<usize> = Lane::ALL
+            .iter()
+            .map(|lane| {
+                self.visible_sessions()
+                    .iter()
+                    .filter(|s| lane.admits(self.stage(s)))
+                    .count()
+            })
+            .collect();
+        let width = ui.available_width();
+        let stacked = width < 760.0;
+        let lanes = |app: &mut App, ui: &mut egui::Ui| {
             ui.horizontal(|ui| {
-                if kit::button(ui, &theme, "New agent", Some("⌘N")).clicked() {
-                    self.queue.push(Command::new("spawn.open", None));
+                ui.spacing_mut().item_spacing.x = 2.0;
+                for (lane, n) in Lane::ALL.iter().zip(&counts) {
+                    let accent = match lane {
+                        Lane::Only(Stage::NeedsYou) if *n > 0 => style::c(theme.blocked),
+                        _ => style::c(theme.accent),
+                    };
+                    let badge = n.to_string();
+                    if kit::pill_tab(
+                        ui,
+                        &theme,
+                        lane.label(),
+                        Some(&badge),
+                        app.lane == *lane,
+                        accent,
+                    )
+                    .clicked()
+                    {
+                        app.lane = *lane;
+                    }
                 }
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.agent_query)
-                        .hint_text("Search agents, repos, PRs…")
-                        .desired_width(ui.available_width().max(0.0)),
-                );
             });
-        });
+        };
+        let tools = |app: &mut App, ui: &mut egui::Ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if kit::primary_with(
+                    ui,
+                    &theme,
+                    Some(Icon::Plus),
+                    "New agent",
+                    Some("⌘N"),
+                    style::c(theme.accent),
+                )
+                .clicked()
+                {
+                    app.queue.push(Command::new("spawn.open", None));
+                }
+                // Never wider than what is left: an overflowing right-to-left
+                // row would push the whole panel's content left.
+                let w = ui.available_width().min(260.0);
+                if w >= 100.0 {
+                    kit::search(
+                        ui,
+                        &theme,
+                        &mut app.agent_query,
+                        "Search agents, repos, PRs",
+                        w,
+                    );
+                }
+            });
+        };
+        if stacked {
+            egui::ScrollArea::horizontal()
+                .id_salt("agent-lanes")
+                .max_width(width)
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| lanes(self, ui));
+            ui.add_space(kit::S1);
+            ui.allocate_ui(egui::vec2(width, kit::CONTROL), |ui| tools(self, ui));
+        } else {
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, kit::CONTROL),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    lanes(self, ui);
+                    tools(self, ui);
+                },
+            );
+        }
         if let Some(f) = self.filter.clone() {
+            ui.add_space(kit::S1);
             ui.horizontal(|ui| {
                 kit::pill(ui, &theme, &format!("repo: {f}"), style::c(theme.accent));
-                if ui.small_button("clear").clicked() {
+                if kit::icon_button(ui, &theme, Icon::Close, "Show every repo").clicked() {
                     self.queue.push(Command::new("space.filter", None));
                 }
             });
         }
-        ui.add_space(kit::S1);
+        ui.add_space(kit::S2);
         let rows = self.listed_sessions();
         self.agent_keys(ui, &rows);
-        if rows.is_empty() {
+        let wide = ui.available_width() > 640.0;
+        // Starting: launches that have not shown up yet.
+        let launches = self.launches.clone();
+        if !launches.is_empty() && self.lane == Lane::All {
+            kit::section(ui, &theme, "Starting", Some(launches.len()), |_| {});
+            for l in &launches {
+                self.launch_row(ui, l, now, t, wide);
+            }
+            ui.add_space(kit::S2);
+        }
+        if rows.is_empty() && launches.is_empty() {
             let (title, hint) = if self.snap.sessions.is_empty() {
                 (
                     "No agents running",
-                    "Cmd+N starts one, or run claude in any terminal.",
+                    "⌘N starts one from a prompt, or run claude in any terminal.",
                 )
             } else {
-                ("Nothing here", "Try another view or clear the search.")
+                (
+                    "Nothing in this lane",
+                    "Try another lane or clear the search.",
+                )
             };
-            kit::empty(ui, &theme, title, hint);
-            return;
+            kit::empty_with(ui, &theme, Icon::Terminal, title, hint);
         }
-        let width = ui.available_width();
-        let wide = width > 560.0;
-        let mut index = 0usize;
-        for (title, states) in GROUPS {
-            let group: Vec<&Session> = rows
-                .iter()
-                .filter(|s| states.contains(&s.rec.state))
-                .collect();
+        for stage in Stage::ALL {
+            let group: Vec<&Session> = rows.iter().filter(|s| self.stage(s) == stage).collect();
             if group.is_empty() {
                 continue;
             }
-            ui.add_space(kit::S1);
-            kit::section(ui, &theme, title, Some(group.len()), |_| {});
+            let n = group.len();
+            kit::section(ui, &theme, stage.label(), Some(n), |ui| {
+                if stage == Stage::Stale
+                    && kit::danger(
+                        ui,
+                        &theme,
+                        Some(Icon::Sweep),
+                        &format!("Close all {n}"),
+                        None,
+                    )
+                    .on_hover_text(format!(
+                        "Idle for over {} min. Claude sessions can be reopened.",
+                        self.settings().stale_after_mins
+                    ))
+                    .clicked()
+                {
+                    self.queue.push(Command::new("session.sweep", None));
+                }
+            });
             for s in group {
-                index += 1;
-                self.agent_row(ui, s, index, now, t, wide);
+                self.agent_row(ui, s, now, t, wide);
             }
+            ui.add_space(kit::S2);
         }
+        self.closed_rows(ui, now);
         ui.add_space(kit::S2);
         ui.horizontal_wrapped(|ui| {
             kit::hint(ui, &theme, "j k", "move");
             kit::hint(ui, &theme, "↵", "open");
-            kit::hint(ui, &theme, "f", "focus terminal");
+            kit::hint(ui, &theme, "f", "focus");
+            kit::hint(ui, &theme, ".", "stop turn");
+            kit::hint(ui, &theme, "x", "close");
             kit::hint(ui, &theme, "⌘J", "next that needs you");
         });
     }
 
-    fn agent_row(
-        &mut self,
-        ui: &mut egui::Ui,
-        s: &Session,
-        index: usize,
-        now: u64,
-        t: f64,
-        wide: bool,
-    ) {
+    fn launch_row(&mut self, ui: &mut egui::Ui, l: &Launch, now: u64, t: f64, wide: bool) {
+        let theme = self.theme.clone();
+        let place = match (&l.branch, &l.dir) {
+            (Some(b), _) => format!("{} · {b}", l.repo),
+            (None, Some(d)) => d
+                .file_name()
+                .map_or_else(|| l.repo.clone(), |n| n.to_string_lossy().into_owned()),
+            _ => l.repo.clone(),
+        };
+        let mut cols = vec![Col::Px(16.0), Col::Flex];
+        if wide {
+            cols.push(Col::Px(170.0));
+        }
+        cols.push(Col::Px(ACTIONS_W));
+        #[expect(clippy::cast_possible_truncation, reason = "an animation phase")]
+        let pulse = (0.5 + 0.5 * (t * 4.0).sin()) as f32;
+        let working = style::c(theme.working);
+        kit::row(
+            ui,
+            &theme,
+            ("launch", l.at),
+            kit::ROW2,
+            false,
+            &cols,
+            |c, ui| match (c, wide) {
+                (0, _) => kit::status_dot(ui, working.gamma_multiply(0.4 + 0.6 * pulse), pulse),
+                (1, _) => {
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        kit::text(ui, &l.name(), 13.0, style::c(theme.text));
+                        kit::text(
+                            ui,
+                            &format!("starting {} in a new terminal tab…", l.agent),
+                            11.5,
+                            style::c(theme.faint),
+                        );
+                    });
+                }
+                (2, true) => {
+                    kit::mono(ui, &place, 11.0, style::c(theme.dim));
+                }
+                _ => kit::right(
+                    ui,
+                    &ago(now.saturating_sub(l.at)),
+                    11.5,
+                    style::c(theme.faint),
+                ),
+            },
+        );
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(100));
+    }
+
+    fn closed_rows(&mut self, ui: &mut egui::Ui, now: u64) {
+        let theme = self.theme.clone();
+        if self.closed.entries.is_empty() || self.lane != Lane::All {
+            return;
+        }
+        let open = self.closed_open;
+        let n = self.closed.entries.len().min(CLOSED_ROWS);
+        let header = kit::section(ui, &theme, "Recently closed", Some(n), |ui| {
+            let glyph = if open {
+                Icon::ChevronDown
+            } else {
+                Icon::ChevronRight
+            };
+            kit::icon(ui, glyph, 11.0, style::c(theme.faint));
+        });
+        if ui
+            .interact(
+                header.rect,
+                ui.scope_id().with("closed-toggle"),
+                Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            self.closed_open = !open;
+        }
+        if !open {
+            return;
+        }
+        let entries: Vec<_> = self
+            .closed
+            .entries
+            .iter()
+            .take(CLOSED_ROWS)
+            .cloned()
+            .collect();
+        for c in entries {
+            let can = c.reopen_line().is_some();
+            let mut reopen = false;
+            kit::row(
+                ui,
+                &theme,
+                ("closed", &c.id),
+                kit::ROW,
+                false,
+                &[Col::Px(16.0), Col::Flex, Col::Px(120.0), Col::Px(ACTIONS_W)],
+                |col, ui| match col {
+                    0 => kit::status_dot(ui, style::c(theme.unknown), 0.0),
+                    1 => {
+                        kit::text(ui, &c.name, 12.5, style::c(theme.dim));
+                    }
+                    2 => {
+                        let what = format!(
+                            "{} · {} ago",
+                            c.repo.as_deref().unwrap_or(&c.agent),
+                            ago(now.saturating_sub(c.at))
+                        );
+                        kit::text(ui, &what, 11.0, style::c(theme.faint));
+                    }
+                    _ => {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add_enabled_ui(can, |ui| {
+                                if kit::icon_button(
+                                    ui,
+                                    &theme,
+                                    Icon::Reopen,
+                                    "Reopen (claude --resume)",
+                                )
+                                .clicked()
+                                {
+                                    reopen = true;
+                                }
+                            });
+                        });
+                    }
+                },
+            );
+            if reopen {
+                self.queue.push(Command::new("session.reopen", Some(&c.id)));
+            }
+        }
+    }
+
+    fn agent_row(&mut self, ui: &mut egui::Ui, s: &Session, now: u64, t: f64, wide: bool) {
         let theme = self.theme.clone();
         let id = s.rec.id.clone();
         let on = self.selected.as_deref() == Some(id.as_str());
         let state = s.rec.state;
-        let sc = self.color(state);
+        let stage = self.stage(s);
+        let sc = self.stage_color(stage, state);
         let sub = s
             .rec
             .message
             .clone()
-            .or_else(|| s.rec.activity.clone().map(|a| format!("› {a}")));
+            .filter(|_| state == AgentState::Blocked)
+            .or_else(|| {
+                s.rec
+                    .activity
+                    .clone()
+                    .filter(|_| state == AgentState::Working)
+                    .map(|a| format!("› {a}"))
+            })
+            .or_else(|| (state == AgentState::Done).then(|| "finished a turn".to_owned()));
         let height = if sub.is_some() { kit::ROW2 } else { kit::ROW };
-        let mut cols = vec![Col::Px(14.0), Col::Px(18.0), Col::Flex];
+        let next = ui.cursor().min;
+        let hovered = ui.rect_contains_pointer(egui::Rect::from_min_size(
+            next,
+            egui::vec2(ui.available_width(), height),
+        ));
+        let mut cols = vec![Col::Px(16.0), Col::Flex];
         if wide {
-            cols.extend([Col::Px(150.0), Col::Px(130.0)]);
+            cols.extend([Col::Px(150.0), Col::Px(150.0)]);
         }
-        cols.push(Col::Px(40.0));
+        cols.push(Col::Px(ACTIONS_W));
         let resources: Vec<Resource> = s.resources.iter().take(ROW_RESOURCES).cloned().collect();
         let mut clicked_resource = None;
+        let mut action = None;
+        let name_color = if stage == Stage::Stale {
+            style::c(theme.dim)
+        } else {
+            style::c(theme.text)
+        };
         let resp = kit::row(
             ui,
             &theme,
@@ -286,24 +508,14 @@ impl App {
             |c, ui| match (c, wide) {
                 (0, _) => {
                     #[expect(clippy::cast_possible_truncation, reason = "an animation phase")]
-                    let pulse = if state == AgentState::Blocked {
-                        (0.55 + 0.45 * (t * 3.0).sin()) as f32
-                    } else {
-                        1.0
+                    let halo = match state {
+                        AgentState::Blocked => (0.5 + 0.5 * (t * 3.0).sin()) as f32,
+                        AgentState::Working => 0.6,
+                        _ => 0.0,
                     };
-                    kit::dot(ui, sc.gamma_multiply(pulse), 4.0);
+                    kit::status_dot(ui, sc, halo);
                 }
                 (1, _) => {
-                    if index <= 9 {
-                        ui.label(
-                            RichText::new(index.to_string())
-                                .monospace()
-                                .size(11.0)
-                                .color(style::c(theme.unknown)),
-                        );
-                    }
-                }
-                (2, _) => {
                     let content_h = if sub.is_some() { 34.0 } else { 18.0 };
                     let rect = egui::Rect::from_center_size(
                         ui.max_rect().center(),
@@ -316,28 +528,30 @@ impl App {
                         |ui| {
                             ui.spacing_mut().item_spacing.y = 1.0;
                             ui.horizontal(|ui| {
-                                kit::text(ui, &s.name(), 13.5, style::c(theme.text));
-                                if let Some(h) = &s.handle {
-                                    ui.label(
-                                        RichText::new(h)
-                                            .monospace()
-                                            .size(10.5)
-                                            .color(style::c(theme.unknown)),
-                                    );
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(s.name())
+                                            .font(crate::fonts::semibold(13.0))
+                                            .color(name_color),
+                                    )
+                                    .truncate(),
+                                );
+                                if s.rec.agent != "claude" {
+                                    kit::pill(ui, &theme, &s.rec.agent, style::c(theme.faint));
                                 }
                             });
                             if let Some(m) = &sub {
-                                let color = if s.rec.message.is_some() {
-                                    style::c(theme.blocked)
-                                } else {
-                                    style::c(theme.dim)
+                                let color = match state {
+                                    AgentState::Blocked => style::c(theme.blocked),
+                                    AgentState::Done => style::c(theme.done),
+                                    _ => style::c(theme.faint),
                                 };
                                 kit::text(ui, m, 11.5, color);
                             }
                         },
                     );
                 }
-                (3, true) => {
+                (2, true) => {
                     let extra = if s.resources.len() > ROW_RESOURCES {
                         26.0
                     } else {
@@ -368,34 +582,67 @@ impl App {
                         ui.label(
                             RichText::new(format!("+{}", s.resources.len() - ROW_RESOURCES))
                                 .size(11.0)
-                                .color(style::c(theme.unknown)),
+                                .color(style::c(theme.faint)),
                         );
                     }
                 }
-                (4, true) => {
+                (3, true) => {
                     let place = match (&s.repo, &s.branch) {
                         (Some(r), Some(b)) => format!("{r} · {b}"),
                         (Some(r), None) => r.clone(),
                         _ => s.rec.agent.clone(),
                     };
-                    kit::text(ui, &place, 11.5, style::c(theme.dim));
+                    kit::text(ui, &place, 11.5, style::c(theme.faint));
                 }
-                _ => kit::right(
-                    ui,
-                    &ago(now.saturating_sub(s.rec.since)),
-                    11.5,
-                    style::c(theme.dim),
-                ),
+                _ => {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if hovered || on {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            if kit::icon_button_tinted(
+                                ui,
+                                &theme,
+                                Icon::Close,
+                                "Close agent (x)",
+                                style::c(theme.danger),
+                            )
+                            .clicked()
+                            {
+                                action = Some("session.close");
+                            }
+                            if state == AgentState::Working
+                                && s.rec.tty.is_some()
+                                && kit::icon_button(ui, &theme, Icon::Stop, "Stop turn (.)")
+                                    .clicked()
+                            {
+                                action = Some("session.stop");
+                            }
+                            if s.rec.tty.is_some()
+                                && kit::icon_button(ui, &theme, Icon::Focus, "Focus terminal (f)")
+                                    .clicked()
+                            {
+                                action = Some("session.focus");
+                            }
+                        } else {
+                            ui.label(
+                                RichText::new(ago(now.saturating_sub(s.rec.since)))
+                                    .size(11.5)
+                                    .color(style::c(theme.faint)),
+                            );
+                        }
+                    });
+                }
             },
         );
         if let Some(tc) = s.tag.as_deref().map(|tg| style::token(&theme, tg)) {
             let edge = egui::Rect::from_min_size(
-                resp.rect.min + egui::vec2(0.0, 5.0),
-                egui::vec2(3.0, resp.rect.height() - 10.0),
+                resp.rect.min + egui::vec2(0.0, 7.0),
+                egui::vec2(3.0, resp.rect.height() - 14.0),
             );
             ui.painter().rect_filled(edge, CornerRadius::same(2), tc);
         }
-        if let Some(r) = clicked_resource {
+        if let Some(cmd) = action {
+            self.queue.push(Command::new(cmd, Some(&id)));
+        } else if let Some(r) = clicked_resource {
             self.open_resource(&r);
         } else if resp.double_clicked() {
             self.queue.push(Command::new("session.open", Some(&id)));
@@ -415,6 +662,20 @@ impl App {
     /// Right-click menu for a session: the things a developer copies.
     fn session_menu(&mut self, ui: &mut egui::Ui, s: &Session) {
         let id = s.rec.id.clone();
+        if s.rec.state == AgentState::Working
+            && s.rec.tty.is_some()
+            && ui.button("Stop turn").clicked()
+        {
+            self.queue.push(Command::new("session.stop", Some(&id)));
+        }
+        if s.rec.agent == "claude" && s.rec.tty.is_some() && ui.button("Wrap up (/wrap)").clicked()
+        {
+            self.queue.push(Command::new("session.wrap", Some(&id)));
+        }
+        if ui.button("Close agent").clicked() {
+            self.queue.push(Command::new("session.close", Some(&id)));
+        }
+        ui.separator();
         if ui.button("Open as tab").clicked() {
             self.queue.push(Command::new("session.open", Some(&id)));
         }
@@ -515,13 +776,16 @@ impl App {
                     Col::Px(22.0),
                 ],
                 |c, ui| match c {
-                    0 => {
-                        ui.label(
-                            RichText::new(if open { "▾" } else { "▸" })
-                                .size(11.0)
-                                .color(style::c(theme.dim)),
-                        );
-                    }
+                    0 => kit::icon(
+                        ui,
+                        if open {
+                            Icon::ChevronDown
+                        } else {
+                            Icon::ChevronRight
+                        },
+                        11.0,
+                        style::c(theme.faint),
+                    ),
                     1 => kit::dot(ui, style::state(&theme, agg), 4.0),
                     2 => {
                         ui.add(
@@ -777,39 +1041,50 @@ impl App {
     fn detail(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
         let Some(s) = self.selected_session().cloned() else {
-            kit::empty(
+            kit::empty_with(
                 ui,
                 &theme,
+                Icon::Terminal,
                 "No agent selected",
-                "Pick one from the list, or press Cmd+J for the next that needs you.",
+                "Pick one from the list, or ⌘J for the next that needs you.",
             );
             return;
         };
         let now = artalde_core::now();
-        let sc = self.color(s.rec.state);
+        let stage = self.stage(&s);
+        let sc = self.stage_color(stage, s.rec.state);
         let in_tab = matches!(self.tabs.get(self.active), Some(Tab::Session(_)));
-        // Header.
+        // Header: state, age, handle.
         ui.horizontal(|ui| {
-            kit::pill(ui, &theme, s.rec.state.as_str(), sc);
+            let label = if stage == Stage::Stale {
+                "stale"
+            } else {
+                s.rec.state.as_str()
+            };
+            kit::pill(ui, &theme, label, sc);
             ui.label(
                 RichText::new(format!("for {}", ago(now.saturating_sub(s.rec.since))))
                     .size(11.5)
-                    .color(self.dimc()),
+                    .color(style::c(theme.faint)),
             );
+            if s.rec.agent != "claude" {
+                kit::pill(ui, &theme, &s.rec.agent, style::c(theme.dim));
+            }
             if let Some(h) = &s.handle {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
                         RichText::new(h)
                             .monospace()
-                            .size(11.0)
-                            .color(style::c(theme.unknown)),
+                            .size(10.5)
+                            .color(style::c(theme.faint)),
                     );
                 });
             }
         });
+        ui.add_space(kit::S1);
         if !in_tab {
             ui.add(
-                egui::Label::new(RichText::new(s.name()).font(crate::fonts::display(19.0))).wrap(),
+                egui::Label::new(RichText::new(s.name()).font(crate::fonts::display(20.0))).wrap(),
             );
         }
         if s.label.is_some()
@@ -817,90 +1092,41 @@ impl App {
         {
             ui.label(RichText::new(t).size(12.5).color(self.dimc()));
         }
-        ui.add_space(kit::S1);
-        // Tag + label.
-        if self.label_for.as_deref() != Some(s.rec.id.as_str()) {
-            self.label_edit = s.label.clone().unwrap_or_default();
-            self.label_for = Some(s.rec.id.clone());
-        }
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            for (name, rgba) in tags::PALETTE {
-                let (rect, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::click());
-                let on = s.tag.as_deref() == Some(name);
-                ui.painter().circle_filled(
-                    rect.center(),
-                    if on { 7.5 } else { 5.5 },
-                    style::c(rgba),
-                );
-                if on {
-                    ui.painter().circle_stroke(
-                        rect.center(),
-                        8.5,
-                        Stroke::new(1.5, style::c(theme.text)),
-                    );
-                }
-                if resp.on_hover_text(name).clicked() {
-                    self.queue.push(Command::new(
-                        "session.tag",
-                        Some(if on { "none" } else { name }),
-                    ));
-                }
-            }
-            ui.add_space(kit::S2);
-            let edit = ui.add(
-                egui::TextEdit::singleline(&mut self.label_edit)
-                    .hint_text("label")
-                    .desired_width(ui.available_width()),
-            );
-            if edit.lost_focus() && self.label_edit.trim() != s.label.clone().unwrap_or_default() {
-                self.queue
-                    .push(Command::new("session.label", Some(self.label_edit.trim())));
-            }
-        });
         ui.add_space(kit::S2);
-        // Toolbar.
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-            if s.rec.tty.is_some() && kit::button(ui, &theme, "Focus", Some("f")).clicked() {
-                self.queue
-                    .push(Command::new("session.focus", Some(&s.rec.id)));
-            }
-            if !in_tab && kit::button(ui, &theme, "Open", Some("↵")).clicked() {
-                self.queue
-                    .push(Command::new("session.open", Some(&s.rec.id)));
-            }
-            if let Some(w) = &s.worktree
-                && kit::button(ui, &theme, "Editor", None)
-                    .on_hover_text(w.display().to_string())
-                    .clicked()
-            {
-                self.queue
-                    .push(Command::new("path.edit", Some(&w.display().to_string())));
-            }
-            let r = kit::button(ui, &theme, "Copy ▾", None);
-            egui::Popup::menu(&r).show(|ui| self.session_menu(ui, &s));
-        });
+        self.lifecycle_bar(ui, &s, in_tab);
         // Blocked: the question and quick keys.
-        if let Some(m) = &s.rec.message {
-            ui.add_space(kit::S2);
+        if let Some(m) = s
+            .rec
+            .message
+            .as_ref()
+            .filter(|_| s.rec.state == AgentState::Blocked)
+        {
+            ui.add_space(kit::S3);
             egui::Frame::new()
-                .fill(tint(style::c(theme.surface), sc, 0.14))
-                .stroke(Stroke::new(1.0, tint(style::c(theme.surface), sc, 0.6)))
-                .corner_radius(CornerRadius::same(6))
-                .inner_margin(egui::Margin::same(10))
+                .fill(tint(style::c(theme.surface), sc, 0.10))
+                .stroke(Stroke::new(1.0, tint(style::c(theme.surface), sc, 0.45)))
+                .corner_radius(CornerRadius::same(kit::CARD_RADIUS))
+                .inner_margin(egui::Margin::same(12))
                 .show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
+                    ui.label(
+                        RichText::new("WAITING ON YOU")
+                            .font(crate::fonts::semibold(10.0))
+                            .extra_letter_spacing(0.6)
+                            .color(sc),
+                    );
+                    ui.add_space(kit::S1);
                     ui.label(RichText::new(m).color(style::c(theme.text)));
-                    if s.rec.tty.is_some() && s.rec.state == AgentState::Blocked {
-                        ui.add_space(kit::S1);
+                    if s.rec.tty.is_some() {
+                        ui.add_space(kit::S2);
                         ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
                             for (label, key) in [
-                                ("1", "1"),
+                                ("1  Yes", "1"),
                                 ("2", "2"),
                                 ("3", "3"),
-                                ("enter", "enter"),
-                                ("esc", "esc"),
+                                ("Enter", "enter"),
+                                ("Esc", "esc"),
                             ] {
                                 if kit::button(ui, &theme, label, None).clicked() {
                                     self.queue.push(Command::new("session.key", Some(key)));
@@ -911,124 +1137,287 @@ impl App {
                 });
         }
         if s.rec.tty.is_some() {
-            ui.add_space(kit::S2);
-            let send = ui
-                .horizontal(|ui| {
-                    let edit = ui.add(
-                        egui::TextEdit::singleline(&mut self.reply)
-                            .hint_text("Reply in its terminal…")
-                            .desired_width(ui.available_width() - 62.0),
-                    );
-                    let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    kit::button(ui, &theme, "Send", None).clicked() || enter
-                })
-                .inner;
-            if send && !self.reply.trim().is_empty() {
-                let text = std::mem::take(&mut self.reply);
-                self.queue
-                    .push(Command::new("session.send", Some(text.trim())));
-            }
+            ui.add_space(kit::S3);
+            self.reply_box(ui);
         }
+        // Tag and label.
+        ui.add_space(kit::S3);
+        self.tag_row(ui, &s);
         // Related.
         if !s.resources.is_empty() {
             ui.add_space(kit::S3);
-            kit::section(ui, &theme, "Related", Some(s.resources.len()), |_| {});
-            for r in &s.resources {
-                let color = self.resource_color(r);
-                let resp = kit::row(
-                    ui,
-                    &theme,
-                    ("res", &r.id),
-                    24.0,
-                    false,
-                    &[Col::Px(104.0), Col::Px(86.0), Col::Flex],
-                    |c, ui| match c {
-                        0 => {
-                            kit::mono(ui, &r.short(), 11.5, color);
-                        }
-                        1 => {
-                            kit::text(ui, r.state.as_deref().unwrap_or("—"), 11.0, color);
-                        }
-                        _ => {
-                            kit::text(
-                                ui,
-                                r.title.as_deref().unwrap_or(&r.id),
-                                11.5,
-                                style::c(theme.dim),
-                            );
-                        }
-                    },
-                );
-                let resp = resp.on_hover_text(format!(
-                    "{}\n{}",
-                    r.title.clone().unwrap_or_default(),
-                    r.url
-                ));
-                if resp.clicked() {
-                    self.open_resource(r);
+            let n = s.resources.len().to_string();
+            kit::card(ui, &theme, "Related", Some(&n), |ui| {
+                for r in &s.resources {
+                    let color = self.resource_color(r);
+                    let resp = kit::row(
+                        ui,
+                        &theme,
+                        ("res", &r.id),
+                        26.0,
+                        false,
+                        &[Col::Px(96.0), Col::Px(84.0), Col::Flex],
+                        |c, ui| match c {
+                            0 => {
+                                kit::mono(ui, &r.short(), 11.5, color);
+                            }
+                            1 => {
+                                kit::text(ui, r.state.as_deref().unwrap_or("—"), 11.0, color);
+                            }
+                            _ => {
+                                kit::text(
+                                    ui,
+                                    r.title.as_deref().unwrap_or(&r.id),
+                                    11.5,
+                                    style::c(theme.dim),
+                                );
+                            }
+                        },
+                    );
+                    let resp = resp.on_hover_text(format!(
+                        "{}\n{}",
+                        r.title.clone().unwrap_or_default(),
+                        r.url
+                    ));
+                    if resp.clicked() {
+                        self.open_resource(r);
+                    }
                 }
+            });
+        }
+        if !in_tab {
+            if let Some(said) = &s.last_said {
+                ui.add_space(kit::S3);
+                let said = said.clone();
+                kit::card(ui, &theme, "Last said", None, |ui| self.md(ui, &said, 13.0));
+            }
+            if let Some(p) = &s.rec.last_prompt {
+                ui.add_space(kit::S3);
+                let p = p.clone();
+                kit::card(ui, &theme, "Last prompt", None, |ui| self.md(ui, &p, 13.0));
             }
         }
         // Details.
         ui.add_space(kit::S3);
-        kit::section(ui, &theme, "Details", None, |_| {});
-        let mut copied = false;
-        copied |= kit::kv(ui, &theme, "agent", &s.rec.agent, LABEL_W);
-        if let Some(r) = &s.repo {
-            copied |= kit::kv(ui, &theme, "repo", r, LABEL_W);
-        }
-        if let Some(b) = &s.branch {
-            copied |= kit::kv(ui, &theme, "branch", b, LABEL_W);
-        }
-        if let Some(w) = &s.worktree {
-            copied |= kit::kv(ui, &theme, "worktree", &w.display().to_string(), LABEL_W);
-        }
-        copied |= kit::kv(ui, &theme, "cwd", &s.rec.cwd.display().to_string(), LABEL_W);
-        if let Some(a) = &s.rec.activity {
-            copied |= kit::kv(ui, &theme, "doing", a, LABEL_W);
-        }
-        if let Some(task) = &s.task {
-            copied |= kit::kv(
-                ui,
-                &theme,
-                "task",
-                &format!("{task} (+{} pending)", s.pending_tasks),
-                LABEL_W,
-            );
-        }
-        if let Some(t) = &s.rec.tty {
-            copied |= kit::kv(ui, &theme, "tty", t, LABEL_W);
-        }
-        if let Some(p) = s.rec.pid {
-            copied |= kit::kv(ui, &theme, "pid", &p.to_string(), LABEL_W);
-        }
-        copied |= kit::kv(ui, &theme, "session", &s.rec.id, LABEL_W);
+        let copied = kit::card(ui, &theme, "Details", Some("click to copy"), |ui| {
+            let mut copied = false;
+            copied |= kit::kv(ui, &theme, "agent", &s.rec.agent, LABEL_W);
+            if let Some(r) = &s.repo {
+                copied |= kit::kv(ui, &theme, "repo", r, LABEL_W);
+            }
+            if let Some(b) = &s.branch {
+                copied |= kit::kv(ui, &theme, "branch", b, LABEL_W);
+            }
+            if let Some(w) = &s.worktree {
+                copied |= kit::kv(ui, &theme, "worktree", &w.display().to_string(), LABEL_W);
+            }
+            if s.worktree.as_deref() != Some(s.rec.cwd.as_path()) {
+                copied |= kit::kv(ui, &theme, "cwd", &s.rec.cwd.display().to_string(), LABEL_W);
+            }
+            if let Some(a) = &s.rec.activity {
+                copied |= kit::kv(ui, &theme, "doing", a, LABEL_W);
+            }
+            if let Some(task) = &s.task {
+                copied |= kit::kv(
+                    ui,
+                    &theme,
+                    "task",
+                    &format!("{task} (+{} pending)", s.pending_tasks),
+                    LABEL_W,
+                );
+            }
+            if let Some(t) = &s.rec.tty {
+                copied |= kit::kv(ui, &theme, "tty", t, LABEL_W);
+            }
+            if let Some(p) = s.rec.pid {
+                copied |= kit::kv(ui, &theme, "pid", &p.to_string(), LABEL_W);
+            }
+            copied |= kit::kv(ui, &theme, "session", &s.rec.id, LABEL_W);
+            copied
+        });
         if copied {
             let ctx = ui.ctx().clone();
             self.toast_line(&ctx, "copied".into());
-        }
-        if !in_tab {
-            if let Some(p) = &s.rec.last_prompt {
-                ui.add_space(kit::S3);
-                kit::section(ui, &theme, "Last prompt", None, |_| {});
-                let p = p.clone();
-                self.md(ui, &p, 13.0);
-            }
-            if let Some(said) = &s.last_said {
-                ui.add_space(kit::S3);
-                kit::section(ui, &theme, "Last said", None, |_| {});
-                let said = said.clone();
-                self.md(ui, &said, 13.0);
-            }
         }
         if s.discovered && s.rec.state == AgentState::Unknown {
             ui.add_space(kit::S2);
             ui.label(
                 RichText::new("Found as a process; it reports no state.")
                     .size(11.5)
-                    .color(self.dimc()),
+                    .color(style::c(theme.faint)),
             );
         }
+    }
+
+    /// The opinionated next step for where the session is, then the rest.
+    fn lifecycle_bar(&mut self, ui: &mut egui::Ui, s: &Session, in_tab: bool) {
+        let theme = self.theme.clone();
+        let id = s.rec.id.clone();
+        let has_tty = s.rec.tty.is_some();
+        let claude = s.rec.agent == "claude";
+        let mut fire: Vec<&'static str> = Vec::new();
+        ui.horizontal_wrapped(|ui| {
+            let mut push = |cmd: &'static str| fire.push(cmd);
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+            match s.rec.state {
+                AgentState::Blocked if has_tty => {
+                    if kit::primary_with(
+                        ui,
+                        &theme,
+                        Some(Icon::Focus),
+                        "Answer",
+                        Some("f"),
+                        style::c(theme.blocked),
+                    )
+                    .clicked()
+                    {
+                        push("session.focus");
+                    }
+                }
+                AgentState::Done if claude && has_tty => {
+                    if kit::primary_with(
+                        ui,
+                        &theme,
+                        Some(Icon::Check),
+                        "Wrap up",
+                        None,
+                        style::c(theme.done),
+                    )
+                    .on_hover_text("Type /wrap: verify, commit, push, draft PR")
+                    .clicked()
+                    {
+                        push("session.wrap");
+                    }
+                    if kit::button_icon(ui, &theme, Icon::Focus, "Focus", Some("f")).clicked() {
+                        push("session.focus");
+                    }
+                }
+                AgentState::Working if has_tty => {
+                    if kit::button_icon(ui, &theme, Icon::Stop, "Stop turn", Some(".")).clicked() {
+                        push("session.stop");
+                    }
+                    if kit::button_icon(ui, &theme, Icon::Focus, "Focus", Some("f")).clicked() {
+                        push("session.focus");
+                    }
+                }
+                _ if has_tty
+                    && kit::button_icon(ui, &theme, Icon::Focus, "Focus", Some("f")).clicked() =>
+                {
+                    push("session.focus");
+                }
+                _ => {}
+            }
+            if !in_tab
+                && kit::icon_button(ui, &theme, Icon::ChevronRight, "Open as a tab (↵)").clicked()
+            {
+                push("session.open");
+            }
+            drop(push);
+            if let Some(w) = &s.worktree
+                && kit::icon_button(
+                    ui,
+                    &theme,
+                    Icon::Editor,
+                    &format!("Open {} in the editor", w.display()),
+                )
+                .clicked()
+            {
+                self.queue
+                    .push(Command::new("path.edit", Some(&w.display().to_string())));
+            }
+            let more = kit::icon_button(ui, &theme, Icon::More, "More");
+            egui::Popup::menu(&more).show(|ui| self.session_menu(ui, s));
+            if kit::danger(ui, &theme, Some(Icon::Close), "Close", Some("x"))
+                .on_hover_text("End the agent and its terminal tab")
+                .clicked()
+            {
+                fire.push("session.close");
+            }
+        });
+        for cmd in fire {
+            self.queue.push(Command::new(cmd, Some(&id)));
+        }
+    }
+
+    fn reply_box(&mut self, ui: &mut egui::Ui) {
+        let theme = self.theme.clone();
+        let send = egui::Frame::new()
+            .fill(tint(style::c(theme.surface), style::c(theme.text), 0.05))
+            .stroke(Stroke::new(1.0, style::c(theme.border)))
+            .corner_radius(CornerRadius::same(kit::BUTTON_RADIUS))
+            .inner_margin(egui::Margin::symmetric(10, 4))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let edit = ui.add(
+                        egui::TextEdit::singleline(&mut self.reply)
+                            .frame(egui::Frame::NONE)
+                            .hint_text(
+                                RichText::new("Reply in its terminal…")
+                                    .color(style::c(theme.faint)),
+                            )
+                            .desired_width(ui.available_width() - 30.0),
+                    );
+                    let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let tint_c = if self.reply.trim().is_empty() {
+                        style::c(theme.faint)
+                    } else {
+                        style::c(theme.accent)
+                    };
+                    kit::icon_button_tinted(ui, &theme, Icon::Send, "Send (↵)", tint_c).clicked()
+                        || enter
+                })
+                .inner
+            })
+            .inner;
+        if send && !self.reply.trim().is_empty() {
+            let text = std::mem::take(&mut self.reply);
+            self.queue
+                .push(Command::new("session.send", Some(text.trim())));
+        }
+    }
+
+    fn tag_row(&mut self, ui: &mut egui::Ui, s: &Session) {
+        let theme = self.theme.clone();
+        if self.label_for.as_deref() != Some(s.rec.id.as_str()) {
+            self.label_edit = s.label.clone().unwrap_or_default();
+            self.label_for = Some(s.rec.id.clone());
+        }
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 1.0;
+            for (name, rgba) in tags::PALETTE {
+                let (rect, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::click());
+                let on = s.tag.as_deref() == Some(name);
+                let r = if on || resp.hovered() { 6.5 } else { 5.0 };
+                ui.painter().circle_filled(rect.center(), r, style::c(rgba));
+                if on {
+                    ui.painter().circle_stroke(
+                        rect.center(),
+                        8.5,
+                        Stroke::new(1.5, style::c(theme.text)),
+                    );
+                }
+                if resp
+                    .on_hover_text(format!("Tag {name} (also its iTerm tab)"))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    self.queue.push(Command::new(
+                        "session.tag",
+                        Some(if on { "none" } else { name }),
+                    ));
+                }
+            }
+            ui.add_space(kit::S2);
+            let edit = ui.add(
+                egui::TextEdit::singleline(&mut self.label_edit)
+                    .hint_text(RichText::new("label").color(style::c(theme.faint)))
+                    .desired_width(ui.available_width()),
+            );
+            if edit.lost_focus() && self.label_edit.trim() != s.label.clone().unwrap_or_default() {
+                self.queue
+                    .push(Command::new("session.label", Some(self.label_edit.trim())));
+            }
+        });
     }
 
     fn status(&mut self, ui: &mut egui::Ui) {
@@ -1043,65 +1432,95 @@ impl App {
             .collect();
         let layout = self.current_layout_name();
         let show_hints = ui.available_width() >= 1100.0;
-        ui.horizontal(|ui| {
-            for s in [
-                AgentState::Blocked,
-                AgentState::Done,
-                AgentState::Working,
-                AgentState::Idle,
-            ] {
-                let n = self.snap.count(s);
-                kit::dot(
-                    ui,
-                    if n == 0 {
-                        style::c(theme.unknown)
-                    } else {
-                        self.color(s)
-                    },
-                    3.5,
-                );
-                ui.label(
-                    RichText::new(format!("{n} {}", s.as_str()))
-                        .size(11.5)
-                        .color(if n == 0 {
-                            self.dimc()
-                        } else {
-                            style::c(theme.text)
-                        }),
-                );
-                ui.add_space(kit::S1);
-            }
-            if !errors.is_empty() {
-                let r = ui.label(
-                    RichText::new(format!("! {} errors", errors.len()))
-                        .size(11.5)
-                        .color(style::c(theme.danger)),
-                );
-                r.on_hover_text(errors.join("\n"));
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .small_button(&theme.name)
-                    .on_hover_text("Switch theme")
-                    .clicked()
-                {
-                    self.queue.push(Command::new("theme.cycle", None));
+        let mut counts = [0usize; 4];
+        for s in &self.snap.sessions {
+            let i = Stage::ALL
+                .iter()
+                .position(|st| *st == self.stage(s))
+                .unwrap_or(0);
+            counts[i] += 1;
+        }
+        let strip = egui::vec2(ui.available_width(), kit::CONTROL);
+        ui.allocate_ui_with_layout(
+            strip,
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                for (stage, n) in Stage::ALL.iter().zip(counts) {
+                    let color = match (stage, n) {
+                        (_, 0) => style::c(theme.faint),
+                        (Stage::NeedsYou, _) => style::c(theme.blocked),
+                        (Stage::Working, _) => style::c(theme.working),
+                        (Stage::Idle, _) => style::c(theme.idle),
+                        (Stage::Stale, _) => style::c(theme.dim),
+                    };
+                    let r = kit::pill(
+                        ui,
+                        &theme,
+                        &format!("{n} {}", stage.label().to_lowercase()),
+                        color,
+                    );
+                    let lane = Lane::Only(*stage);
+                    if ui
+                        .interact(
+                            r.rect,
+                            ui.scope_id().with(("status-lane", stage.label())),
+                            Sense::click(),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text("Show this lane")
+                        .clicked()
+                    {
+                        self.lane = if self.lane == lane { Lane::All } else { lane };
+                    }
                 }
-                if ui
-                    .small_button(&layout)
-                    .on_hover_text("Switch layout")
-                    .clicked()
-                {
-                    self.queue.push(Command::new("layout.cycle", None));
+                if !self.launches.is_empty() {
+                    kit::pill(
+                        ui,
+                        &theme,
+                        &format!("{} starting", self.launches.len()),
+                        style::c(theme.working),
+                    );
                 }
-                ui.add_space(kit::S2);
-                if show_hints {
-                    kit::hint(ui, &theme, "⌘I", "PRs");
-                    kit::hint(ui, &theme, "⌘N", "new agent");
-                    kit::hint(ui, &theme, "⌘K", "commands");
+                if !errors.is_empty() {
+                    kit::pill(
+                        ui,
+                        &theme,
+                        &format!("{} errors", errors.len()),
+                        style::c(theme.danger),
+                    )
+                    .on_hover_text(errors.join("\n"));
                 }
-            });
-        });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    if kit::pill_tab(ui, &theme, &theme.name, None, false, style::c(theme.accent))
+                        .on_hover_text("Switch theme")
+                        .clicked()
+                    {
+                        self.queue.push(Command::new("theme.cycle", None));
+                    }
+                    if kit::pill_tab(ui, &theme, &layout, None, false, style::c(theme.accent))
+                        .on_hover_text("Switch layout (⇧⌘L)")
+                        .clicked()
+                    {
+                        self.queue.push(Command::new("layout.cycle", None));
+                    }
+                    ui.add_space(kit::S3);
+                    if show_hints {
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(400.0, kit::CONTROL),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                kit::hint(ui, &theme, "⌘K", "commands");
+                                kit::hint(ui, &theme, "⌘N", "new agent");
+                                kit::hint(ui, &theme, "⌘⇧T", "reopen");
+                                kit::hint(ui, &theme, "⌘I", "PRs");
+                            },
+                        );
+                    }
+                });
+            },
+        );
     }
 
     pub(crate) fn resource_color(&self, r: &Resource) -> egui::Color32 {

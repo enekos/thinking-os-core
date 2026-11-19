@@ -3,16 +3,16 @@
   "root": { "column": [
     { "row": [
       { "column": [
-        { "block": "spaces", "title": "Spaces", "padding": 12, "size": { "weight": 1 } },
-        { "block": "inbox", "title": "zaindu", "padding": 12, "size": { "weight": 1.6 } }
-      ], "size": { "px": 300 }, "min": 220, "max": 520, "resizable": true, "gap": 8 },
-      { "block": "agents", "title": "Agents", "padding": 12, "min": 320 },
+        { "block": "spaces", "title": "Spaces", "padding": 14, "size": { "weight": 1 } },
+        { "block": "inbox", "title": "zaindu", "padding": 14, "size": { "weight": 1.6 } }
+      ], "size": { "px": 300 }, "min": 220, "max": 520, "resizable": true, "gap": 10 },
+      { "block": "agents", "padding": 14, "min": 340 },
       { "stack": [
-        { "block": "detail", "title": "Session", "padding": 12 },
+        { "block": "detail", "title": "Session", "padding": 14 },
         { "block": "prs", "title": "Pull requests" },
         { "block": "log", "title": "Log" }
-      ], "size": { "px": 400 }, "min": 300, "max": 720, "resizable": true, "padding": 12 }
-    ], "gap": 8 },
-    { "block": "status", "size": { "px": 40 }, "min": 40, "padding": 6, "border": false, "background": "background" }
+      ], "size": { "px": 400 }, "min": 300, "max": 720, "resizable": true, "padding": 14 }
+    ], "gap": 10 },
+    { "block": "status", "size": { "px": 44 }, "min": 44, "padding": 8, "border": false, "background": "background" }
   ] }
 }

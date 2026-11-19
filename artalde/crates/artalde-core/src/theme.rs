@@ -16,6 +16,9 @@ pub struct Theme {
     pub border: Rgba,
     pub text: Rgba,
     pub dim: Rgba,
+    /// Tertiary text: hints, counts, captions. Derived from `dim` and
+    /// `surface` when a theme leaves it out.
+    pub faint: Rgba,
     pub accent: Rgba,
     pub working: Rgba,
     pub blocked: Rgba,
@@ -35,6 +38,7 @@ struct RawTheme {
     border: Option<String>,
     text: Option<String>,
     dim: Option<String>,
+    faint: Option<String>,
     accent: Option<String>,
     working: Option<String>,
     blocked: Option<String>,
@@ -45,23 +49,25 @@ struct RawTheme {
 }
 
 impl Theme {
+    /// azala's dark palette.
     pub fn graphite() -> Theme {
         Theme {
             name: "graphite".into(),
             dark: true,
-            background: [0x14, 0x15, 0x18, 255],
-            surface: [0x1b, 0x1d, 0x21, 255],
-            raised: [0x24, 0x27, 0x2d, 255],
-            border: [0x2e, 0x31, 0x38, 255],
-            text: [0xe4, 0xe6, 0xeb, 255],
-            dim: [0x8a, 0x8f, 0x99, 255],
-            accent: [0x7c, 0xa8, 0xff, 255],
-            working: [0x5e, 0xa8, 0xff, 255],
-            blocked: [0xff, 0xb0, 0x3b, 255],
-            done: [0x4c, 0xd1, 0x8a, 255],
-            idle: [0x6b, 0x70, 0x7a, 255],
-            unknown: [0x4a, 0x4e, 0x56, 255],
-            danger: [0xff, 0x5f, 0x5f, 255],
+            background: [0x1b, 0x1d, 0x23, 255],
+            surface: [0x22, 0x25, 0x2c, 255],
+            raised: [0x2a, 0x2e, 0x37, 255],
+            border: [0x32, 0x36, 0x3f, 255],
+            text: [0xe6, 0xe8, 0xee, 255],
+            dim: [0x9a, 0xa1, 0xaf, 255],
+            faint: [0x64, 0x6b, 0x79, 255],
+            accent: [0x5b, 0x8d, 0xef, 255],
+            working: [0x6f, 0xb3, 0xe0, 255],
+            blocked: [0xf5, 0xc5, 0x42, 255],
+            done: [0x3d, 0xba, 0x6e, 255],
+            idle: [0x6e, 0x72, 0x80, 255],
+            unknown: [0x4e, 0x53, 0x60, 255],
+            danger: [0xe5, 0x54, 0x4b, 255],
         }
     }
 
@@ -74,6 +80,7 @@ impl Theme {
             "border" => self.border,
             "text" => self.text,
             "dim" => self.dim,
+            "faint" => self.faint,
             "accent" => self.accent,
             "working" => self.working,
             "blocked" => self.blocked,
@@ -92,13 +99,15 @@ impl Theme {
         if let Some(dark) = raw.dark {
             t.dark = dark;
         }
-        let slots: [(&str, &Option<String>, &mut Rgba); 13] = [
+        let derive_faint = raw.faint.is_none();
+        let slots: [(&str, &Option<String>, &mut Rgba); 14] = [
             ("background", &raw.background, &mut t.background),
             ("surface", &raw.surface, &mut t.surface),
             ("raised", &raw.raised, &mut t.raised),
             ("border", &raw.border, &mut t.border),
             ("text", &raw.text, &mut t.text),
             ("dim", &raw.dim, &mut t.dim),
+            ("faint", &raw.faint, &mut t.faint),
             ("accent", &raw.accent, &mut t.accent),
             ("working", &raw.working, &mut t.working),
             ("blocked", &raw.blocked, &mut t.blocked),
@@ -113,8 +122,26 @@ impl Theme {
                     hex(v).ok_or_else(|| format!("{key}: {v:?} is not #rrggbb or #rrggbbaa"))?;
             }
         }
+        if derive_faint {
+            t.faint = mix(t.dim, t.surface, 0.3);
+        }
         Ok(t)
     }
+}
+
+/// `a` moved `by` (0..1) toward `b`, opaque.
+fn mix(a: Rgba, b: Rgba, by: f32) -> Rgba {
+    let ch = |x: u8, y: u8| {
+        let v = f32::from(x) + (f32::from(y) - f32::from(x)) * by.clamp(0.0, 1.0);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "clamped to 0..=255"
+        )]
+        let out = v.round().clamp(0.0, 255.0) as u8;
+        out
+    };
+    [ch(a[0], b[0]), ch(a[1], b[1]), ch(a[2], b[2]), 255]
 }
 
 /// `#rrggbb` or `#rrggbbaa`.
@@ -142,6 +169,11 @@ mod tests {
         assert!(!t.dark);
         assert_eq!(t.background, [255, 255, 255, 255]);
         assert_eq!(t.blocked, Theme::graphite().blocked);
+        assert_ne!(
+            t.faint,
+            Theme::graphite().faint,
+            "derived for the light surface"
+        );
         assert!(Theme::parse("x", r#"{ "background": "red" }"#).is_err());
         assert!(Theme::parse("x", r##"{ "bakground": "#000000" }"##).is_err());
     }

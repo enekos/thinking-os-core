@@ -7,10 +7,11 @@ use artalde_core::layout::{Axis, Node, Panel, Style, distribute};
 use artalde_core::theme::Theme;
 use eframe::egui::{self, CornerRadius, CursorIcon, Rect, Sense, Stroke, StrokeKind, UiBuilder};
 
-use crate::style::{self, RADIUS, tint, token};
+use crate::kit;
+use crate::style::{self, token};
 
-const TITLE_HEIGHT: f32 = 34.0;
-const TAB_HEIGHT: f32 = 30.0;
+const TITLE_HEIGHT: f32 = 30.0;
+const TAB_HEIGHT: f32 = kit::CONTROL;
 const GRAB: f32 = 4.0;
 
 /// Drag sizes and selected tabs, keyed by `<layout>/<node path>`.
@@ -57,47 +58,30 @@ fn node(
                 .unwrap_or(0)
                 .min(children.len().saturating_sub(1));
             let bar = Rect::from_min_size(inner.min, egui::vec2(inner.width(), TAB_HEIGHT));
-            let mut x = bar.min.x;
+            let mut tabs_ui = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(bar)
+                    .id_salt((&path, "tabs"))
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            );
+            tabs_ui.set_clip_rect(bar.intersect(ui.clip_rect()));
+            tabs_ui.spacing_mut().item_spacing.x = 2.0;
             for (i, child) in children.iter().enumerate() {
                 let label = tab_label(child);
-                let galley = ui.painter().layout_no_wrap(
-                    label.clone(),
-                    egui::TextStyle::Button.resolve(ui.style()),
-                    style::c(theme.text),
-                );
-                let w = galley.size().x + 22.0;
-                let tab = Rect::from_min_size(
-                    egui::pos2(x, bar.min.y + 2.0),
-                    egui::vec2(w, TAB_HEIGHT - 6.0),
-                );
-                let resp = ui.interact(tab, egui::Id::unique((&path, "tab", i)), Sense::click());
-                let on = i == selected;
-                if on || resp.hovered() {
-                    let fill = if on {
-                        style::c(theme.raised)
-                    } else {
-                        tint(style::c(theme.surface), style::c(theme.raised), 0.6)
-                    };
-                    ui.painter().rect_filled(tab, CornerRadius::same(6), fill);
-                }
-                let color = if on {
-                    style::c(theme.text)
-                } else {
-                    style::c(theme.dim)
-                };
-                ui.painter().text(
-                    tab.center(),
-                    egui::Align2::CENTER_CENTER,
-                    label,
-                    egui::TextStyle::Button.resolve(ui.style()),
-                    color,
-                );
-                if resp.clicked() {
+                if kit::pill_tab(
+                    &mut tabs_ui,
+                    theme,
+                    &label,
+                    None,
+                    i == selected,
+                    style::c(theme.accent),
+                )
+                .clicked()
+                {
                     st.tabs.insert(path.clone(), i);
                 }
-                x += w + 4.0;
             }
-            let rest = Rect::from_min_max(egui::pos2(inner.min.x, bar.max.y + 4.0), inner.max);
+            let rest = Rect::from_min_max(egui::pos2(inner.min.x, bar.max.y + 8.0), inner.max);
             if let Some(child) = children.get(selected) {
                 let child_path = format!("{path}/{selected}");
                 match child {
@@ -202,23 +186,36 @@ fn frame(ui: &egui::Ui, rect: Rect, style: &Style, theme: &Theme, title: Option<
         .as_deref()
         .map_or(style::c(theme.surface), |b| token(theme, b));
     let p = ui.painter();
-    p.rect_filled(rect, CornerRadius::same(RADIUS), fill);
+    p.rect_filled(rect, CornerRadius::same(kit::CARD_RADIUS), fill);
     if style.border {
         p.rect_stroke(
             rect,
-            CornerRadius::same(RADIUS),
+            CornerRadius::same(kit::CARD_RADIUS),
             Stroke::new(1.0, style::c(theme.border)),
             StrokeKind::Inside,
         );
     }
     let mut inner = rect.shrink(style.padding);
     if let Some(t) = title {
-        p.text(
-            egui::pos2(inner.min.x + 2.0, inner.min.y + TAB_HEIGHT / 2.0),
-            egui::Align2::LEFT_CENTER,
-            t.to_uppercase(),
-            egui::FontId::proportional(11.0),
-            style::c(theme.dim),
+        let mut job = egui::text::LayoutJob::default();
+        job.append(
+            &t.to_uppercase(),
+            0.0,
+            egui::TextFormat {
+                font_id: crate::fonts::semibold(10.5),
+                extra_letter_spacing: 0.6,
+                color: style::c(theme.faint),
+                ..Default::default()
+            },
+        );
+        let galley = ui.fonts_mut(|f| f.layout_job(job));
+        p.galley(
+            egui::pos2(
+                inner.min.x + 2.0,
+                inner.min.y + TITLE_HEIGHT / 2.0 - galley.size().y / 2.0 - 4.0,
+            ),
+            galley,
+            style::c(theme.faint),
         );
         inner.min.y += TITLE_HEIGHT;
     }

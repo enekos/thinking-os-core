@@ -1,7 +1,7 @@
 //! The window: state, commands, keys, the palette and the spawn dialog.
 //! Panels live in `panels.rs`; the layout tree in `layout_view.rs`.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,7 +14,7 @@ use artalde_core::layout::Panel;
 use artalde_core::model::{AgentState, Session, Snapshot};
 use artalde_core::store::Store;
 use artalde_core::tags::{self, Tags};
-use artalde_core::text::{clip, shell_quote};
+use artalde_core::text::clip;
 use artalde_core::theme::Theme;
 use artalde_mods::{Action, Context as ModContext, ModHost, ViewState};
 use eframe::egui::{self, Key, Modifiers};
@@ -23,10 +23,12 @@ use crate::actions::{Actions, Job};
 use crate::feed::{Feed, Msg};
 use crate::gh::Gh;
 use crate::layout_view::{self, LayoutState};
-use crate::panels::AgentView;
+use crate::lifecycle_view::{CloseConfirm, SpawnForm};
+use crate::panels::Lane;
 use crate::views::{Conversations, InboxState, Logs, PrView, TAB_BAR, Tab};
 use crate::{fonts, mod_view, style};
 use artalde_core::github::{self, PrRef};
+use artalde_core::lifecycle::{ClosedLog, Launch};
 
 const LOG_LINES: usize = 500;
 const TOAST_SECS: f64 = 4.0;
@@ -59,7 +61,8 @@ pub struct App {
     pub(crate) reviewer: crate::reviewer::Reviewer,
     /// A review to start next frame: PR and agent index.
     pub(crate) queue_review: Option<(PrRef, usize)>,
-    pub(crate) agent_view: AgentView,
+    pub(crate) lane: Lane,
+    pub(crate) closed_open: bool,
     pub(crate) agent_query: String,
     pub(crate) spaces_closed: Vec<String>,
     /// The session `label_edit` was filled from.
@@ -71,9 +74,16 @@ pub struct App {
     pub(crate) queue: Vec<Command>,
     palette: Option<Palette>,
     pub(crate) spawn: Option<SpawnForm>,
+    /// Agents started from here that have not shown up yet.
+    pub(crate) launches: Vec<Launch>,
+    pub(crate) closed: ClosedLog,
+    /// Sessions being closed: id → when, hidden until their process exits.
+    pub(crate) closing: HashMap<String, u64>,
+    pub(crate) close_confirm: Option<CloseConfirm>,
+    pub(crate) egui_ctx: egui::Context,
     pub(crate) reply: String,
     pub(crate) hide_done: bool,
-    shot: Option<Shot>,
+    pub(crate) shot: Option<Shot>,
     pub(crate) gh: Gh,
     pub(crate) tabs: Vec<Tab>,
     pub(crate) active: usize,
@@ -99,17 +109,8 @@ struct Palette {
     cursor: usize,
 }
 
-pub struct SpawnForm {
-    /// Index into the worktree list, or `None` for a new worktree.
-    pub target: Option<usize>,
-    pub repo: String,
-    pub branch: String,
-    pub agent: String,
-    pub prompt: String,
-}
-
 /// `ARTALDE_SCREENSHOT=<png>`: save one frame once data is in, then quit.
-struct Shot {
+pub(crate) struct Shot {
     path: PathBuf,
     requested: bool,
     done: Arc<AtomicBool>,
@@ -152,7 +153,8 @@ impl App {
             hook_confirm: false,
             reviewer: crate::reviewer::Reviewer::new(),
             queue_review: None,
-            agent_view: AgentView::default(),
+            lane: Lane::default(),
+            closed_open: false,
             agent_query: String::new(),
             spaces_closed: Vec::new(),
             label_for: None,
@@ -163,6 +165,11 @@ impl App {
             queue: Vec::new(),
             palette: None,
             spawn: None,
+            launches: Vec::new(),
+            closed: ClosedLog::load(&artalde_core::store::state_dir()),
+            closing: HashMap::new(),
+            close_confirm: None,
+            egui_ctx: cc.egui_ctx.clone(),
             reply: String::new(),
             hide_done: true,
             gh,
@@ -203,7 +210,10 @@ impl App {
     }
 
     pub(crate) fn palette_open(&self) -> bool {
-        self.palette.is_some() || self.spawn.is_some() || self.confirm.is_some()
+        self.palette.is_some()
+            || self.spawn.is_some()
+            || self.confirm.is_some()
+            || self.close_confirm.is_some()
     }
 
     pub(crate) fn toast_line(&mut self, ctx: &egui::Context, text: String) {
@@ -234,6 +244,10 @@ impl App {
             }
         }
         walk(&l.root, name)
+    }
+
+    pub(crate) fn mod_ctx_dirty(&mut self) {
+        self.mod_ctx = None;
     }
 
     fn toast(&mut self, ctx: &egui::Context, text: String) {
@@ -310,6 +324,15 @@ impl App {
                 events.push((s.name(), what, s.repo.clone().unwrap_or_default()));
             }
         }
+        let fresh: HashSet<String> = if self.have_snapshot {
+            snap.sessions
+                .iter()
+                .filter(|s| !self.prev_states.contains_key(&s.rec.id))
+                .map(|s| s.rec.id.clone())
+                .collect()
+        } else {
+            HashSet::new()
+        };
         self.prev_states = snap
             .sessions
             .iter()
@@ -333,11 +356,13 @@ impl App {
             self.selected = snap.sessions.first().map(|s| s.rec.id.clone());
         }
         self.snap = snap;
+        self.lifecycle_receive(&fresh);
         self.apply_tags();
         if !self.have_snapshot && self.shot.is_some() {
             let command = match std::env::var("ARTALDE_SCREENSHOT_OVERLAY").as_deref() {
                 Ok("palette") => Some("palette.open"),
                 Ok("spawn") => Some("spawn.open"),
+                Ok("sweep") => Some("session.sweep"),
                 _ => None,
             };
             if let Some(command) = command {
@@ -536,6 +561,27 @@ impl App {
                 self.filter = arg.filter(|a| !a.is_empty()).map(str::to_owned);
             }
             "spawn.open" => self.open_spawn(arg),
+            "session.stop" => {
+                if let Some(id) = self.target_id(arg) {
+                    self.stop_session(&id);
+                }
+            }
+            "session.wrap" => {
+                if let Some(id) = self.target_id(arg) {
+                    self.wrap_session(&id);
+                }
+            }
+            "session.close" => {
+                if let Some(id) = self.target_id(arg) {
+                    let title = self
+                        .snap
+                        .session(&id)
+                        .map_or_else(String::new, |s| format!("Close {}?", clip(&s.name(), 48)));
+                    self.request_close(vec![id], title);
+                }
+            }
+            "session.sweep" => self.sweep(),
+            "session.reopen" => self.reopen(arg.filter(|a| !a.is_empty())),
             "layout.select" => self.layout_name = arg.map(str::to_owned),
             "layout.cycle" => {
                 if let Some(cfg) = &self.config {
@@ -686,35 +732,6 @@ impl App {
             .unwrap_or_else(|| self.settings().layout)
     }
 
-    fn open_spawn(&mut self, arg: Option<&str>) {
-        let worktrees = self.worktree_choices();
-        let target = arg
-            .and_then(|a| {
-                worktrees
-                    .iter()
-                    .position(|(_, path, _)| path.display().to_string() == a)
-            })
-            .or(if worktrees.is_empty() { None } else { Some(0) });
-        let repo = arg
-            .and_then(|a| self.snap.spaces.iter().find(|s| s.repo == a))
-            .map(|s| s.repo.clone())
-            .or_else(|| self.snap.spaces.first().map(|s| s.repo.clone()))
-            .unwrap_or_default();
-        let agent = self
-            .settings()
-            .agents
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "claude".into());
-        self.spawn = Some(SpawnForm {
-            target,
-            repo,
-            branch: String::new(),
-            agent,
-            prompt: String::new(),
-        });
-    }
-
     /// `(label, path, repo)` of every known worktree.
     pub(crate) fn worktree_choices(&self) -> Vec<(String, PathBuf, String)> {
         self.snap
@@ -733,55 +750,8 @@ impl App {
             .collect()
     }
 
-    pub(crate) fn spawn_line(&self, form: &SpawnForm) -> Result<String, String> {
-        let s = self.settings();
-        let agent = form.agent.trim();
-        if agent.is_empty()
-            || !agent
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
-        {
-            return Err("agent must be a plain command name".into());
-        }
-        let prompt = if form.prompt.trim().is_empty() {
-            String::new()
-        } else {
-            shell_quote(form.prompt.trim())
-        };
-        let line = match form.target {
-            Some(i) => {
-                let choices = self.worktree_choices();
-                let (_, dir, repo) = choices.get(i).ok_or("pick a worktree")?;
-                s.spawn_here
-                    .replace("{dir}", &shell_quote(&dir.display().to_string()))
-                    .replace("{repo}", &shell_quote(repo))
-            }
-            None => {
-                let branch = form.branch.trim();
-                if branch.is_empty()
-                    || !branch
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || "-_./".contains(c))
-                {
-                    return Err("branch: letters, digits, - _ . / only".into());
-                }
-                if form.repo.trim().is_empty() {
-                    return Err("pick a repo".into());
-                }
-                s.spawn_worktree
-                    .replace("{repo}", &shell_quote(form.repo.trim()))
-                    .replace("{branch}", &shell_quote(branch))
-            }
-        };
-        Ok(line
-            .replace("{agent}", &shell_quote(agent))
-            .replace("{prompt}", &prompt)
-            .trim()
-            .to_owned())
-    }
-
     fn keys(&mut self, ctx: &egui::Context) {
-        if self.palette.is_some() || self.spawn.is_some() {
+        if self.palette.is_some() || self.spawn.is_some() || self.close_confirm.is_some() {
             return;
         }
         let Some(cfg) = &self.config else { return };
@@ -804,7 +774,7 @@ impl App {
                 .map(ToString::to_string)
                 .unwrap_or_default()
         };
-        let mut out = Vec::new();
+        let mut out = self.lifecycle_entries();
         if let Some(sel) = self.selected_session() {
             for (name, _) in tags::PALETTE {
                 out.push((
@@ -1007,114 +977,6 @@ impl App {
             return;
         }
         self.palette = Some(p);
-    }
-
-    fn spawn_ui(&mut self, ctx: &egui::Context) {
-        let Some(mut form) = self.spawn.take() else {
-            return;
-        };
-        let choices = self.worktree_choices();
-        let repos: Vec<String> = self.snap.spaces.iter().map(|s| s.repo.clone()).collect();
-        let agents = self.settings().agents;
-        let preview = self.spawn_line(&form);
-        let mut close = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
-        let mut start = false;
-        let theme = self.theme.clone();
-        let modal = egui::Modal::new(egui::Id::unique("spawn")).show(ctx, |ui| {
-            ui.set_width(560.0);
-            ui.heading("New agent");
-            ui.add_space(6.0);
-            egui::Grid::new("spawn-grid")
-                .num_columns(2)
-                .spacing([12.0, 8.0])
-                .show(ui, |ui| {
-                    ui.label("Where");
-                    let label = form
-                        .target
-                        .and_then(|i| choices.get(i))
-                        .map_or("new worktree…".to_owned(), |c| c.0.clone());
-                    egui::ComboBox::from_id_salt("spawn-target")
-                        .selected_text(label)
-                        .width(380.0)
-                        .show_ui(ui, |ui| {
-                            for (i, (l, _, _)) in choices.iter().enumerate() {
-                                ui.selectable_value(&mut form.target, Some(i), l);
-                            }
-                            ui.selectable_value(&mut form.target, None, "new worktree…");
-                        });
-                    ui.end_row();
-                    if form.target.is_none() {
-                        ui.label("Repo");
-                        egui::ComboBox::from_id_salt("spawn-repo")
-                            .selected_text(&form.repo)
-                            .width(380.0)
-                            .show_ui(ui, |ui| {
-                                for r in &repos {
-                                    ui.selectable_value(&mut form.repo, r.clone(), r);
-                                }
-                            });
-                        ui.end_row();
-                        ui.label("Branch");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut form.branch)
-                                .hint_text("THU-123-short-desc")
-                                .desired_width(380.0),
-                        );
-                        ui.end_row();
-                    }
-                    ui.label("Agent");
-                    egui::ComboBox::from_id_salt("spawn-agent")
-                        .selected_text(&form.agent)
-                        .show_ui(ui, |ui| {
-                            for a in &agents {
-                                ui.selectable_value(&mut form.agent, a.clone(), a);
-                            }
-                        });
-                    ui.end_row();
-                    ui.label("Prompt");
-                    ui.add(
-                        egui::TextEdit::multiline(&mut form.prompt)
-                            .desired_rows(3)
-                            .desired_width(380.0)
-                            .hint_text("optional first message"),
-                    );
-                    ui.end_row();
-                });
-            ui.add_space(6.0);
-            match &preview {
-                Ok(line) => ui.label(
-                    egui::RichText::new(format!("$ {line}"))
-                        .monospace()
-                        .color(style::c(theme.dim)),
-                ),
-                Err(e) => ui.label(egui::RichText::new(e).color(style::c(theme.danger))),
-            };
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(
-                        preview.is_ok(),
-                        egui::Button::new("Start in a new terminal tab"),
-                    )
-                    .clicked()
-                {
-                    start = true;
-                }
-                if ui.button("Cancel").clicked() {
-                    close = true;
-                }
-            });
-        });
-        if close || modal.should_close() {
-            return;
-        }
-        if start {
-            if let Ok(line) = preview {
-                self.submit(Job::Spawn { line });
-            }
-            return;
-        }
-        self.spawn = Some(form);
     }
 
     fn apply_config_style(&mut self, ctx: &egui::Context) {
@@ -1429,6 +1291,7 @@ impl App {
         self.hook_confirm_ui(&ctx);
         self.palette_ui(&ctx);
         self.spawn_ui(&ctx);
+        self.close_confirm_ui(&ctx);
         self.toasts_ui(&ctx);
         for cmd in std::mem::take(&mut self.queue) {
             self.run(&ctx, &cmd);

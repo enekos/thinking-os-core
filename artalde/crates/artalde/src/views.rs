@@ -11,6 +11,7 @@ use artalde_core::github::{
     self, Action, Bucket, Check, DiffFile, Filter, MergeMethod, PrDetail, PrRef, PrRow,
     TimelineItem,
 };
+use artalde_core::model::AgentState;
 use artalde_core::probe::Turn;
 use artalde_core::text::{ago, clip};
 use eframe::egui::{self, Color32, CornerRadius, RichText, Sense, Stroke, UiBuilder};
@@ -21,7 +22,7 @@ use crate::kit::{self, Col};
 use crate::style::{self, tint};
 use crate::{fonts, markdown};
 
-pub const TAB_BAR: f32 = 38.0;
+pub const TAB_BAR: f32 = 48.0;
 const INBOX_EVERY_SECS: u64 = 120;
 const DETAIL_EVERY_SECS: u64 = 60;
 const SESSION_TURNS: usize = 60;
@@ -379,13 +380,7 @@ impl App {
 
     fn tab_label(&self, tab: &Tab) -> (String, String) {
         match tab {
-            Tab::Home => (
-                "◆".into(),
-                self.config
-                    .as_ref()
-                    .and_then(|c| c.layout(&self.current_layout_name()))
-                    .map_or("Dashboard".into(), |l| l.title.clone()),
-            ),
+            Tab::Home => ("".into(), "Agents".into()),
             Tab::Inbox => {
                 let n = self
                     .inbox
@@ -430,78 +425,117 @@ impl App {
     pub(crate) fn tab_bar(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
         let theme = self.theme.clone();
         let painter = ui.painter().clone();
-        let mut x = rect.min.x + 4.0;
-        let y = rect.min.y + 5.0;
-        let h = TAB_BAR - 10.0;
+        let h = kit::CONTROL + 2.0;
+        let y = rect.center().y - h / 2.0;
+        // Wordmark.
+        let mark =
+            painter.layout_no_wrap("artalde".into(), fonts::display(19.0), style::c(theme.text));
+        let mark_w = mark.size().x;
+        painter.galley(
+            egui::pos2(
+                rect.min.x + 6.0,
+                rect.center().y - mark.size().y / 2.0 - 1.0,
+            ),
+            mark,
+            style::c(theme.text),
+        );
+        let mut x = rect.min.x + 6.0 + mark_w + 18.0;
+        let right_reserved = 2.0 * 30.0 + 12.0;
         let mut close = None;
         let mut select = None;
+        let surface = style::c(theme.background);
         for (i, tab) in self.tabs.clone().iter().enumerate() {
-            let (icon, label) = self.tab_label(tab);
-            let font = egui::FontId::proportional(13.0);
+            let (_, label) = self.tab_label(tab);
+            let on = i == self.active;
+            let font = if on {
+                fonts::semibold(12.5)
+            } else {
+                egui::FontId::proportional(12.5)
+            };
             let galley = painter.layout_no_wrap(label.clone(), font.clone(), style::c(theme.text));
             let closable = *tab != Tab::Home;
-            let w = (galley.size().x + 44.0 + if closable { 16.0 } else { 0.0 }).min(260.0);
+            let badge = match tab {
+                Tab::Home => {
+                    let n =
+                        self.snap.count(AgentState::Blocked) + self.snap.count(AgentState::Done);
+                    (n > 0).then(|| n.to_string())
+                }
+                _ => None,
+            };
+            let badge_w = badge.as_ref().map_or(0.0, |b| b.len() as f32 * 6.5 + 14.0);
+            let w =
+                (galley.size().x + 40.0 + badge_w + if closable { 18.0 } else { 0.0 }).min(240.0);
+            if x + w > rect.max.x - right_reserved {
+                break;
+            }
             let r = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, h));
             let resp = ui.interact(r, egui::Id::unique(("tab", tab.key())), Sense::click());
-            let on = i == self.active;
+            let accent = style::c(theme.accent);
             let fill = if on {
-                style::c(theme.raised)
+                tint(surface, accent, 0.15)
             } else if resp.hovered() {
-                tint(style::c(theme.background), style::c(theme.raised), 0.6)
+                tint(surface, style::c(theme.text), 0.06)
             } else {
                 Color32::TRANSPARENT
             };
-            painter.rect_filled(r, CornerRadius::same(7), fill);
-            if on {
-                painter.rect_stroke(
-                    r,
-                    CornerRadius::same(7),
-                    Stroke::new(1.0, style::c(theme.border)),
-                    egui::StrokeKind::Inside,
-                );
-            }
-            let icon_color = match tab {
-                Tab::Session(id) => self.snap.session(id).map_or(style::c(theme.dim), |s| {
-                    s.tag.as_deref().map_or_else(
-                        || style::state(&theme, s.rec.state),
-                        |t| style::token(&theme, t),
-                    )
-                }),
-                Tab::Pr(pr) => self
-                    .prs
-                    .get(pr)
-                    .and_then(|v| v.detail.as_ref())
-                    .map_or(style::c(theme.dim), |d| {
-                        check_color(&theme, &d.checks_state)
-                    }),
-                _ => style::c(theme.accent),
-            };
-            painter.text(
-                egui::pos2(r.min.x + 14.0, r.center().y),
-                egui::Align2::CENTER_CENTER,
-                icon,
-                egui::FontId::proportional(12.0),
-                icon_color,
+            painter.rect_filled(r, CornerRadius::same(kit::PILL_RADIUS), fill);
+            let fg = if on { accent } else { style::c(theme.dim) };
+            let icon_rect = egui::Rect::from_center_size(
+                egui::pos2(r.min.x + 16.0, r.center().y),
+                egui::vec2(13.0, 13.0),
             );
-            let text_color = if on {
-                style::c(theme.text)
-            } else {
-                style::c(theme.dim)
-            };
+            match tab {
+                Tab::Session(id) => {
+                    let c = self.snap.session(id).map_or(style::c(theme.faint), |s| {
+                        s.tag.as_deref().map_or_else(
+                            || style::state(&theme, s.rec.state),
+                            |t| style::token(&theme, t),
+                        )
+                    });
+                    painter.circle_filled(icon_rect.center(), 4.0, c);
+                }
+                Tab::Pr(pr) => {
+                    let c = self
+                        .prs
+                        .get(pr)
+                        .and_then(|v| v.detail.as_ref())
+                        .map_or(fg, |d| check_color(&theme, &d.checks_state));
+                    kit::paint_icon(&painter, icon_rect, kit::Icon::Branch, c);
+                }
+                Tab::Home => kit::paint_icon(&painter, icon_rect, kit::Icon::Terminal, fg),
+                Tab::Inbox => kit::paint_icon(&painter, icon_rect, kit::Icon::Branch, fg),
+                Tab::Settings => kit::paint_icon(&painter, icon_rect, kit::Icon::Gear, fg),
+                Tab::Repo(_) => kit::paint_icon(&painter, icon_rect, kit::Icon::Editor, fg),
+            }
+            let text_end = r.max.x - if closable { 24.0 } else { 10.0 } - badge_w;
             let clip_rect = egui::Rect::from_min_max(
-                egui::pos2(r.min.x + 26.0, r.min.y),
-                egui::pos2(r.max.x - if closable { 22.0 } else { 8.0 }, r.max.y),
+                egui::pos2(r.min.x + 28.0, r.min.y),
+                egui::pos2(text_end, r.max.y),
             );
             painter.with_clip_rect(clip_rect).text(
                 egui::pos2(clip_rect.min.x, r.center().y),
                 egui::Align2::LEFT_CENTER,
                 label,
                 font,
-                text_color,
+                fg,
             );
+            if let Some(b) = badge {
+                let chip = egui::Rect::from_min_size(
+                    egui::pos2(text_end + 4.0, r.center().y - 8.0),
+                    egui::vec2(badge_w - 8.0, 16.0),
+                );
+                painter.rect_filled(chip, CornerRadius::same(8), style::c(theme.blocked));
+                painter.text(
+                    chip.center(),
+                    egui::Align2::CENTER_CENTER,
+                    b,
+                    egui::FontId::monospace(10.0),
+                    style::c(theme.background),
+                );
+            }
             if closable && (resp.hovered() || on) {
                 let cr = egui::Rect::from_center_size(
-                    egui::pos2(r.max.x - 12.0, r.center().y),
+                    egui::pos2(r.max.x - 13.0, r.center().y),
                     egui::vec2(16.0, 16.0),
                 );
                 let cresp = ui.interact(
@@ -510,13 +544,16 @@ impl App {
                     Sense::click(),
                 );
                 if cresp.hovered() {
-                    painter.rect_filled(cr, CornerRadius::same(4), style::c(theme.border));
+                    painter.rect_filled(
+                        cr,
+                        CornerRadius::same(4),
+                        tint(surface, style::c(theme.text), 0.12),
+                    );
                 }
-                painter.text(
-                    cr.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "×",
-                    egui::FontId::proportional(14.0),
+                kit::paint_icon(
+                    &painter,
+                    egui::Rect::from_center_size(cr.center(), egui::vec2(9.0, 9.0)),
+                    kit::Icon::Close,
                     style::c(theme.dim),
                 );
                 if cresp.clicked() {
@@ -529,75 +566,45 @@ impl App {
             if resp.middle_clicked() && closable {
                 close = Some(i);
             }
-            x += w + 4.0;
+            x += w + 2.0;
         }
-        let plus = egui::Rect::from_min_size(egui::pos2(x + 2.0, y), egui::vec2(h, h));
-        let presp = ui
-            .interact(plus, egui::Id::unique("tab-plus"), Sense::click())
-            .on_hover_text("Open… (Cmd+T)");
-        if presp.hovered() {
-            painter.rect_filled(plus, CornerRadius::same(7), style::c(theme.raised));
-        }
-        painter.text(
-            plus.center(),
-            egui::Align2::CENTER_CENTER,
-            "+",
-            egui::FontId::proportional(16.0),
-            style::c(theme.dim),
-        );
-        if presp.clicked() {
-            self.queue
-                .push(artalde_core::command::Command::new("palette.open", None));
-        }
-        painter.hline(
-            rect.min.x..=rect.max.x,
-            rect.max.y + 2.0,
-            Stroke::new(1.0, style::c(theme.border)),
-        );
-        // Right end: appearance and settings.
-        let btn = |painter: &egui::Painter,
-                   ui: &mut egui::Ui,
-                   x: f32,
-                   glyph: &str,
-                   tip: &str,
-                   key: &str|
-         -> bool {
+        let right = |x: f32, icon: kit::Icon, tip: &str, key: &str| -> bool {
             let r = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(h, h));
             let resp = ui
                 .interact(r, egui::Id::unique(("tabbar", key)), Sense::click())
                 .on_hover_text(tip);
             if resp.hovered() {
-                painter.rect_filled(r, CornerRadius::same(7), style::c(theme.raised));
+                painter.rect_filled(
+                    r,
+                    CornerRadius::same(kit::PILL_RADIUS),
+                    tint(surface, style::c(theme.text), 0.07),
+                );
             }
-            painter.text(
-                r.center(),
-                egui::Align2::CENTER_CENTER,
-                glyph,
-                egui::FontId::proportional(15.0),
+            kit::paint_icon(
+                &painter,
+                egui::Rect::from_center_size(r.center(), egui::vec2(14.0, 14.0)),
+                icon,
                 style::c(theme.dim),
             );
             resp.clicked()
         };
-        if btn(
-            &painter,
-            ui,
-            rect.max.x - h,
-            "⚙",
-            "Settings (⌘,)",
-            "settings",
-        ) {
+        let plus = right(x + 2.0, kit::Icon::Plus, "Open… (⌘T)", "plus");
+        let settings = right(rect.max.x - h, kit::Icon::Gear, "Settings (⌘,)", "settings");
+        let mode = right(
+            rect.max.x - 2.0 * h - 4.0,
+            kit::Icon::Sun,
+            "Light / dark (⇧⌘D)",
+            "mode",
+        );
+        if plus {
+            self.queue
+                .push(artalde_core::command::Command::new("palette.open", None));
+        }
+        if settings {
             self.queue
                 .push(artalde_core::command::Command::new("settings.open", None));
         }
-        let glyph = if theme.dark { "☀" } else { "☾" };
-        if btn(
-            &painter,
-            ui,
-            rect.max.x - 2.0 * h - 4.0,
-            glyph,
-            "Light / dark (⇧⌘D)",
-            "mode",
-        ) {
+        if mode {
             self.queue.push(artalde_core::command::Command::new(
                 "appearance.toggle",
                 None,

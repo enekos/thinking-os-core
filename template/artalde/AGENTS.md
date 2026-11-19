@@ -11,7 +11,7 @@ good version and the reason lands next to it in `<file>.error`.
 
 | file | what |
 |---|---|
-| `settings.json` | appearance (`system`/`light`/`dark`), `theme` (dark) + `light_theme`, default layout, `editor`, notifications, spawn command lines, font size |
+| `settings.json` | appearance (`system`/`light`/`dark`), `theme` (dark) + `light_theme`, default layout, `editor`, notifications, spawn command lines, font size, `stale_after_mins` (default 60, 0 = off), `close_terminal` (close the iTerm2 tab on close) |
 | `keys.json` | `"cmd+shift+l": "layout.cycle"` — chord → command |
 | `layouts/<name>.json` | window trees; `layout.cycle` / `layout.select:<name>` |
 | `themes/<name>.json` | colour tokens; missing tokens inherit graphite |
@@ -35,7 +35,7 @@ good version and the reason lands next to it in `<file>.error`.
 
 ## Themes
 
-Tokens: `background surface raised border text dim accent working blocked done idle unknown danger`, plus `"dark": bool`.
+Tokens: `background surface raised border text dim faint accent working blocked done idle unknown danger`, plus `"dark": bool`. `faint` is tertiary text (captions, counts, hints); left out, it is mixed from `dim` and `surface`. graphite and paper are azala's dark and light palettes.
 Values are `#rrggbb` or `#rrggbbaa`.
 
 ## Mods
@@ -67,10 +67,22 @@ fn render(ctx) {
   `inbox` (`time kind target links detail url done`), `counts.{blocked,done,working,idle,unknown}`, `now`, `selected`, `filter`, `theme`, `state`.
 - `render` reruns only when data, selection, theme or the mod's state change. Budget: 2M operations and 4000 nodes per render.
 
+## Agent lifecycle
+
+One opinionated flow, the same in the list, the Session panel, the palette and keys:
+
+- **Start** (⌘N): prompt first. *Existing folder* or *New worktree*; the branch is derived from the prompt (`THU-4821-fix-csrf-timing`) until you edit it. The agent shows under **Starting** until its process appears, then is selected.
+- **Lanes**: Needs you (blocked or finished unseen) → Working → Idle → **Stale** (idle longer than `stale_after_mins`).
+- **Stop turn** (`.` / ⌘.): Esc in its terminal; the session stays.
+- **Wrap up**: a finished Claude session gets `/wrap` typed in.
+- **Close** (`x` / ⌘⌫): TERM, KILL after 4 s, then its iTerm2 tab closes. Asks first only when the agent is working or blocked. The pid is checked to still be that agent before any signal.
+- **Close all stale** (⇧⌘⌫, or the button on the Stale lane): one confirmation for the lot.
+- **Reopen** (⇧⌘T, or Recently closed): `claude --resume <id>` in a new tab. Closed sessions live in `<state dir>/closed.json` (last 30); `pid-*` and Codex sessions cannot resume.
+
 ## Commands
 
 `artalde commands` lists them. Common: `agent.next`, `agent.select:<id|n>`, `session.focus[:<id>]`,
-`session.ack[:<id>]`, `session.tag:<colour|none>` (or `<id>:<colour>`), `session.label:<text>`, `session.send:<text>`, `space.filter:<repo>`, `spawn.open`, `layout.select:<name>`,
+`session.ack[:<id>]`, `session.tag:<colour|none>` (or `<id>:<colour>`), `session.label:<text>`, `session.send:<text>`, `space.filter:<repo>`, `spawn.open`, `session.stop[:<id>]`, `session.close[:<id>]`, `session.sweep`, `session.reopen[:<id>]`, `session.wrap[:<id>]`, `layout.select:<name>`,
 `layout.cycle`, `theme.select:<name>`, `theme.cycle`, `url.open:<url>`, `path.open:<path>`, `palette.open`, `refresh`,
 `settings.open` (⌘,), `appearance.toggle` (⇧⌘D), `appearance.set:<system|light|dark>`, `path.edit:<path>`,
 `pr.review` (⇧⌘R: agent-assisted review; proposals wait for your decision, nothing posts until Submit), `repo.open:<owner/repo>` (PRs, deployments per environment, releases),
