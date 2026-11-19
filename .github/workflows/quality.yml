@@ -24,11 +24,29 @@ jobs:
       - run: cargo machete tools
 
   artalde:
-    # eframe needs a desktop target; artalde's terminal actions are macOS-only.
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+          - name: macOS Apple Silicon
+            os: macos-15
+    name: artalde (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Install Linux windowing dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libwayland-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -36,5 +54,5 @@ jobs:
         with:
           workspaces: artalde
       - run: cargo fmt --manifest-path artalde/Cargo.toml --all --check
-      - run: cargo clippy --manifest-path artalde/Cargo.toml --workspace --all-targets -- -D warnings
-      - run: cargo test --manifest-path artalde/Cargo.toml --workspace
+      - run: cargo clippy --manifest-path artalde/Cargo.toml --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --manifest-path artalde/Cargo.toml --workspace --locked

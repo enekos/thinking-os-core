@@ -418,6 +418,7 @@ fn label(job: &Job) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
     use super::*;
 
     #[cfg(target_os = "macos")]
