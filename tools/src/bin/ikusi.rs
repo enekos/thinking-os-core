@@ -9,6 +9,7 @@ ikusi — the thinking-os graph viewer, served
   ikusi serve [--port N]       run the server in the foreground
   ikusi url [node]             print the deep link, start nothing
   ikusi status                 is it answering?
+  ikusi --version              print the ikusi version
 
   --port N     default 4747, or $IKUSI_PORT
   --root DIR   the wiki root, default: the one containing graph/ontology.yaml
@@ -16,6 +17,10 @@ ikusi — the thinking-os graph viewer, served
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--version" || arg == "-V") {
+        println!("ikusi {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     let value = |name: &str| {
         args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
     };

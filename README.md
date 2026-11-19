@@ -20,26 +20,44 @@ template/    the wiki skeleton: CLAUDE.md, ontology, coding-memory examples, scr
                and the engineering library (below)
 skills/      Claude Code skills: setup, graph, today, ingest, lint, quality-gate, security-audit, synthesis, fan, artalde
 deploy/      systemd user units (Linux), launchd plist (macOS) for the 5-min poll
-install.sh   build, create/upgrade the wiki, link skills, enable the timer
+install.sh   download a release, create/upgrade the wiki, link skills, enable the timer
+packaging/   release bundling, the update command, and offline installer tests
+RELEASING.md maintainer release and recovery instructions
 ```
 
 ## Quick start
 
-Needs git, `gh` (authenticated), and Rust ≥ 1.85.
+Needs git, `gh` (authenticated), `curl`, and tar. No Rust toolchain is needed.
+Prebuilt releases currently support Linux x86_64 and macOS Apple Silicon.
 
 ```bash
-gh repo clone enekos/thinking-os-core ~/src/thinking-os-core
-~/src/thinking-os-core/install.sh            # wiki at ~/thinking-os
+curl -fsSL https://github.com/enekos/thinking-os-core/releases/latest/download/install.sh | bash
+# wiki at ~/thinking-os
 ```
 
-Or open Claude Code in the clone and run `/setup` — it preflights the machine,
-runs `install.sh`, and verifies every piece.
+To choose a wiki or disable optional pieces, pass the installer flags through
+`bash -s --`, for example `bash -s -- --wiki ~/wiki --no-timer --no-artalde`.
+The installer downloads the matching release bundle, verifies its SHA-256
+checksum, and installs the tools in `~/.local/bin`.
 
-Flags: `--wiki DIR`, `--no-timer`, `--skills-dir DIR`. Re-running upgrades:
+Or open Claude Code in a source clone and run `/setup` — it preflights the
+machine, runs the installer, and verifies every piece. Contributors can build
+the checkout instead with `./install.sh --from-source`.
+
+Keep the engine and skills current with one command:
 
 ```bash
-git -C ~/src/thinking-os-core pull --ff-only && ~/src/thinking-os-core/install.sh
+thinking-os update          # download and activate the latest release
+thinking-os update --check  # check without changing the installation
+thinking-os version         # installed release and target
 ```
+
+The update command remembers the wiki, skills directory, timer, and artalde
+options from installation. Releases are unpacked under
+`~/.local/share/thinking-os-core/versions/` and activated through a `current`
+symlink; a failed download or checksum leaves the active release unchanged.
+Existing wiki pages are never overwritten. New template pages are added, while
+changes to `CLAUDE.md` and `graph/ontology.yaml` are reported for manual review.
 
 Then, from the wiki directory in Claude Code: `/today`, `/ingest <url>`,
 `/graph`, `ikusi`.
@@ -132,7 +150,11 @@ there (mode 600) if the CLI is not logged in on its own. The details are in
 ```bash
 cargo test --manifest-path tools/Cargo.toml
 bash tools/e2e-zaindu.sh      # offline event chains (GitHub, Linear), then a live GitHub leg
+packaging/test-install.sh    # offline binary install, update, and rollback checks
 ```
+
+Maintainers publish the Linux and macOS bundles by pushing a tag matching
+`VERSION`; see `RELEASING.md`.
 
 The PR quality gate also runs strict Clippy and `cargo machete`:
 

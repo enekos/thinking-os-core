@@ -55,6 +55,7 @@ usage:
   artalde commands           list commands for keys.json and mods
   artalde hooks [--install]  print (or merge into ~/.claude/settings.json) the hook entries
   artalde init               write missing default files into the config folder
+  artalde --version          print the artalde version
 
 config: <wiki>/artalde (ARTALDE_CONFIG_DIR overrides) · state: ~/.local/state/artalde
 ";
@@ -126,6 +127,10 @@ fn main() -> ExitCode {
                     println!("{}: wrote {what}", dir.display());
                     ExitCode::SUCCESS
                 })
+        }
+        Some("--version" | "-V") => {
+            println!("artalde {}", env!("CARGO_PKG_VERSION"));
+            Ok(ExitCode::SUCCESS)
         }
         Some("-h" | "--help" | "help") => {
             print!("{USAGE}");

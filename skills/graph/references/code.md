@@ -5,13 +5,14 @@ Everything that reads or writes the graph lives in `tools/` of the
 holds the engine. No Python, no LLM calls.
 
 ```bash
-cargo install --path tools --root ~/.local --force   # sare + zaindu + ikusi onto PATH
-cargo test --manifest-path tools/Cargo.toml          # unit + integration tests
-bash tools/e2e-zaindu.sh                             # offline event chain, then a live GitHub leg
+thinking-os update                                    # normal users: latest published tools
+cargo test --manifest-path tools/Cargo.toml           # contributors: unit + integration tests
+bash tools/e2e-zaindu.sh                              # offline event chain, then a live GitHub leg
 ```
 
-`./install.sh` does the install step for you (and is how upgrades happen: `git
-pull` in the core repo, rerun it).
+`./install.sh` installs the published release by default. When developing this
+checkout, use `./install.sh --from-source` to build the local binaries instead;
+that is the only installation path that needs Rust.
 
 | Binary | Module | Job |
 |---|---|---|
@@ -23,6 +24,6 @@ The library crate is `os`: `kg` (ontology, frontmatter, TSV, Node/Edge),
 `sare`, `watch`, `ikusi`. One third-party dependency crossed the line for
 `ikusi`: `sutegi`, a public git dependency pinned to a tag, core only
 (`default-features = false`) — no ORM, no async runtime. The first build needs
-network to fetch it.
+network to fetch it. Published release users do not build this dependency.
 
-Toolchain: Rust ≥ 1.85 (edition 2024).
+Source toolchain: Rust ≥ 1.85 (edition 2024).

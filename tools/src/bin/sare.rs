@@ -12,6 +12,7 @@ sare — the thinking-os graph pipeline
   sare why <node>
   sare retype [page] [--apply]
   sare viz [--out FILE] [--dot] [--iterations N]
+  sare --version
 ";
 
 fn extract_all(paths: &Paths, ont: &Ontology, which: &str) -> i32 {
@@ -102,6 +103,10 @@ fn run_serve(paths: &Paths, ont: &Ontology) -> i32 {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = args.first().cloned().unwrap_or_default();
+    if matches!(command.as_str(), "--version" | "-V") {
+        println!("sare {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     let mut positional: Vec<String> = Vec::new();
     let mut i = 1;
     while i < args.len() {

@@ -20,6 +20,7 @@ zaindu — GitHub and Linear state changes as events for the thinking-os graph
   zaindu events [--kind K] [--since YYYY-MM-DD] [--limit N] [--root DIR]
   zaindu proposals [--date YYYY-MM-DD] [--root DIR]
   zaindu status [--root DIR] [--state FILE]
+  zaindu --version
 ";
 
 struct Args {
@@ -348,6 +349,10 @@ fn main() {
         "events" => show_events(&args),
         "proposals" => show_proposals(&args),
         "status" => show_status(&args),
+        "--version" | "-V" => {
+            println!("zaindu {}", env!("CARGO_PKG_VERSION"));
+            Ok(0)
+        }
         "help" | "--help" | "-h" | "" => {
             print!("{USAGE}");
             Ok(0)
