@@ -57,6 +57,13 @@ need you and gets you there.
   `idle`. Sessions started before the hook still show up, found by process.
 - **Spaces** — the repo and worktree each agent actually touches (from tool
   paths, not its cwd), with branch, dirt and divergence.
+- **Repository radar** — local worktrees and agents alongside open and merged
+  PRs, check/review health, deployments and releases. PRs and repository
+  metadata paint first; delivery activity loads separately.
+- **Command palette** — Ctrl+K or Cmd+K searches agents, repositories, PRs,
+  commands, layouts and themes. Prefix with `>`, `@` or `#` to scope the
+  search; enter `owner/repo`, `owner/repo#123`, or `#123` in a repository to
+  jump directly.
 - **zaindu** — the inbox proposals, tickable from the window; open PRs via `gh`.
 - **Act** — focus the agent's terminal tab, type a reply or a key into it,
   start a new agent in a worktree (`zz -c repo@branch claude`), macOS
@@ -68,7 +75,7 @@ need you and gets you there.
   and explains itself in `<file>.error`. `artalde check` validates headless.
 
 ```bash
-artalde              # open the window (⌘K palette, ⌘J next agent that needs you)
+artalde              # open the window (Ctrl/⌘K palette, ⌘J next agent that needs you)
 artalde hooks        # the Claude Code hook entries
 artalde check        # load the config, render every mod against live data
 ```

@@ -17,6 +17,7 @@ pub enum Req {
     Detail(PrRef),
     Diff(PrRef),
     Repo(String),
+    RepoActivity(String),
     Log {
         pr: PrRef,
         job: u64,
@@ -42,6 +43,7 @@ pub enum Res {
         String,
         Result<Box<artalde_core::github::RepoDetail>, String>,
     ),
+    RepoActivity(String, Result<artalde_core::github::RepoActivity, String>),
     Log {
         job: u64,
         log: Result<String, String>,
@@ -158,6 +160,10 @@ fn handle(req: Req, emit: &mut dyn FnMut(Res) -> bool) -> bool {
         Req::Repo(repo) => {
             let r = github::fetch_repo(&repo).map(Box::new);
             Res::Repo(repo, r)
+        }
+        Req::RepoActivity(repo) => {
+            let r = github::fetch_repo_activity(&repo);
+            Res::RepoActivity(repo, r)
         }
         Req::Log { pr, job } => Res::Log {
             job,

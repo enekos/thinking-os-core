@@ -263,10 +263,28 @@ impl App {
                     v.loaded_at = Some(Instant::now());
                     match r {
                         Ok(d) => {
-                            v.detail = Some(d);
+                            v.detail = Some(std::sync::Arc::from(d));
                             v.error = None;
+                            v.activity_loaded = false;
+                            v.activity_error = None;
                         }
                         Err(e) => v.error = Some(e),
+                    }
+                }
+                Res::RepoActivity(repo, r) => {
+                    let v = self.repos.entry(repo).or_default();
+                    v.activity_loading = false;
+                    match r {
+                        Ok(activity) => {
+                            if let Some(detail) = v.detail.as_mut() {
+                                let detail = std::sync::Arc::make_mut(detail);
+                                detail.deployments = activity.deployments;
+                                detail.releases = activity.releases;
+                            }
+                            v.activity_loaded = true;
+                            v.activity_error = None;
+                        }
+                        Err(e) => v.activity_error = Some(e),
                     }
                 }
                 Res::Diff(pr, r) => {

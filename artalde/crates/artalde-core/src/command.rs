@@ -101,6 +101,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "repo.open",
         "Open a repository: its PRs, deployments and releases: <owner/repo>",
     ),
+    ("repo.refresh", "Reload the current repository"),
     (
         "pr.review",
         "Review the open PR with an agent; you decide on every comment",
