@@ -18,6 +18,8 @@ const ROW_RESOURCES: usize = 2;
 const LABEL_W: f32 = 76.0;
 /// Closed sessions the list shows under "Recently closed".
 const CLOSED_ROWS: usize = 6;
+/// The reply box's send button.
+const SEND_W: f32 = 26.0;
 /// Width of the row's last column: the age, or the hover actions.
 const ACTIONS_W: f32 = 84.0;
 
@@ -383,23 +385,7 @@ impl App {
         }
         let open = self.closed_open;
         let n = self.closed.entries.len().min(CLOSED_ROWS);
-        let header = kit::section(ui, &theme, "Recently closed", Some(n), |ui| {
-            let glyph = if open {
-                Icon::ChevronDown
-            } else {
-                Icon::ChevronRight
-            };
-            kit::icon(ui, glyph, 11.0, style::c(theme.faint));
-        });
-        if ui
-            .interact(
-                header.rect,
-                ui.scope_id().with("closed-toggle"),
-                Sense::click(),
-            )
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .clicked()
-        {
+        if kit::fold(ui, &theme, "closed", "Recently closed", Some(n), open) {
             self.closed_open = !open;
         }
         if !open {
@@ -501,7 +487,9 @@ impl App {
         let resp = kit::row(
             ui,
             &theme,
-            ("agent", &id),
+            // One conversation can be resumed in two terminals: the pid
+            // tells their rows apart.
+            ("agent", &id, s.rec.pid),
             height,
             on,
             &cols,
@@ -773,7 +761,7 @@ impl App {
                     Col::Px(12.0),
                     Col::Flex,
                     Col::Px(70.0),
-                    Col::Px(22.0),
+                    Col::Px(26.0),
                 ],
                 |c, ui| match c {
                     0 => kit::icon(
@@ -803,9 +791,7 @@ impl App {
                         style::c(theme.dim),
                     ),
                     _ => {
-                        if ui
-                            .small_button("+")
-                            .on_hover_text("New agent in a new worktree")
+                        if kit::icon_button(ui, &theme, Icon::Plus, "New agent in a new worktree")
                             .clicked()
                         {
                             self.queue.push(Command::new("spawn.open", Some(&sp.repo)));
@@ -923,17 +909,20 @@ impl App {
         let theme = self.theme.clone();
         let items = self.snap.inbox.clone();
         let open = items.iter().filter(|i| !i.done).count();
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(format!("{open} open"))
-                    .size(11.5)
-                    .color(self.dimc()),
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let label = RichText::new("hide ticked").size(11.5).color(self.dimc());
-                ui.checkbox(&mut self.hide_done, label);
-            });
-        });
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), kit::CONTROL),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.label(
+                    RichText::new(format!("{open} open"))
+                        .size(11.5)
+                        .color(self.dimc()),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    kit::check(ui, &theme, &mut self.hide_done, "hide ticked", 11.5);
+                });
+            },
+        );
         if items.is_empty() {
             kit::empty(
                 ui,
@@ -992,9 +981,8 @@ impl App {
                     |c, ui| match c {
                         0 => {
                             let mut done = item.done;
-                            if ui
-                                .checkbox(&mut done, "")
-                                .on_hover_text("tick in the wiki")
+                            if kit::check(ui, &theme, &mut done, "", 11.5)
+                                .on_hover_text("Tick in the wiki")
                                 .changed()
                             {
                                 toggled = true;
@@ -1256,6 +1244,18 @@ impl App {
         let has_tty = s.rec.tty.is_some();
         let claude = s.rec.agent == "claude";
         let mut fire: Vec<&'static str> = Vec::new();
+        // Key chips only when the whole bar fits on one line with them.
+        let roomy = ui.available_width() >= 560.0;
+        // Narrower still: the ghost buttons drop their labels too.
+        let compact = ui.available_width() < 400.0;
+        let k = |key: &'static str| roomy.then_some(key);
+        let ghost = |ui: &mut egui::Ui, icon: Icon, label: &str, key: &'static str| {
+            if compact {
+                kit::icon_button(ui, &theme, icon, &format!("{label} ({key})"))
+            } else {
+                kit::button_icon(ui, &theme, icon, label, k(key))
+            }
+        };
         ui.horizontal_wrapped(|ui| {
             let mut push = |cmd: &'static str| fire.push(cmd);
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
@@ -1266,7 +1266,7 @@ impl App {
                         &theme,
                         Some(Icon::Focus),
                         "Answer",
-                        Some("f"),
+                        k("f"),
                         style::c(theme.blocked),
                     )
                     .clicked()
@@ -1288,21 +1288,19 @@ impl App {
                     {
                         push("session.wrap");
                     }
-                    if kit::button_icon(ui, &theme, Icon::Focus, "Focus", Some("f")).clicked() {
+                    if ghost(ui, Icon::Focus, "Focus", "f").clicked() {
                         push("session.focus");
                     }
                 }
                 AgentState::Working if has_tty => {
-                    if kit::button_icon(ui, &theme, Icon::Stop, "Stop turn", Some(".")).clicked() {
+                    if ghost(ui, Icon::Stop, "Stop turn", ".").clicked() {
                         push("session.stop");
                     }
-                    if kit::button_icon(ui, &theme, Icon::Focus, "Focus", Some("f")).clicked() {
+                    if ghost(ui, Icon::Focus, "Focus", "f").clicked() {
                         push("session.focus");
                     }
                 }
-                _ if has_tty
-                    && kit::button_icon(ui, &theme, Icon::Focus, "Focus", Some("f")).clicked() =>
-                {
+                _ if has_tty && ghost(ui, Icon::Focus, "Focus", "f").clicked() => {
                     push("session.focus");
                 }
                 _ => {}
@@ -1327,10 +1325,21 @@ impl App {
             }
             let more = kit::icon_button(ui, &theme, Icon::More, "More");
             egui::Popup::menu(&more).show(|ui| self.session_menu(ui, s));
-            if kit::danger(ui, &theme, Some(Icon::Close), "Close", Some("x"))
-                .on_hover_text("End the agent and its terminal tab")
-                .clicked()
-            {
+            // Narrow: Close shrinks to its icon rather than wrap onto a
+            // line of its own.
+            let close = if roomy {
+                kit::danger(ui, &theme, Some(Icon::Close), "Close", k("x"))
+                    .on_hover_text("End the agent and its terminal tab")
+            } else {
+                kit::icon_button_tinted(
+                    ui,
+                    &theme,
+                    Icon::Close,
+                    "Close: end the agent and its terminal tab (x)",
+                    style::c(theme.danger),
+                )
+            };
+            if close.clicked() {
                 fire.push("session.close");
             }
         });
@@ -1345,17 +1354,23 @@ impl App {
             .fill(tint(style::c(theme.surface), style::c(theme.text), 0.05))
             .stroke(Stroke::new(1.0, style::c(theme.border)))
             .corner_radius(CornerRadius::same(kit::BUTTON_RADIUS))
-            .inner_margin(egui::Margin::symmetric(10, 4))
+            .inner_margin(egui::Margin::symmetric(10, 2))
+            .outer_margin(egui::Margin::ZERO)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     let edit = ui.add(
                         egui::TextEdit::singleline(&mut self.reply)
                             .frame(egui::Frame::NONE)
+                            .margin(egui::Margin::ZERO)
+                            .min_size(egui::vec2(0.0, kit::CONTROL))
+                            .align(egui::Align2::LEFT_CENTER)
                             .hint_text(
                                 RichText::new("Reply in its terminal…")
                                     .color(style::c(theme.faint)),
                             )
-                            .desired_width(ui.available_width() - 30.0),
+                            .desired_width(
+                                ui.available_width() - SEND_W - ui.spacing().item_spacing.x,
+                            ),
                     );
                     let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     let tint_c = if self.reply.trim().is_empty() {
@@ -1383,7 +1398,7 @@ impl App {
             self.label_for = Some(s.rec.id.clone());
         }
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 1.0;
+            ui.spacing_mut().item_spacing.x = 2.0;
             for (name, rgba) in tags::PALETTE {
                 let (rect, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::click());
                 let on = s.tag.as_deref() == Some(name);
@@ -1407,11 +1422,15 @@ impl App {
                     ));
                 }
             }
-            ui.add_space(kit::S2);
-            let edit = ui.add(
-                egui::TextEdit::singleline(&mut self.label_edit)
-                    .hint_text(RichText::new("label").color(style::c(theme.faint)))
-                    .desired_width(ui.available_width()),
+            ui.add_space(kit::S3);
+            let w = ui.available_width();
+            let edit = kit::input(
+                ui,
+                &theme,
+                &mut self.label_edit,
+                "Label this agent",
+                w,
+                false,
             );
             if edit.lost_focus() && self.label_edit.trim() != s.label.clone().unwrap_or_default() {
                 self.queue
@@ -1550,6 +1569,7 @@ impl App {
                 "Actions, config reloads and state changes land here.",
             );
         }
+        kit::selectable_text(ui);
         for line in self.log.iter().rev() {
             ui.label(RichText::new(line).monospace().size(11.5));
         }

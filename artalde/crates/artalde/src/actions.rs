@@ -41,10 +41,6 @@ pub enum Job {
         app: String,
         target: String,
     },
-    Notify {
-        title: String,
-        body: String,
-    },
     /// End an agent: TERM, then KILL if it lingers, then close its iTerm2
     /// tab when `close_tab`. The pid is checked to still be `agent` first.
     Close {
@@ -295,13 +291,6 @@ fn close(
     Ok(Some(format!("closed {name}")))
 }
 
-const NOTIFY: &str = r#"
-on run argv
-  display notification (item 2 of argv) with title (item 1 of argv) sound name "Glass"
-  return "ok"
-end run
-"#;
-
 fn osascript(script: &str, args: &[&str]) -> Result<String, String> {
     let out = Command::new("osascript")
         .arg("-e")
@@ -362,7 +351,6 @@ fn run(job: &Job) -> Option<String> {
                 .map(|_| Some(format!("typed into {tty}")))
         }
         Job::Spawn { line } => osascript(SPAWN, &[line]).map(|_| Some(format!("started: {line}"))),
-        Job::Notify { title, body } => osascript(NOTIFY, &[title, body]).map(|_| None),
         Job::OpenWith { app, target } => Command::new("open")
             .args(["-a", app, target])
             .stdin(Stdio::null())
@@ -421,7 +409,6 @@ fn label(job: &Job) -> &'static str {
         Job::Type { .. } => "send",
         Job::Spawn { .. } => "spawn",
         Job::Open { .. } => "open",
-        Job::Notify { .. } => "notify",
         Job::TabColor { .. } => "tab colour",
         Job::OpenWith { .. } => "editor",
         Job::Run { .. } => "run",

@@ -11,9 +11,14 @@ use crate::app::App;
 use crate::kit;
 use crate::style;
 
-const LABEL_W: f32 = 220.0;
-const FIELD_W: f32 = 420.0;
-const PAGE_W: f32 = 860.0;
+const LABEL_W: f32 = 240.0;
+/// Short controls: pickers, the editor name, sliders.
+const CONTROL_W: f32 = 260.0;
+/// Command templates.
+const FIELD_W: f32 = 440.0;
+const PAGE_W: f32 = 880.0;
+/// Space between the label column and the control.
+const GUTTER: f32 = 24.0;
 
 /// `label` + help text on the left, the control on the right.
 fn field(
@@ -24,19 +29,36 @@ fn field(
     control: impl FnOnce(&mut egui::Ui),
 ) {
     ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = GUTTER;
         ui.vertical(|ui| {
             ui.set_width(LABEL_W);
+            ui.spacing_mut().item_spacing.y = 2.0;
+            // Nudged down so the label's baseline meets the control's.
+            ui.add_space(4.0);
             ui.label(RichText::new(label).font(crate::fonts::semibold(13.0)));
             if !help.is_empty() {
-                ui.label(RichText::new(help).size(11.5).color(style::c(theme.dim)));
+                ui.add(
+                    egui::Label::new(RichText::new(help).size(11.5).color(style::c(theme.dim)))
+                        .wrap(),
+                );
             }
         });
         ui.vertical(|ui| {
             ui.set_width(FIELD_W);
+            ui.spacing_mut().item_spacing.y = kit::S2;
             control(ui);
         });
     });
-    ui.add_space(kit::S3);
+    ui.add_space(kit::S4);
+}
+
+/// A hairline between setting groups.
+fn divider(ui: &mut egui::Ui, theme: &Theme) {
+    ui.add_space(kit::S1);
+    let (r, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+    ui.painter().rect_filled(r, 0.0, style::c(theme.border));
+    ui.add_space(kit::S4);
 }
 
 fn swatches(ui: &mut egui::Ui, t: &Theme) {
@@ -81,10 +103,17 @@ impl App {
             ui.spinner();
             return;
         };
-        let mut draft = self
-            .settings_draft
-            .take()
-            .unwrap_or_else(|| cfg.settings.clone());
+        let base = self.settings_base.take();
+        let mut draft = match self.settings_draft.take() {
+            // Saved settings changed underneath (the file, ⇧⌘D, a command):
+            // an untouched draft follows them.
+            Some(d) if base.as_ref() != Some(&cfg.settings) && base.as_ref() == Some(&d) => {
+                cfg.settings.clone()
+            }
+            Some(d) => d,
+            None => cfg.settings.clone(),
+        };
+        self.settings_base = Some(cfg.settings.clone());
         let dirty = draft != cfg.settings;
         // Header with Save / Revert.
         ui.horizontal(|ui| {
@@ -124,20 +153,20 @@ impl App {
         );
         ui.add_space(kit::S2);
         egui::ScrollArea::vertical().id_salt("settings-page").auto_shrink([false, false]).show(ui, |ui| {
-            ui.set_max_width(PAGE_W);
+            // One readable column, never under the scroll bar.
+            let w = PAGE_W.min(ui.available_width() - kit::S2);
+            ui.allocate_ui_with_layout(egui::vec2(w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_width(w);
             // Appearance.
             kit::section(ui, &theme, "Appearance", None, |_| {});
             field(ui, &theme, "Mode", "System follows macOS. ⇧⌘D toggles light and dark.", |ui| {
-                ui.horizontal(|ui| {
-                    for m in ["system", "light", "dark"] {
-                        let label = match m {
-                            "system" => "System",
-                            "light" => "☀ Light",
-                            _ => "☾ Dark",
-                        };
-                        ui.selectable_value(&mut draft.appearance, m.to_owned(), label);
-                    }
-                });
+                const MODES: [&str; 3] = ["system", "light", "dark"];
+                let labels: Vec<(String, Option<usize>)> =
+                    ["System", "Light", "Dark"].iter().map(|l| ((*l).to_owned(), None)).collect();
+                let at = MODES.iter().position(|m| *m == draft.appearance).unwrap_or(0);
+                if let Some(i) = kit::tabs(ui, &theme, &labels, at) {
+                    draft.appearance = MODES[i].to_owned();
+                }
             });
             let names: Vec<String> = cfg.themes.iter().map(|t| t.name.clone()).collect();
             for (label, help, slot) in [
@@ -145,63 +174,71 @@ impl App {
                 ("Light theme", "Used in light mode.", &mut draft.light_theme),
             ] {
                 field(ui, &theme, label, help, |ui| {
-                    egui::ComboBox::from_id_salt(label).selected_text(slot.as_str()).width(200.0).show_ui(ui, |ui| {
+                    let current = slot.clone();
+                    kit::dropdown(ui, &theme, label, &current, CONTROL_W, |ui| {
                         for n in &names {
-                            ui.selectable_value(slot, n.clone(), n);
+                            if kit::menu_item(ui, &theme, n, *n == current) {
+                                *slot = n.clone();
+                            }
                         }
                     });
                     swatches(ui, &cfg.theme(slot));
                 });
             }
             field(ui, &theme, "Font size", "Body text; headings and code scale with it.", |ui| {
-                ui.add(egui::Slider::new(&mut draft.font_size, 11.0..=18.0).step_by(0.5).suffix(" pt"));
+                ui.add(egui::Slider::new(&mut draft.font_size, 11.0..=18.0).step_by(0.5).fixed_decimals(1).suffix(" pt"));
             });
             // Workspace.
+            divider(ui, &theme);
             kit::section(ui, &theme, "Workspace", None, |_| {});
             field(ui, &theme, "Dashboard layout", "The layout of the first tab. Layouts are files in layouts/.", |ui| {
-                egui::ComboBox::from_id_salt("layout").selected_text(draft.layout.as_str()).width(200.0).show_ui(ui, |ui| {
+                let current = draft.layout.clone();
+                let shown = cfg.layouts.iter().find(|l| l.name == current).map_or_else(|| current.clone(), |l| format!("{} ({})", l.title, l.name));
+                kit::dropdown(ui, &theme, "layout", &shown, CONTROL_W, |ui| {
                     for l in &cfg.layouts {
-                        ui.selectable_value(&mut draft.layout, l.name.clone(), format!("{} ({})", l.title, l.name));
+                        if kit::menu_item(ui, &theme, &format!("{} ({})", l.title, l.name), l.name == current) {
+                            draft.layout = l.name.clone();
+                        }
                     }
                 });
             });
             field(ui, &theme, "Editor", "App that \"Open in editor\" uses (open -a <app>).", |ui| {
-                ui.add(egui::TextEdit::singleline(&mut draft.editor).desired_width(200.0));
+                kit::input(ui, &theme, &mut draft.editor, "Zed", CONTROL_W, false);
             });
             field(ui, &theme, "zaindu inbox", "Days of proposal files shown.", |ui| {
                 ui.add(egui::Slider::new(&mut draft.inbox_days, 1..=14).suffix(" days"));
             });
             // Agents.
+            divider(ui, &theme);
             kit::section(ui, &theme, "Agents", None, |_| {});
             field(ui, &theme, "Agent commands", "Offered when starting a new agent, comma-separated.", |ui| {
                 let mut list = draft.agents.join(", ");
-                if ui.add(egui::TextEdit::singleline(&mut list).desired_width(FIELD_W)).changed() {
+                if kit::input(ui, &theme, &mut list, "claude, codex", FIELD_W, false).changed() {
                     draft.agents = list.split(',').map(|a| a.trim().to_owned()).filter(|a| !a.is_empty()).collect();
                 }
             });
             field(ui, &theme, "New worktree", "{repo} {branch} {agent} {prompt} are filled in, shell-quoted.", |ui| {
-                ui.add(egui::TextEdit::singleline(&mut draft.spawn_worktree).code_editor().desired_width(FIELD_W));
+                kit::input(ui, &theme, &mut draft.spawn_worktree, "", FIELD_W, true);
                 ui.label(RichText::new(format!("$ {}", draft.spawn_worktree.replace("{repo}", "data").replace("{branch}", "THU-123-x").replace("{agent}", "claude").replace("{prompt}", "")))
                     .monospace()
                     .size(11.5)
                     .color(style::c(theme.dim)));
             });
             field(ui, &theme, "Existing folder", "{dir} {agent} {prompt} are filled in.", |ui| {
-                ui.add(egui::TextEdit::singleline(&mut draft.spawn_here).code_editor().desired_width(FIELD_W));
-            });
-            field(ui, &theme, "Notifications", "macOS notification when an agent blocks or finishes while the window is in the background.", |ui| {
-                ui.checkbox(&mut draft.notify, "Notify");
+                kit::input(ui, &theme, &mut draft.spawn_here, "", FIELD_W, true);
             });
             // GitHub.
+            divider(ui, &theme);
             kit::section(ui, &theme, "GitHub", None, |_| {});
             field(ui, &theme, "Pull requests", "Poll gh for your open PRs (pulse and mods). The PR inbox always loads on demand.", |ui| {
-                ui.checkbox(&mut draft.gh, "Poll gh every 2 minutes");
+                kit::toggle(ui, &theme, &mut draft.gh, "Poll gh every 2 minutes");
                 if !self.inbox.login.is_empty() {
                     ui.label(RichText::new(format!("signed in as @{}", self.inbox.login)).size(11.5).color(style::c(theme.dim)));
                 }
             });
             ui.add_space(kit::S2);
             // Claude Code hook.
+            divider(ui, &theme);
             kit::section(ui, &theme, "Claude Code hook", None, |_| {});
             let installed = App::hook_installed();
             field(
@@ -221,8 +258,9 @@ impl App {
                 },
             );
             // Keyboard.
+            divider(ui, &theme);
             kit::section(ui, &theme, "Keyboard", Some(cfg.keys.bindings.len()), |ui| {
-                if ui.small_button("Edit keys.json").clicked() {
+                if kit::button(ui, &theme, "Edit keys.json", None).clicked() {
                     self.queue.push(Command::new("path.edit", Some(&cfg.dir.display().to_string())));
                 }
             });
@@ -238,21 +276,34 @@ impl App {
             ui.label(RichText::new("In lists: j/k move, Enter opens, f focuses the terminal. Right-click rows for copy actions.").size(11.5).color(style::c(theme.dim)));
             ui.add_space(kit::S3);
             // Mods.
+            divider(ui, &theme);
             kit::section(ui, &theme, "Mods", Some(cfg.mods.len()), |ui| {
-                if ui.small_button("Open mods folder").clicked() {
+                if kit::button(ui, &theme, "Open mods folder", None).clicked() {
                     self.queue.push(Command::new("path.open", Some(&cfg.dir.join("mods").display().to_string())));
                 }
             });
             for m in &cfg.mods {
                 let err = std::fs::read_to_string(format!("{}.error", m.path.display())).ok();
-                ui.horizontal(|ui| {
-                    kit::dot(ui, if err.is_some() { style::c(theme.danger) } else { style::c(theme.done) }, 3.5);
-                    ui.label(RichText::new(&m.name).monospace());
-                    ui.label(RichText::new(m.path.display().to_string()).size(11.0).color(style::c(theme.dim)));
-                    if ui.small_button("edit").clicked() {
-                        self.queue.push(Command::new("path.edit", Some(&cfg.dir.display().to_string())));
+                let ok = if err.is_some() { style::c(theme.danger) } else { style::c(theme.done) };
+                let path = m.path.display().to_string();
+                let mut edit = false;
+                let r = kit::row(ui, &theme, ("mod", &m.name), kit::ROW, false, &[kit::Col::Px(16.0), kit::Col::Px(90.0), kit::Col::Flex, kit::Col::Px(60.0)], |c, ui| match c {
+                    0 => kit::status_dot(ui, ok, 0.0),
+                    1 => {
+                        kit::mono(ui, &m.name, 12.5, style::c(theme.text));
+                    }
+                    2 => {
+                        kit::text(ui, &path, 11.5, style::c(theme.faint));
+                    }
+                    _ => {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            edit = kit::button(ui, &theme, "Edit", None).clicked();
+                        });
                     }
                 });
+                if edit || r.on_hover_text(&path).clicked() {
+                    self.queue.push(Command::new("path.edit", Some(&cfg.dir.display().to_string())));
+                }
                 if let Some(e) = err {
                     ui.label(RichText::new(e).monospace().size(11.0).color(style::c(theme.danger)));
                 }
@@ -265,6 +316,7 @@ impl App {
             }
             ui.add_space(kit::S3);
             // Paths & about.
+            divider(ui, &theme);
             kit::section(ui, &theme, "Paths", None, |_| {});
             let mut copied = false;
             copied |= kit::kv(ui, &theme, "config", &cfg.dir.display().to_string(), 70.0);
@@ -276,6 +328,7 @@ impl App {
                 self.toast_line(&ctx, "copied".into());
             }
             ui.add_space(kit::S3 * 2.0);
+            });
         });
         self.settings_draft = Some(draft);
         let _ = Settings::default;

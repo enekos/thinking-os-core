@@ -11,7 +11,7 @@ good version and the reason lands next to it in `<file>.error`.
 
 | file | what |
 |---|---|
-| `settings.json` | appearance (`system`/`light`/`dark`), `theme` (dark) + `light_theme`, default layout, `editor`, notifications, spawn command lines, font size, `stale_after_mins` (default 60, 0 = off), `close_terminal` (close the iTerm2 tab on close) |
+| `settings.json` | appearance (`system`/`light`/`dark`), `theme` (dark) + `light_theme`, default layout, `editor`, spawn command lines, font size, `stale_after_mins` (default 60, 0 = off), `close_terminal` (close the iTerm2 tab on close) |
 | `keys.json` | `"cmd+shift+l": "layout.cycle"` — chord → command |
 | `layouts/<name>.json` | window trees; `layout.cycle` / `layout.select:<name>` |
 | `themes/<name>.json` | colour tokens; missing tokens inherit graphite |

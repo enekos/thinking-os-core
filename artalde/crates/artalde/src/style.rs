@@ -65,7 +65,27 @@ pub fn apply(ctx: &egui::Context, theme: &Theme, font_size: f32) {
     ]
     .into();
     style.spacing.item_spacing = egui::vec2(6.0, 5.0);
-    style.spacing.button_padding = egui::vec2(8.0, 3.0);
+    style.spacing.button_padding = egui::vec2(10.0, 4.0);
+    style.spacing.combo_height = 320.0;
+    style.spacing.menu_margin = egui::Margin::same(6);
+    style.spacing.window_margin = egui::Margin::same(14);
+    style.spacing.text_edit_width = 240.0;
+    // Chrome text is not selectable: a label inside a clickable row would
+    // otherwise take the click (and show an I-beam). Reading surfaces —
+    // markdown, diffs, logs — opt back in with `selectable_text`.
+    style.interaction.selectable_labels = false;
+    // Thin bars that take their own lane, so they never sit on top of a
+    // row's last column.
+    style.spacing.scroll = egui::style::ScrollStyle {
+        floating: false,
+        bar_width: 6.0,
+        bar_inner_margin: 2.0,
+        bar_outer_margin: 0.0,
+        ..egui::style::ScrollStyle::solid()
+    };
+    style.spacing.slider_rail_height = 4.0;
+    style.spacing.slider_width = 180.0;
+    style.interaction.multi_widget_text_select = false;
 
     let mut v = if theme.dark {
         egui::Visuals::dark()
@@ -97,12 +117,29 @@ pub fn apply(ctx: &egui::Context, theme: &Theme, font_size: f32) {
     ] {
         w.bg_fill = fill;
         w.weak_bg_fill = fill;
-        w.corner_radius = CornerRadius::same(6);
+        w.corner_radius = CornerRadius::same(crate::kit::BUTTON_RADIUS);
         w.fg_stroke = Stroke::new(1.0, text);
     }
     v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, border);
     v.widgets.inactive.bg_stroke = Stroke::new(1.0, border);
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0, accent);
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0, tint(border, text, 0.25));
+    v.widgets.active.bg_stroke = Stroke::new(1.0, tint(border, text, 0.35));
+    // Stock buttons read as the kit's ghost buttons: no fill until hovered.
+    v.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+    v.widgets.hovered.weak_bg_fill = tint(surface, text, 0.07);
+    v.widgets.active.weak_bg_fill = tint(surface, text, 0.12);
+    v.widgets.hovered.expansion = 0.0;
+    v.widgets.active.expansion = 0.0;
+    v.widgets.hovered.fg_stroke = Stroke::new(1.0, text);
+    v.menu_corner_radius = CornerRadius::same(RADIUS);
+    v.popup_shadow = egui::epaint::Shadow {
+        offset: [0, 6],
+        blur: 18,
+        spread: 0,
+        color: Color32::from_black_alpha(if theme.dark { 90 } else { 28 }),
+    };
+    v.handle_shape = egui::style::HandleShape::Circle;
+    v.slider_trailing_fill = true;
     style.visuals = v;
     ctx.set_global_style(style);
 }

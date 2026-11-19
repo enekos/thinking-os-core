@@ -264,10 +264,13 @@ impl App {
             .auto_shrink([false, false])
             .show(ui, |ui| match view.sub {
                 RepoSub::Pulls => {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut view.filter)
-                            .hint_text("filter: ci:red review:changes @alice \"words\"")
-                            .desired_width(f32::INFINITY),
+                    let w = ui.available_width();
+                    kit::search(
+                        ui,
+                        &theme,
+                        &mut view.filter,
+                        "ci:red review:changes @alice \"words\"",
+                        w,
                     );
                     let f = github::Filter::parse(&view.filter);
                     let me = self.inbox.login.clone();
@@ -415,10 +418,13 @@ impl App {
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
-                                            if ui
-                                                .small_button("↗")
-                                                .on_hover_text(&rel.url)
-                                                .clicked()
+                                            if kit::icon_button(
+                                                ui,
+                                                &theme,
+                                                kit::Icon::External,
+                                                &rel.url,
+                                            )
+                                            .clicked()
                                             {
                                                 self.queue
                                                     .push(Command::new("url.open", Some(&rel.url)));

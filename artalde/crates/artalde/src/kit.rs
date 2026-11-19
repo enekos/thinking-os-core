@@ -26,6 +26,7 @@ pub const CONTROL: f32 = 26.0;
 
 /// azala's radii.
 pub const PILL_RADIUS: u8 = 6;
+pub const ROW_RADIUS: u8 = 8;
 pub const BUTTON_RADIUS: u8 = 7;
 pub const CARD_RADIUS: u8 = 10;
 pub const SHEET_RADIUS: u8 = 14;
@@ -57,6 +58,9 @@ pub enum Icon {
     Sweep,
     Branch,
     Editor,
+    Refresh,
+    External,
+    Copy,
 }
 
 /// Draw `icon` centred in `rect`.
@@ -93,14 +97,14 @@ pub fn paint_icon(p: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
                 color,
             );
         }
-        Icon::Focus => {
+        Icon::Focus | Icon::External => {
             // A box with an arrow leaving its corner.
             poly(&[(0.55, 0.2), (0.2, 0.2), (0.2, 0.8), (0.8, 0.8), (0.8, 0.45)]);
             line(at(0.45, 0.55), at(0.85, 0.15));
             line(at(0.6, 0.15), at(0.85, 0.15));
             line(at(0.85, 0.15), at(0.85, 0.4));
         }
-        Icon::Reopen => {
+        Icon::Reopen | Icon::Refresh => {
             let r = s * 0.3;
             let pts: Vec<Pos2> = (0..=20)
                 .map(|i| {
@@ -165,6 +169,21 @@ pub fn paint_icon(p: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             p.circle_stroke(at(0.72, 0.36), s * 0.09, st);
             line(at(0.3, 0.31), at(0.3, 0.71));
             poly(&[(0.72, 0.45), (0.72, 0.52), (0.3, 0.66)]);
+        }
+        Icon::Copy => {
+            // Two sheets, the front one offset down-right.
+            p.rect_stroke(
+                Rect::from_min_max(at(0.18, 0.18), at(0.62, 0.62)),
+                CornerRadius::same(2),
+                st,
+                egui::StrokeKind::Middle,
+            );
+            p.rect_stroke(
+                Rect::from_min_max(at(0.38, 0.38), at(0.82, 0.82)),
+                CornerRadius::same(2),
+                st,
+                egui::StrokeKind::Middle,
+            );
         }
         Icon::Editor => {
             poly(&[(0.35, 0.28), (0.15, 0.5), (0.35, 0.72)]);
@@ -242,15 +261,101 @@ pub fn section(
     r.response
 }
 
+/// A left-aligned, vertically centred label in a fixed `width`×`height`
+/// cell (`add_sized` would centre it).
+pub fn caption(
+    ui: &mut egui::Ui,
+    text: &str,
+    width: f32,
+    height: f32,
+    font: egui::FontId,
+    color: Color32,
+) {
+    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    let galley = ellipsized(ui.painter(), text, font, color, width);
+    ui.painter().galley(
+        pos2(rect.min.x, rect.center().y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+}
+
+/// A [`section`] header that folds: chevron, title and count, the whole
+/// width clickable. Returns true when clicked.
+pub fn fold(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    title: &str,
+    count: Option<usize>,
+    open: bool,
+) -> bool {
+    let r = ui.horizontal(|ui| {
+        ui.set_min_height(24.0);
+        ui.spacing_mut().item_spacing.x = 6.0;
+        icon(
+            ui,
+            if open {
+                Icon::ChevronDown
+            } else {
+                Icon::ChevronRight
+            },
+            10.0,
+            style::c(theme.faint),
+        );
+        ui.label(
+            RichText::new(title.to_uppercase())
+                .font(fonts::semibold(10.5))
+                .extra_letter_spacing(0.6)
+                .color(style::c(theme.faint)),
+        );
+        if let Some(n) = count {
+            badge(ui, theme, &n.to_string(), style::c(theme.dim));
+        }
+    });
+    ui.add_space(2.0);
+    let rect = r.response.rect.with_max_x(ui.max_rect().max.x);
+    ui.interact(
+        rect,
+        ui.scope_id().with(egui::Id::unique(("fold", id))),
+        Sense::click(),
+    )
+    .on_hover_cursor(egui::CursorIcon::PointingHand)
+    .clicked()
+}
+
 /// A small mono count in a capsule.
 pub fn badge(ui: &mut egui::Ui, theme: &Theme, text: &str, color: Color32) {
-    egui::Frame::new()
-        .fill(tint(style::c(theme.surface), style::c(theme.text), 0.08))
-        .corner_radius(CornerRadius::same(8))
-        .inner_margin(egui::Margin::symmetric(5, 0))
-        .show(ui, |ui| {
-            ui.label(RichText::new(text).monospace().size(10.0).color(color));
-        });
+    capsule(
+        ui,
+        text,
+        egui::FontId::monospace(10.0),
+        color,
+        tint(style::c(theme.surface), style::c(theme.text), 0.08),
+        vec2(5.0, 16.0),
+        8,
+    );
+}
+
+/// Text on a painted capsule of a fixed `size.y`, padded `size.x` each side,
+/// so it never stretches with the row it sits in.
+fn capsule(
+    ui: &mut egui::Ui,
+    text: &str,
+    font: egui::FontId,
+    color: Color32,
+    fill: Color32,
+    size: egui::Vec2,
+    radius: u8,
+) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
+    let w = (galley.size().x + size.x * 2.0).max(size.y);
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, size.y), Sense::hover());
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(radius), fill);
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, color);
+    resp
 }
 
 /// A clickable, full-width row of fixed `height`, its columns laid out
@@ -258,26 +363,38 @@ pub fn badge(ui: &mut egui::Ui, theme: &Theme, text: &str, color: Color32) {
 pub fn row(
     ui: &mut egui::Ui,
     theme: &Theme,
-    id: impl std::hash::Hash,
+    id: impl std::hash::Hash + std::fmt::Debug,
     height: f32,
     selected: bool,
     cols: &[Col],
     mut fill: impl FnMut(usize, &mut egui::Ui),
 ) -> egui::Response {
     let width = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, height), Sense::click());
-    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-    let _ = id;
+    // A stable id keeps hover and press on the same row while the list
+    // above it changes.
+    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    let resp = ui
+        .interact(
+            rect,
+            ui.scope_id().with(egui::Id::unique(("kit-row", id))),
+            Sense::click(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    // Lit while the pointer is anywhere on the row, its own buttons too.
+    let hovered = resp.hovered()
+        || (ui.rect_contains_pointer(rect)
+            && !ui.ctx().is_being_dragged(resp.id)
+            && ui.ctx().dragged_id().is_none());
     if selected {
         ui.painter().rect_filled(
             rect,
-            CornerRadius::same(PILL_RADIUS),
+            CornerRadius::same(ROW_RADIUS),
             tint(style::c(theme.surface), style::c(theme.accent), 0.15),
         );
-    } else if resp.hovered() {
+    } else if hovered {
         ui.painter().rect_filled(
             rect,
-            CornerRadius::same(PILL_RADIUS),
+            CornerRadius::same(ROW_RADIUS),
             tint(style::c(theme.surface), style::c(theme.text), 0.05),
         );
     }
@@ -318,18 +435,15 @@ pub fn row(
 
 /// azala's KeyHint chip: `⌘K`.
 pub fn key(ui: &mut egui::Ui, theme: &Theme, keys: &str) {
-    egui::Frame::new()
-        .fill(tint(style::c(theme.surface), style::c(theme.text), 0.07))
-        .corner_radius(CornerRadius::same(4))
-        .inner_margin(egui::Margin::symmetric(4, 1))
-        .show(ui, |ui| {
-            ui.label(
-                RichText::new(keys)
-                    .monospace()
-                    .size(10.0)
-                    .color(style::c(theme.dim)),
-            )
-        });
+    capsule(
+        ui,
+        keys,
+        egui::FontId::monospace(10.0),
+        style::c(theme.dim),
+        tint(style::c(theme.surface), style::c(theme.text), 0.07),
+        vec2(4.0, 17.0),
+        4,
+    );
 }
 
 /// `move  j k`: what, then its keys.
@@ -344,14 +458,15 @@ pub fn hint(ui: &mut egui::Ui, theme: &Theme, keys: &str, what: &str) {
 
 /// azala's Pill: tinted text on a 14% wash.
 pub fn pill(ui: &mut egui::Ui, theme: &Theme, text: &str, color: Color32) -> egui::Response {
-    egui::Frame::new()
-        .fill(tint(style::c(theme.surface), color, 0.14))
-        .corner_radius(CornerRadius::same(5))
-        .inner_margin(egui::Margin::symmetric(6, 1))
-        .show(ui, |ui| {
-            ui.label(RichText::new(text).size(11.0).color(color))
-        })
-        .response
+    capsule(
+        ui,
+        text,
+        egui::FontId::proportional(11.0),
+        color,
+        tint(style::c(theme.surface), color, 0.14),
+        vec2(6.0, 18.0),
+        5,
+    )
 }
 
 /// A small coloured dot.
@@ -562,10 +677,13 @@ pub fn kv(ui: &mut egui::Ui, theme: &Theme, label: &str, value: &str, label_w: f
     let mut copied = false;
     ui.horizontal(|ui| {
         ui.set_min_height(22.0);
-        ui.add_sized(
-            [label_w, 18.0],
-            egui::Label::new(RichText::new(label).size(12.0).color(style::c(theme.faint)))
-                .halign(egui::Align::Min),
+        caption(
+            ui,
+            label,
+            label_w,
+            18.0,
+            egui::FontId::proportional(12.0),
+            style::c(theme.faint),
         );
         let r = ui
             .add(
@@ -647,6 +765,7 @@ pub fn search(
                 let r = ui.add(
                     egui::TextEdit::singleline(text)
                         .frame(egui::Frame::NONE)
+                        .margin(field_margin(ui, &egui::TextStyle::Body, 0))
                         .hint_text(RichText::new(hint).color(style::c(theme.faint)))
                         .desired_width((ui.available_width() - clear_w).max(20.0)),
                 );
@@ -658,6 +777,298 @@ pub fn search(
             .inner
         })
         .inner
+}
+
+/// Vertical text-edit margin that centres one line of `style` in a
+/// `CONTROL`-tall field.
+pub fn field_margin(ui: &egui::Ui, style: &egui::TextStyle, x: i8) -> egui::Margin {
+    let h = ui.text_style_height(style);
+    let total = ((CONTROL - h) / 2.0).max(0.0);
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a few points, clamped below CONTROL"
+    )]
+    let top = total.floor() as i8;
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a few points, clamped below CONTROL"
+    )]
+    let bottom = total.ceil() as i8;
+    egui::Margin {
+        left: x,
+        right: x,
+        top,
+        bottom,
+    }
+}
+
+/// A single-line text field in the kit's look: a soft wash, a hairline that
+/// turns accent while focused, `CONTROL` tall and exactly `width` wide.
+pub fn input(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+    mono: bool,
+) -> egui::Response {
+    let mut frame = egui::Frame::new()
+        .fill(tint(style::c(theme.surface), style::c(theme.text), 0.05))
+        .stroke(Stroke::new(1.0, style::c(theme.border)))
+        .corner_radius(CornerRadius::same(BUTTON_RADIUS))
+        .inner_margin(egui::Margin::symmetric(8, 0))
+        .begin(ui);
+    // The frame's 1-point stroke sits outside its margin.
+    let inner_w = (width - 16.0 - 2.0).max(24.0);
+    let mut edit = egui::TextEdit::singleline(text)
+        .frame(egui::Frame::NONE)
+        .margin(egui::Margin::ZERO)
+        .min_size(vec2(inner_w, CONTROL))
+        .align(egui::Align2::LEFT_CENTER)
+        .desired_width(inner_w)
+        .hint_text(RichText::new(hint).color(style::c(theme.faint)));
+    if mono {
+        edit = edit.font(egui::TextStyle::Monospace);
+    }
+    let resp = frame.content_ui.add(edit);
+    if resp.has_focus() {
+        frame.frame.stroke = Stroke::new(1.0, style::c(theme.accent));
+    } else if resp.hovered() {
+        frame.frame.stroke =
+            Stroke::new(1.0, tint(style::c(theme.border), style::c(theme.text), 0.2));
+    }
+    frame.end(ui);
+    resp
+}
+
+/// A small toggleable filter chip in monospace.
+pub fn chip(ui: &mut egui::Ui, theme: &Theme, text: &str, on: bool) -> egui::Response {
+    let accent = style::c(theme.accent);
+    let color = if on { accent } else { style::c(theme.dim) };
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), egui::FontId::monospace(11.0), color);
+    let (rect, resp) = ui.allocate_exact_size(vec2(galley.size().x + 14.0, 22.0), Sense::click());
+    let surface = style::c(theme.surface);
+    let p = ui.painter();
+    let radius = CornerRadius::same(PILL_RADIUS);
+    if on {
+        p.rect_filled(rect, radius, tint(surface, accent, 0.15));
+    } else {
+        if resp.hovered() {
+            p.rect_filled(rect, radius, tint(surface, style::c(theme.text), 0.06));
+        }
+        p.rect_stroke(
+            rect,
+            radius,
+            Stroke::new(1.0, style::c(theme.border)),
+            egui::StrokeKind::Inside,
+        );
+    }
+    p.galley(
+        pos2(rect.min.x + 7.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// A 16-point tick box; `label` follows it when not empty. The whole thing
+/// toggles.
+pub fn check(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    on: &mut bool,
+    label: &str,
+    size: f32,
+) -> egui::Response {
+    let galley = (!label.is_empty()).then(|| {
+        ui.painter().layout_no_wrap(
+            label.to_owned(),
+            egui::FontId::proportional(size),
+            style::c(theme.dim),
+        )
+    });
+    let w = 16.0 + galley.as_ref().map_or(0.0, |g| 6.0 + g.size().x);
+    let (rect, mut resp) = ui.allocate_exact_size(vec2(w, 20.0), Sense::click());
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    let surface = style::c(theme.surface);
+    let b = Rect::from_min_size(pos2(rect.min.x, rect.center().y - 8.0), vec2(16.0, 16.0));
+    let p = ui.painter();
+    let radius = CornerRadius::same(4);
+    if *on {
+        p.rect_filled(b, radius, style::c(theme.accent));
+        paint_icon(p, b.shrink(2.5), Icon::Check, Color32::WHITE);
+    } else {
+        let hover = resp.hovered();
+        p.rect_filled(
+            b,
+            radius,
+            tint(
+                surface,
+                style::c(theme.text),
+                if hover { 0.1 } else { 0.04 },
+            ),
+        );
+        p.rect_stroke(
+            b,
+            radius,
+            Stroke::new(
+                1.0,
+                if hover {
+                    style::c(theme.dim)
+                } else {
+                    style::c(theme.border)
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
+    }
+    if let Some(g) = galley {
+        p.galley(
+            pos2(b.max.x + 6.0, rect.center().y - g.size().y / 2.0),
+            g,
+            style::c(theme.dim),
+        );
+    }
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// An on/off switch with its label; the whole thing toggles.
+pub fn toggle(ui: &mut egui::Ui, theme: &Theme, on: &mut bool, label: &str) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::proportional(12.5),
+        style::c(theme.text),
+    );
+    let track = vec2(30.0, 18.0);
+    let size = vec2(track.x + 8.0 + galley.size().x, CONTROL);
+    let (rect, mut resp) = ui.allocate_exact_size(size, Sense::click());
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    let t = ui.ctx().animate_bool(resp.id, *on);
+    let surface = style::c(theme.surface);
+    let off_fill = tint(surface, style::c(theme.text), 0.16);
+    let fill = tint(off_fill, style::c(theme.accent), t);
+    let tr = Rect::from_min_size(pos2(rect.min.x, rect.center().y - track.y / 2.0), track);
+    let p = ui.painter();
+    p.rect_filled(tr, CornerRadius::same(9), fill);
+    let knob_x = egui::lerp(tr.min.x + 9.0..=tr.max.x - 9.0, t);
+    p.circle_filled(pos2(knob_x, tr.center().y), 7.0, Color32::WHITE);
+    p.galley(
+        pos2(tr.max.x + 8.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        style::c(theme.text),
+    );
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// A dropdown whose closed state looks like a ghost button; `add` fills the
+/// menu with [`menu_item`]s.
+pub fn dropdown(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    current: &str,
+    width: f32,
+    add: impl FnOnce(&mut egui::Ui),
+) {
+    let (rect, _) = ui.allocate_exact_size(vec2(width, CONTROL), Sense::hover());
+    let resp = ui
+        .interact(
+            rect,
+            ui.scope_id().with(egui::Id::unique(("dropdown", id))),
+            Sense::click(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let surface = style::c(theme.surface);
+    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
+    let p = ui.painter();
+    let radius = CornerRadius::same(BUTTON_RADIUS);
+    if resp.hovered() || open {
+        p.rect_filled(rect, radius, tint(surface, style::c(theme.text), 0.07));
+    }
+    p.rect_stroke(
+        rect,
+        radius,
+        Stroke::new(
+            1.0,
+            if open {
+                style::c(theme.accent)
+            } else {
+                style::c(theme.border)
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+    let galley = p.layout_no_wrap(
+        current.to_owned(),
+        egui::FontId::proportional(12.5),
+        style::c(theme.text),
+    );
+    let text_clip = Rect::from_min_max(rect.min, pos2(rect.max.x - 24.0, rect.max.y));
+    p.with_clip_rect(text_clip.intersect(ui.clip_rect()))
+        .galley(
+            pos2(rect.min.x + 10.0, rect.center().y - galley.size().y / 2.0),
+            galley,
+            style::c(theme.text),
+        );
+    paint_icon(
+        p,
+        Rect::from_center_size(pos2(rect.max.x - 13.0, rect.center().y), vec2(10.0, 10.0)),
+        Icon::ChevronDown,
+        style::c(theme.dim),
+    );
+    egui::Popup::menu(&resp).width(width).show(|ui| {
+        ui.set_min_width(width - 12.0);
+        add(ui);
+    });
+}
+
+/// One choice in a [`dropdown`] menu; returns true when picked.
+pub fn menu_item(ui: &mut egui::Ui, theme: &Theme, label: &str, on: bool) -> bool {
+    let width = ui.available_width();
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
+    let surface = style::c(theme.surface);
+    let p = ui.painter();
+    if resp.hovered() {
+        p.rect_filled(
+            rect,
+            CornerRadius::same(PILL_RADIUS),
+            tint(surface, style::c(theme.text), 0.07),
+        );
+    }
+    let color = if on {
+        style::c(theme.accent)
+    } else {
+        style::c(theme.text)
+    };
+    let font = if on {
+        fonts::semibold(12.5)
+    } else {
+        egui::FontId::proportional(12.5)
+    };
+    let galley = p.layout_no_wrap(label.to_owned(), font, color);
+    p.galley(
+        pos2(rect.min.x + 8.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+    if on {
+        paint_icon(
+            p,
+            Rect::from_center_size(pos2(rect.max.x - 14.0, rect.center().y), vec2(11.0, 11.0)),
+            Icon::Check,
+            color,
+        );
+    }
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
 }
 
 /// azala's EmptyState: a tinted disc with an icon, a title and a hint.
@@ -696,6 +1107,25 @@ pub fn empty_with(ui: &mut egui::Ui, theme: &Theme, glyph: Icon, title: &str, hi
 /// Centered title and hint for an empty list.
 pub fn empty(ui: &mut egui::Ui, theme: &Theme, title: &str, hint: &str) {
     empty_with(ui, theme, Icon::Check, title, hint);
+}
+
+/// One line of `text` cut with an ellipsis to fit `width`.
+pub fn ellipsized(
+    painter: &egui::Painter,
+    text: &str,
+    font: egui::FontId,
+    color: Color32,
+    width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, color);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width.max(0.0));
+    painter.layout_job(job)
+}
+
+/// Let labels in `ui` be selected and copied: for reading surfaces
+/// (markdown, logs, diffs), never inside a clickable row.
+pub fn selectable_text(ui: &mut egui::Ui) {
+    ui.style_mut().interaction.selectable_labels = true;
 }
 
 /// Truncating label in `color`.
@@ -812,6 +1242,70 @@ pub fn tabs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Run one frame of `add` in a central panel with `events` as input.
+    fn frame(ctx: &egui::Context, events: Vec<egui::Event>, add: &mut impl FnMut(&mut egui::Ui)) {
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(600.0, 200.0))),
+            events,
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| add(ui));
+        out.textures_delta.clear();
+    }
+
+    fn click_at(ctx: &egui::Context, at: Pos2, add: &mut impl FnMut(&mut egui::Ui)) {
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(ctx, vec![egui::Event::PointerMoved(at)], add);
+        frame(ctx, vec![button(true)], add);
+        frame(ctx, vec![button(false)], add);
+        frame(ctx, vec![], add);
+    }
+
+    #[test]
+    fn clicking_a_rows_text_clicks_the_row() {
+        let ctx = egui::Context::default();
+        let theme = Theme::graphite();
+        style::apply(&ctx, &theme, 13.5);
+        let text_rect = std::cell::Cell::new(Rect::NOTHING);
+        let row_rect = std::cell::Cell::new(Rect::NOTHING);
+        let clicks = std::cell::Cell::new(0);
+        let mut add = |ui: &mut egui::Ui| {
+            let resp = row(
+                ui,
+                &theme,
+                "r",
+                ROW,
+                false,
+                &[Col::Flex, Col::Px(60.0)],
+                |c, ui| {
+                    if c == 0 {
+                        text_rect
+                            .set(text(ui, "an agent with a long name", 13.0, Color32::WHITE).rect);
+                    }
+                },
+            );
+            row_rect.set(resp.rect);
+            if resp.clicked() {
+                clicks.set(clicks.get() + 1);
+            }
+        };
+        frame(&ctx, vec![], &mut add);
+        click_at(&ctx, text_rect.get().center(), &mut add);
+        assert_eq!(clicks.get(), 1, "a click on the label must reach the row");
+        let r = row_rect.get();
+        click_at(&ctx, pos2(r.max.x - 20.0, r.center().y), &mut add);
+        assert_eq!(
+            clicks.get(),
+            2,
+            "a click on the empty part reaches the row too"
+        );
+    }
 
     #[test]
     fn fixed_columns_do_not_escape_a_narrow_row() {

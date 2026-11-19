@@ -4,6 +4,8 @@
 mod actions;
 mod app;
 mod diff_view;
+#[cfg(feature = "headless")]
+mod drive;
 mod feed;
 mod fonts;
 mod gfm;
@@ -43,6 +45,7 @@ usage:
                              report state from any other agent (working|blocked|done|idle)
   artalde check              load the config folder, render every mod against live data
   artalde snapshot           print one probe pass as JSON
+  artalde drive <script>     (--features headless) run the UI offscreen from a script, side effects logged
   artalde inbox              list your PR inbox (review requested, mine, involved, merged)
     artalde pr <owner/repo#N|url>  summarise one PR: state, checks, reviews, threads
     artalde repo <owner/repo>  open PRs, what is deployed where, recent releases
@@ -83,6 +86,12 @@ fn main() -> ExitCode {
         }
         Some("report") => report(&store, args.get(1..).unwrap_or_default()),
         Some("check") => check(store),
+        #[cfg(feature = "headless")]
+        Some("drive") => match args.get(1) {
+            Some(script) => drive::run(store, config::config_dir(), std::path::Path::new(script))
+                .map(|()| ExitCode::SUCCESS),
+            None => Err(anyhow::anyhow!("usage: artalde drive <script>")),
+        },
         Some("snapshot") => {
             let (_, snap) = feed::snapshot_once(store, config::config_dir());
             serde_json::to_string_pretty(&snap)

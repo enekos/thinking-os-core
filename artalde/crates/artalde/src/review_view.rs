@@ -56,6 +56,10 @@ impl App {
         pr: &PrRef,
         agent_index: usize,
     ) {
+        if self.dry_run {
+            self.push_log(format!("dry run: review {pr} with agent {agent_index}"));
+            return;
+        }
         let Some(view) = self.prs.get(pr) else { return };
         let Some(detail) = view.detail.clone() else {
             self.push_log("review: the PR is still loading");
@@ -205,14 +209,14 @@ impl App {
                                 let names: Vec<String> = agents.iter().map(|a| a.name.clone()).collect();
                                 let sel = view.agent.min(names.len().saturating_sub(1));
                                 if !names.is_empty() {
-                                    egui::ComboBox::from_id_salt(("agent", pr.to_string()))
-                                        .selected_text(names.get(sel).cloned().unwrap_or_default())
-                                        .width(110.0)
-                                        .show_ui(ui, |ui| {
-                                            for (i, n) in names.iter().enumerate() {
-                                                ui.selectable_value(&mut view.agent, i, n);
+                                    let current = names.get(sel).cloned().unwrap_or_default();
+                                    kit::dropdown(ui, &theme, ("agent", pr.to_string()), &current, 140.0, |ui| {
+                                        for (i, n) in names.iter().enumerate() {
+                                            if kit::menu_item(ui, &theme, n, i == sel) {
+                                                view.agent = i;
                                             }
-                                        });
+                                        }
+                                    });
                                 }
                                 if kit::primary(ui, &theme, "Review with agent", style::c(theme.accent)).on_hover_text("⇧⌘R").clicked() {
                                     let ctx = ui.ctx().clone();
@@ -229,7 +233,7 @@ impl App {
                         }
                     }
                     let dir = review::review_dir(&artalde_core::store::state_dir(), pr);
-                    if dir.join("agent.log").exists() && ui.small_button("open run folder").clicked() {
+                    if dir.join("agent.log").exists() && kit::button(ui, &theme, "Open run folder", None).clicked() {
                         self.queue.push(artalde_core::command::Command::new("path.open", Some(&dir.display().to_string())));
                     }
                 });
@@ -241,7 +245,7 @@ impl App {
             let accepted = pending.accepted().count();
             kit::section(ui, &theme, "Comments", Some(pending.drafts.iter().filter(|d| d.state != DraftState::Dismissed).count()), |ui| {
                 if proposed > 0 {
-                    if ui.small_button(format!("dismiss {proposed} proposed")).clicked() {
+                    if kit::button(ui, &theme, &format!("Dismiss {proposed} proposed"), None).clicked() {
                         for d in &mut self.pending(pr, view).drafts {
                             if d.state == DraftState::Proposed {
                                 d.state = DraftState::Dismissed;
@@ -249,7 +253,7 @@ impl App {
                         }
                         self.save_review(pr, view);
                     }
-                    if ui.small_button(format!("accept {proposed} proposed")).clicked() {
+                    if kit::button(ui, &theme, &format!("Accept {proposed} proposed"), None).clicked() {
                         for d in &mut self.pending(pr, view).drafts {
                             if d.state == DraftState::Proposed {
                                 d.state = DraftState::Accepted;
@@ -280,7 +284,7 @@ impl App {
                 let mut add = None;
                 for (i, n) in pending.general_notes.iter().enumerate() {
                     ui.horizontal_top(|ui| {
-                        if ui.small_button("+ summary").clicked() {
+                        if kit::button_icon(ui, &theme, kit::Icon::Plus, "Summary", None).clicked() {
                             add = Some(i);
                         }
                         ui.vertical(|ui| self.md(ui, n, 13.0));
@@ -302,8 +306,8 @@ impl App {
             kit::section(ui, &theme, "Finish review", None, |_| {});
             egui::Frame::new()
                 .fill(style::c(theme.raised))
-                .stroke(Stroke::new(1.0, style::c(theme.accent)))
-                .corner_radius(CornerRadius::same(8))
+                .stroke(Stroke::new(1.0, style::c(theme.border)))
+                .corner_radius(CornerRadius::same(kit::CARD_RADIUS))
                 .inner_margin(egui::Margin::same(12))
                 .show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
@@ -322,7 +326,7 @@ impl App {
                             let allowed = !(d.viewer_is_author && v != Verdict::Comment);
                             let label = if agent_verdict == Some(v) { format!("{} · agent", v.label()) } else { v.label().to_owned() };
                             ui.add_enabled_ui(allowed, |ui| {
-                                if ui.selectable_label(view.verdict == v, label).clicked() {
+                                if kit::pill_tab(ui, &theme, &label, None, view.verdict == v, style::c(theme.accent)).clicked() {
                                     view.verdict = v;
                                 }
                             });

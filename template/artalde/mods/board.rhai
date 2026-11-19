@@ -12,11 +12,14 @@ fn render(ctx) {
             if !compact {
                 body.push(text(`${s.repo ?? "—"}${if s.branch != () { " · " + s.branch } else { "" }}`).color("dim").size(11));
                 let said = s.message ?? s.last_said ?? "";
+                // Previews are plain text: drop markdown emphasis and code ticks.
+                said.replace("**", "");
+                said.replace("`", "");
                 if said != "" { body.push(text(clip(said, 160)).size(11)); }
             }
-            body.push(row([button("focus", cmd("session.focus", s.id)), text(ago(s.age)).color("dim").size(11)]));
+            body.push(row([button("Focus", cmd("session.focus", s.id)), text(ago(s.age)).color("dim").size(11)]));
             if s.resources.len() > 0 {
-                body.push(text(s.resources.map(|r| r.id.split("/").pop() ?? r.id).extract(0..3).reduce(|a, b| a + "  " + b)).color("dim").size(10).mono());
+                body.push(row(s.resources.extract(0..3).map(|r| text(r.id.split("/").pop() ?? r.id).color("dim").size(10).mono())));
             }
             let c = card(body).fill(s.tag ?? st).on_click(cmd("agent.select", s.id));
             cards.push(if s.selected { c.color("accent") } else { c });
@@ -24,7 +27,7 @@ fn render(ctx) {
         columns.push(col(cards));
     }
     col([
-        row([heading("Board"), space(10), button(if compact { "expand" } else { "compact" }, set("compact", !compact))]),
+        row([button(if compact { "Expand" } else { "Compact" }, set("compact", !compact))]),
         grid(4, columns),
     ])
 }

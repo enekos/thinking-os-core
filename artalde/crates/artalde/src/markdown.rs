@@ -56,6 +56,9 @@ pub struct Output {
     pub clicked_links: Vec<String>,
 }
 
+/// Width of a list item's marker gutter.
+const MARKER_W: f32 = 18.0;
+
 /// Render `md` (GitHub-flavoured, HTML included) into `ui`.
 pub fn show(ui: &mut egui::Ui, theme: &Theme, md: &str, size: f32) -> Output {
     let mut out = Output::default();
@@ -466,11 +469,49 @@ impl Renderer<'_> {
             ui.horizontal_top(|ui| {
                 ui.add_space(indent);
                 if let Some(m) = &marker {
-                    ui.label(
-                        egui::RichText::new(m)
-                            .color(style::c(theme.dim))
-                            .size(r.size),
-                    );
+                    // A fixed gutter so wrapped lines and nested lists line up;
+                    // bullets are painted as dots centred on the first line.
+                    let line_h = ui
+                        .text_style_height(&egui::TextStyle::Body)
+                        .max(r.size * 1.3);
+                    let (cell, _) =
+                        ui.allocate_exact_size(egui::vec2(MARKER_W, line_h), egui::Sense::hover());
+                    let color = style::c(theme.dim);
+                    match m.as_str() {
+                        "•" => {
+                            ui.painter().circle_filled(
+                                egui::pos2(cell.min.x + 6.0, cell.center().y),
+                                2.2,
+                                color,
+                            );
+                        }
+                        "◦" => {
+                            ui.painter().circle_stroke(
+                                egui::pos2(cell.min.x + 6.0, cell.center().y),
+                                2.2,
+                                egui::Stroke::new(1.0, color),
+                            );
+                        }
+                        "▪" => {
+                            ui.painter().rect_filled(
+                                egui::Rect::from_center_size(
+                                    egui::pos2(cell.min.x + 6.0, cell.center().y),
+                                    egui::vec2(4.0, 4.0),
+                                ),
+                                0.0,
+                                color,
+                            );
+                        }
+                        _ => {
+                            ui.painter().text(
+                                egui::pos2(cell.max.x - 4.0, cell.center().y),
+                                egui::Align2::RIGHT_CENTER,
+                                m,
+                                egui::FontId::proportional(r.size),
+                                color,
+                            );
+                        }
+                    };
                 }
                 ui.vertical(|ui| r.inline_block(ui, &block));
             });
