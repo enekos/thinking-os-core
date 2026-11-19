@@ -93,7 +93,7 @@ cleanup() {
 trap cleanup EXIT
 
 PATH_BEFORE="$PATH"
-export PATH="$BIN:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH="$BIN:$HOME/.cargo/bin:$PATH:/opt/homebrew/bin:/usr/local/bin"
 
 detect_target() {
   if [ -n "${THINKING_OS_TARGET:-}" ]; then
