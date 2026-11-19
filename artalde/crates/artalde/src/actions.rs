@@ -420,29 +420,10 @@ fn label(job: &Job) -> &'static str {
 mod tests {
     use super::*;
 
-    #[cfg(target_os = "macos")]
-    /// A copy of `sleep` named `name`, so `ps` reports it as that agent.
-    fn fake_agent(name: &str) -> (std::process::Child, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("artalde-close-{}-{name}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let bin = dir.join(name);
-        std::fs::copy("/bin/sleep", &bin).unwrap();
-        // A copied platform binary is killed on launch until re-signed.
-        let signed = Command::new("codesign")
-            .args(["-s", "-", "-f"])
-            .arg(&bin)
-            .stderr(Stdio::null())
-            .status()
-            .unwrap();
-        assert!(signed.success());
-        let child = Command::new(&bin).arg("60").spawn().unwrap();
-        (child, dir)
-    }
-
     #[test]
     #[cfg(target_os = "macos")]
     fn close_ends_the_agent_and_refuses_a_stranger() {
-        let (mut agent, dir) = fake_agent("codex");
+        let mut agent = Command::new("/bin/sleep").arg("60").spawn().unwrap();
         let pid = agent.id();
         // Reap it as soon as it exits, so `kill -0` stops seeing a zombie.
         let reaper = std::thread::spawn(move || agent.wait());
@@ -452,10 +433,9 @@ mod tests {
             Err(true)
         );
         assert!(alive(pid), "a mismatched name is never signalled");
-        assert_eq!(end_process(pid, "codex"), Ok(true));
+        assert_eq!(end_process(pid, "sleep"), Ok(true));
         let status = reaper.join().unwrap().unwrap();
         assert!(!status.success(), "ended by a signal");
-        assert_eq!(end_process(pid, "codex"), Ok(false), "already gone");
-        std::fs::remove_dir_all(dir).unwrap();
+        assert_eq!(end_process(pid, "sleep"), Ok(false), "already gone");
     }
 }
