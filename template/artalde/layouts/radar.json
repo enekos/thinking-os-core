@@ -1,0 +1,13 @@
+{
+  "title": "Radar",
+  "root": { "column": [
+    { "row": [
+      { "block": "mod:radar", "title": "Radar" },
+      { "stack": [
+        { "block": "detail", "title": "Session" },
+        { "block": "inbox", "title": "zaindu" }
+      ], "size": { "px": 360 }, "min": 260, "resizable": true }
+    ] },
+    { "block": "status", "size": { "px": 28 }, "min": 24, "padding": 5, "border": false, "background": "background" }
+  ] }
+}

@@ -1,0 +1,10 @@
+{
+  "title": "Board",
+  "root": { "column": [
+    { "row": [
+      { "block": "mod:board", "title": "Board" },
+      { "block": "detail", "title": "Session", "size": { "px": 400 }, "min": 280, "resizable": true }
+    ] },
+    { "block": "status", "size": { "px": 28 }, "min": 24, "padding": 5, "border": false, "background": "background" }
+  ] }
+}
