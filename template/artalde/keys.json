@@ -1,0 +1,20 @@
+{
+  "cmd+k": "palette.open",
+  "cmd+shift+p": "palette.open",
+  "cmd+j": "agent.next",
+  "cmd+Enter": "session.focus",
+  "cmd+n": "spawn.open",
+  "cmd+shift+l": "layout.cycle",
+  "cmd+shift+t": "theme.cycle",
+  "cmd+r": "refresh",
+  "cmd+Comma": "config.open",
+  "cmd+1": "agent.select:1",
+  "cmd+2": "agent.select:2",
+  "cmd+3": "agent.select:3",
+  "cmd+4": "agent.select:4",
+  "cmd+5": "agent.select:5",
+  "cmd+6": "agent.select:6",
+  "cmd+7": "agent.select:7",
+  "cmd+8": "agent.select:8",
+  "cmd+9": "agent.select:9"
+}

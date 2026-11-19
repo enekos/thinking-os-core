@@ -22,3 +22,19 @@ jobs:
       - run: cargo test --manifest-path tools/Cargo.toml --workspace --all-features
       - run: cargo install cargo-machete --locked
       - run: cargo machete tools
+
+  artalde:
+    # eframe needs a desktop target; artalde's terminal actions are macOS-only.
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: artalde
+      - run: cargo fmt --manifest-path artalde/Cargo.toml --all --check
+      - run: cargo clippy --manifest-path artalde/Cargo.toml --workspace --all-targets -- -D warnings
+      - run: cargo test --manifest-path artalde/Cargo.toml --workspace

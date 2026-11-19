@@ -1,10 +1,11 @@
 #!/bin/bash
 # Install or upgrade thinking-os on this machine. Idempotent: re-run to upgrade.
 #
-#   ./install.sh [--wiki DIR] [--no-timer] [--skills-dir DIR]
+#   ./install.sh [--wiki DIR] [--no-timer] [--no-artalde] [--skills-dir DIR]
 #
 # 1. checks git, gh (authenticated) and cargo
-# 2. cargo-installs sare, zaindu, ikusi into ~/.local/bin
+# 2. cargo-installs sare, zaindu, ikusi (and artalde, the agent control
+#    plane, unless --no-artalde) into ~/.local/bin
 # 3. creates the wiki from template/ if DIR has none (git init, os.yaml, first
 #    commit); on an existing wiki refreshes scripts/, adds library pages it is
 #    missing, and reports — never applies — template changes to CLAUDE.md and
@@ -20,6 +21,7 @@ CORE="$(dirname "$(realpath "$0")")"
 WIKI="${THINKING_OS_ROOT:-$HOME/thinking-os}"
 SKILLS="$HOME/.claude/skills"
 TIMER=1
+ARTALDE=1
 BIN="$HOME/.local/bin"
 
 while [ $# -gt 0 ]; do
@@ -27,7 +29,8 @@ while [ $# -gt 0 ]; do
     --wiki) WIKI="$2"; shift 2 ;;
     --skills-dir) SKILLS="$2"; shift 2 ;;
     --no-timer) TIMER=0; shift ;;
-    -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --no-artalde) ARTALDE=0; shift ;;
+    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "install.sh: unknown flag $1" >&2; exit 2 ;;
   esac
 done
@@ -62,6 +65,18 @@ for b in sare zaindu ikusi; do
 done
 note "sare zaindu ikusi installed"
 SUMMARY+=("binaries     ok   $BIN/{sare,zaindu,ikusi}")
+if [ "$ARTALDE" = 1 ]; then
+  # A desktop app (egui); a failed build never blocks the rest of the install.
+  if cargo install --quiet --path "$CORE/artalde/crates/artalde" --root "$HOME/.local" --force; then
+    note "artalde installed — wire its hook with: artalde hooks"
+    SUMMARY+=("artalde      ok   $BIN/artalde (hook: artalde hooks)")
+  else
+    note "artalde did not build — the rest of thinking-os is unaffected"
+    SUMMARY+=("artalde      !!   build failed; re-run with --no-artalde to skip")
+  fi
+else
+  note "artalde skipped (--no-artalde)"
+fi
 
 # ----------------------------------------------------------------- wiki
 step "wiki → $WIKI"
@@ -81,7 +96,14 @@ if [ -f "$WIKI/graph/ontology.yaml" ]; then
     cp "$page" "$WIKI/$rel"
     added=$((added + 1))
   done
-  [ "$added" = 0 ] || note "library: $added missing page(s) added — commit them: git -C $WIKI add concepts sources projects"
+  for f in "$CORE"/template/artalde/{*.json,*.md} "$CORE"/template/artalde/*/*; do
+    rel="${f#"$CORE/template/"}"
+    [ -e "$WIKI/$rel" ] && continue
+    mkdir -p "$(dirname "$WIKI/$rel")"
+    cp "$f" "$WIKI/$rel"
+    added=$((added + 1))
+  done
+  [ "$added" = 0 ] || note "library: $added missing page(s) added — commit them: git -C $WIKI add concepts sources projects artalde"
   for f in CLAUDE.md graph/ontology.yaml .gitignore .gitattributes; do
     if [ -f "$WIKI/$f" ] && ! cmp -s "$CORE/template/$f" "$WIKI/$f"; then
       note "differs from template: $f — review with: diff $CORE/template/$f $WIKI/$f"

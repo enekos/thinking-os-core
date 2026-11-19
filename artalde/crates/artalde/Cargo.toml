@@ -1,0 +1,23 @@
+[package]
+name = "artalde"
+description = "artalde — a live control plane for the coding agents on your machine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "artalde"
+path = "src/main.rs"
+
+[dependencies]
+artalde-core.workspace = true
+artalde-mods.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+png = "0.17"
+
+[lints]
+workspace = true

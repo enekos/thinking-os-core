@@ -15,9 +15,10 @@ tools/       one Rust crate, three binaries
                sare    pipeline: extract (pages, git, github, linear) · fuse · serve · retype · viz
                zaindu  watcher: PR and Linear issue transitions → ledger + inbox proposals
                ikusi   graph viewer on 127.0.0.1:4747
+artalde/     the agent control plane: an egui window over every coding agent on the machine
 template/    the wiki skeleton: CLAUDE.md, ontology, coding-memory examples, scripts/,
                and the engineering library (below)
-skills/      Claude Code skills: setup, graph, today, ingest, lint, quality-gate, security-audit, synthesis, fan
+skills/      Claude Code skills: setup, graph, today, ingest, lint, quality-gate, security-audit, synthesis, fan, artalde
 deploy/      systemd user units (Linux), launchd plist (macOS) for the 5-min poll
 install.sh   build, create/upgrade the wiki, link skills, enable the timer
 ```
@@ -42,6 +43,38 @@ git -C ~/src/thinking-os-core pull --ff-only && ~/src/thinking-os-core/install.s
 
 Then, from the wiki directory in Claude Code: `/today`, `/ingest <url>`,
 `/graph`, `ikusi`.
+
+## artalde — the agent control plane
+
+`artalde` is a native window (egui) over the coding agents running on this
+machine, in the spirit of [herdr](https://github.com/herdrdev/herdr-app) but as
+a control plane: agents keep running in your terminal, artalde shows which
+need you and gets you there.
+
+- **Agents** — every Claude Code session reports through its hooks
+  (`artalde hooks` prints the entries; `--install` merges them). Status is
+  `blocked` (permission or question) > `done` (finished, unseen) > `working` >
+  `idle`. Sessions started before the hook still show up, found by process.
+- **Spaces** — the repo and worktree each agent actually touches (from tool
+  paths, not its cwd), with branch, dirt and divergence.
+- **zaindu** — the inbox proposals, tickable from the window; open PRs via `gh`.
+- **Act** — focus the agent's terminal tab, type a reply or a key into it,
+  start a new agent in a worktree (`zz -c repo@branch claude`), macOS
+  notifications when an agent blocks while you are elsewhere.
+- **Dynamic UI** — the window is files in the wiki, `<wiki>/artalde/`:
+  `layouts/*.json` (rows, columns, tabbed stacks, blocks), `themes/*.json`,
+  `keys.json`, and `mods/*.rhai`, Rhai scripts that return UI trees from live
+  data. Edits apply within a second; a broken file keeps its last good version
+  and explains itself in `<file>.error`. `artalde check` validates headless.
+
+```bash
+artalde              # open the window (⌘K palette, ⌘J next agent that needs you)
+artalde hooks        # the Claude Code hook entries
+artalde check        # load the config, render every mod against live data
+```
+
+Code: `artalde/` (its own Cargo workspace, so egui never touches the other
+tools). Agent guide for the UI files: `template/artalde/AGENTS.md`.
 
 ## The engineering library
 

@@ -1,0 +1,15 @@
+[package]
+name = "artalde-mods"
+description = "artalde mods: Rhai scripts that describe panels as UI trees"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+artalde-core.workspace = true
+rhai = { version = "1.27", features = ["serde"] }
+
+[lints]
+workspace = true

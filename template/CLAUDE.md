@@ -26,6 +26,7 @@ concepts/ decisions/ people/            curated knowledge node bodies
 briefings/  past /today output       sources/  IMMUTABLE ingested material
 inbox/      capture; inbox/events/ = zaindu proposals
 scripts/    zaindu-poll.sh (timer, every 5 min), autocommit.sh (hourly)
+artalde/    the agent control plane's UI: layouts, themes, keys, Rhai mods (`artalde` skill)
 ```
 
 `output/` and `reports/` are gitignored agent scratch — file the conclusion

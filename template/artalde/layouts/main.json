@@ -1,0 +1,21 @@
+{
+  "title": "artalde",
+  "root": { "column": [
+    { "row": [
+      { "column": [
+        { "block": "spaces", "title": "Spaces" },
+        { "block": "inbox", "title": "zaindu" }
+      ], "size": { "px": 290 }, "min": 200, "max": 520, "resizable": true },
+      { "column": [
+        { "block": "mod:pulse", "size": { "px": 44 }, "min": 36, "padding": 6 },
+        { "block": "agents", "title": "Agents" }
+      ] },
+      { "stack": [
+        { "block": "detail", "title": "Session" },
+        { "block": "prs", "title": "PRs" },
+        { "block": "log", "title": "Log" }
+      ], "size": { "px": 380 }, "min": 260, "max": 700, "resizable": true }
+    ] },
+    { "block": "status", "size": { "px": 28 }, "min": 24, "padding": 5, "border": false, "background": "background" }
+  ] }
+}

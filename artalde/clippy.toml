@@ -1,0 +1,6 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+disallowed-types = [
+  { path = "once_cell::sync::Lazy", reason = "use std::sync::LazyLock" },
+  { path = "std::os::fd::RawFd", reason = "use OwnedFd / BorrowedFd" },
+]

@@ -1,0 +1,16 @@
+{
+  "dark": false,
+  "background": "#ecebe7",
+  "surface": "#f8f7f4",
+  "raised": "#ffffff",
+  "border": "#d9d6cf",
+  "text": "#1f2023",
+  "dim": "#6e6f73",
+  "accent": "#2f5fd0",
+  "working": "#2f6fd6",
+  "blocked": "#c26a00",
+  "done": "#1d8a4f",
+  "idle": "#8b8d92",
+  "unknown": "#b4b5b8",
+  "danger": "#c93636"
+}

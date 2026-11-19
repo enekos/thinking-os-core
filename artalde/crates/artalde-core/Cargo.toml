@@ -1,0 +1,16 @@
+[package]
+name = "artalde-core"
+description = "artalde's model: agent sessions, spaces, the zaindu inbox, layouts, themes, keys"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

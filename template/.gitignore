@@ -21,4 +21,8 @@ scripts/.autocommit-stamp
 output/
 reports/
 
+# artalde writes why a layout, theme or mod was refused next to the file.
+artalde/**/*.error
+artalde/*.error
+
 .DS_Store
