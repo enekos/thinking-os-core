@@ -13,5 +13,15 @@
     "codex"
   ],
   "font_size": 13.5,
-  "editor": "Zed"
+  "editor": "Zed",
+  "review_agents": [
+    {
+      "name": "Claude",
+      "command": "claude -p --output-format text --allowedTools Read Grep Glob --add-dir {dir} {checkout}"
+    },
+    {
+      "name": "Codex",
+      "command": "codex exec --sandbox read-only --skip-git-repo-check -C {dir} -"
+    }
+  ]
 }

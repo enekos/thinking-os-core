@@ -4,7 +4,8 @@
 
 use std::ops::Range;
 
-use artalde_core::github::{DiffFile, DiffLine, FileStatus, LineKind, PrRef};
+use artalde_core::github::{DiffFile, DiffLine, FileStatus, LineKind, PrRef, Thread};
+use artalde_core::review::{Draft, DraftState, Origin, Side};
 use artalde_core::theme::Theme;
 use eframe::egui::{
     self, Color32, CornerRadius, FontId, RichText, Sense, Stroke, TextFormat, text::LayoutJob,
@@ -516,6 +517,12 @@ impl App {
                 view.file = (view.file + 1).min(files.len() - 1);
             }
         }
+        if let Some((path, line)) = view.jump.take()
+            && let Some(i) = files.iter().position(|f| f.path == path)
+        {
+            view.file = i;
+            view.jump_line = Some(line);
+        }
         view.file = view.file.min(files.len() - 1);
         let rect = ui.available_rect_before_wrap();
         let tree_w = TREE_W.min(rect.width() * 0.32);
@@ -817,7 +824,7 @@ impl App {
                 .id_salt(("diff-wrap", pr.to_string(), view.file))
                 .auto_shrink([false, false]);
         }
-        let row = |ui: &mut egui::Ui, idx: usize, line: &DiffLine| {
+        let row = |ui: &mut egui::Ui, idx: usize, line: &DiffLine| -> Option<(u32, Side, String)> {
             let (bg, gutter_bg, sign, sign_color) = match line.kind {
                 LineKind::Add => (
                     tint(code_bg, style::c(theme.done), 0.10),
@@ -916,7 +923,13 @@ impl App {
             } else {
                 (gutter_w + sign_w + 8.0 + max_chars as f32 * char_w).max(ui.available_width())
             };
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(w, h), Sense::hover());
+            let raw = line.text.get(1..).unwrap_or_default().to_owned();
+            let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, h), Sense::click());
+            let target = match line.kind {
+                LineKind::Add | LineKind::Context => line.new.map(|n| (n, Side::Right)),
+                LineKind::Remove => line.old.map(|n| (n, Side::Left)),
+                _ => None,
+            };
             let p = ui.painter();
             p.rect_filled(rect, CornerRadius::ZERO, bg);
             let g = egui::Rect::from_min_size(rect.min, egui::vec2(gutter_w, h));
@@ -956,25 +969,283 @@ impl App {
                     Stroke::new(1.0, tint(code_bg, style::c(theme.border), 0.8)),
                 );
             }
+            if target.is_some() && resp.hovered() {
+                // GitHub's blue "+" on the hovered line.
+                let c = egui::pos2(rect.min.x + gutter_w + sign_w * 0.5, rect.min.y + h / 2.0);
+                p.rect_filled(
+                    egui::Rect::from_center_size(c, egui::vec2(16.0, 16.0)),
+                    CornerRadius::same(4),
+                    style::c(theme.accent),
+                );
+                p.text(
+                    c,
+                    egui::Align2::CENTER_CENTER,
+                    "+",
+                    FontId::proportional(13.0),
+                    style::c(theme.background),
+                );
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if resp.clicked() {
+                return target.map(|(n, s)| (n, s, raw));
+            }
+            None
         };
         let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(body_rect.shrink(1.0)));
-        if wrap {
+        // Drafts, review threads and an open composer render under their
+        // lines, so the diff lays out every line when any are present.
+        let drafts: Vec<Draft> = view
+            .review
+            .as_ref()
+            .map(|r| {
+                r.drafts
+                    .iter()
+                    .filter(|d| d.path == f.path && d.state != DraftState::Dismissed)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        let threads: Vec<Thread> = view
+            .detail
+            .as_ref()
+            .map(|d| {
+                d.threads
+                    .iter()
+                    .filter(|t| t.path == f.path && !t.outdated)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        let composing = view
+            .inline_at
+            .as_ref()
+            .is_some_and(|(p, _, _)| *p == f.path);
+        let rich = wrap || composing || !drafts.is_empty() || !threads.is_empty();
+        if let Some(line) = view.jump_line.take()
+            && let Some(idx) = f
+                .lines
+                .iter()
+                .position(|l| l.new == Some(line) || l.old == Some(line))
+        {
+            area = area.vertical_scroll_offset((idx as f32 * ROW_H - 120.0).max(0.0));
+        }
+        let mut clicked = None;
+        if rich {
             area.show(&mut inner, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 for (i, l) in f.lines.iter().enumerate() {
-                    row(ui, i, l);
+                    if let Some(t) = row(ui, i, l) {
+                        clicked = Some(t);
+                    }
+                    let at = match l.kind {
+                        LineKind::Add | LineKind::Context => l.new.map(|n| (n, Side::Right)),
+                        LineKind::Remove => l.old.map(|n| (n, Side::Left)),
+                        _ => None,
+                    };
+                    let Some((n, side)) = at else { continue };
+                    let here_threads: Vec<&Thread> = threads
+                        .iter()
+                        .filter(|t| side == Side::Right && t.line == Some(u64::from(n)))
+                        .collect();
+                    let here_drafts: Vec<&Draft> = drafts
+                        .iter()
+                        .filter(|d| d.line == n && d.side == side)
+                        .collect();
+                    let compose_here = view
+                        .inline_at
+                        .as_ref()
+                        .is_some_and(|(p, ln, sd)| *p == f.path && *ln == n && *sd == side);
+                    if here_threads.is_empty() && here_drafts.is_empty() && !compose_here {
+                        continue;
+                    }
+                    egui::Frame::new()
+                        .fill(style::c(theme.surface))
+                        .inner_margin(egui::Margin {
+                            left: 16,
+                            right: 16,
+                            top: 6,
+                            bottom: 6,
+                        })
+                        .show(ui, |ui| {
+                            ui.set_max_width((ui.available_width()).min(900.0));
+                            ui.spacing_mut().item_spacing.y = 4.0;
+                            for t in here_threads {
+                                self.inline_thread(ui, t);
+                            }
+                            for d in here_drafts {
+                                self.draft_card(ui, pr, view, d, false);
+                            }
+                            if compose_here {
+                                self.inline_composer(ui, pr, view);
+                            }
+                        });
                 }
             });
         } else {
             area.show_rows(&mut inner, ROW_H, f.lines.len(), |ui, range| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 for i in range {
-                    if let Some(l) = f.lines.get(i) {
-                        row(ui, i, l);
+                    if let Some(l) = f.lines.get(i)
+                        && let Some(t) = row(ui, i, l)
+                    {
+                        clicked = Some(t);
                     }
                 }
             });
         }
+        if let Some((n, side, text)) = clicked {
+            view.inline_at = Some((f.path.clone(), n, side));
+            view.inline_line = text;
+            view.inline_text.clear();
+        }
+    }
+
+    /// An existing GitHub review thread, compact, under its line.
+    fn inline_thread(&mut self, ui: &mut egui::Ui, t: &Thread) {
+        let theme = self.theme.clone();
+        let now = artalde_core::now();
+        let edge = if t.resolved {
+            style::c(theme.dim)
+        } else {
+            style::c(theme.blocked)
+        };
+        let resp = egui::Frame::new()
+            .fill(style::c(theme.raised))
+            .stroke(Stroke::new(1.0, style::c(theme.border)))
+            .corner_radius(CornerRadius::same(8))
+            .inner_margin(egui::Margin {
+                left: 14,
+                right: 10,
+                top: 8,
+                bottom: 8,
+            })
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                for c in &t.comments {
+                    ui.horizontal(|ui| {
+                        let who = if c.bot {
+                            artalde_core::github::bot_name(&c.author)
+                        } else {
+                            format!("@{}", c.author)
+                        };
+                        ui.label(RichText::new(who).font(crate::fonts::semibold(12.5)));
+                        ui.label(
+                            RichText::new(artalde_core::github::age(&c.created, now))
+                                .size(11.0)
+                                .color(style::c(theme.dim)),
+                        );
+                        if t.resolved {
+                            ui.label(
+                                RichText::new("resolved")
+                                    .size(11.0)
+                                    .color(style::c(theme.done)),
+                            );
+                        }
+                    });
+                    self.md(ui, &c.body, 13.0);
+                }
+            })
+            .response;
+        let bar = egui::Rect::from_min_size(resp.rect.min, egui::vec2(3.0, resp.rect.height()));
+        ui.painter().rect_filled(
+            bar,
+            CornerRadius {
+                nw: 8,
+                sw: 8,
+                ne: 0,
+                se: 0,
+            },
+            edge,
+        );
+    }
+
+    /// GitHub's line composer: write, suggest, add to the review.
+    fn inline_composer(&mut self, ui: &mut egui::Ui, pr: &PrRef, view: &mut PrView) {
+        let theme = self.theme.clone();
+        let Some((path, line, side)) = view.inline_at.clone() else {
+            return;
+        };
+        egui::Frame::new()
+            .fill(style::c(theme.raised))
+            .stroke(Stroke::new(1.0, style::c(theme.accent)))
+            .corner_radius(CornerRadius::same(8))
+            .inner_margin(egui::Margin::same(10))
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.label(
+                    RichText::new(format!(
+                        "Comment on line {line}{}",
+                        if side == Side::Left { " (old)" } else { "" }
+                    ))
+                    .size(11.5)
+                    .color(style::c(theme.dim)),
+                );
+                let edit = ui.add(
+                    egui::TextEdit::multiline(&mut view.inline_text)
+                        .hint_text("Markdown. ⌘↩ adds to the review.")
+                        .desired_rows(3)
+                        .desired_width(f32::INFINITY),
+                );
+                edit.request_focus();
+                let submit = edit.has_focus()
+                    && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter));
+                ui.horizontal(|ui| {
+                    let ok = !view.inline_text.trim().is_empty();
+                    let add = ui
+                        .add_enabled_ui(ok, |ui| {
+                            kit::primary(ui, &theme, "Add to review", style::c(theme.accent))
+                                .clicked()
+                        })
+                        .inner;
+                    if (add || submit) && ok {
+                        let body = std::mem::take(&mut view.inline_text);
+                        let (suggestion, body) = split_suggestion(&body);
+                        self.pending(pr, view).add(Draft {
+                            path: path.clone(),
+                            line,
+                            side,
+                            body,
+                            suggestion,
+                            origin: Origin::Me,
+                            state: DraftState::Accepted,
+                            ..Draft::default()
+                        });
+                        view.inline_at = None;
+                        self.save_review(pr, view);
+                    }
+                    if side == Side::Right
+                        && kit::button(ui, &theme, "± Suggest change", None).clicked()
+                    {
+                        view.inline_text = format!(
+                            "{}\n\n```suggestion\n{}\n```",
+                            view.inline_text.trim_end(),
+                            view.inline_line
+                        );
+                    }
+                    if kit::button(ui, &theme, "Cancel", Some("esc")).clicked()
+                        || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                    {
+                        view.inline_at = None;
+                    }
+                });
+            });
+    }
+}
+
+/// A body's trailing ```suggestion block, split out.
+fn split_suggestion(body: &str) -> (Option<String>, String) {
+    match body.split_once("```suggestion") {
+        Some((before, rest)) => {
+            let code = rest
+                .trim_start_matches('\n')
+                .split("```")
+                .next()
+                .unwrap_or_default()
+                .trim_end_matches('\n')
+                .to_owned();
+            (Some(code), before.trim().to_owned())
+        }
+        None => (None, body.trim().to_owned()),
     }
 }
 
@@ -1093,6 +1364,15 @@ mod tests {
             tokens_from("and in prose", "a.ts", true),
             [(0..12, Tok::String)]
         );
+    }
+
+    #[test]
+    fn suggestions_split_out_of_bodies() {
+        assert_eq!(
+            split_suggestion("use a fn\n\n```suggestion\nx();\n```"),
+            (Some("x();".into()), "use a fn".into())
+        );
+        assert_eq!(split_suggestion("plain"), (None, "plain".into()));
     }
 
     #[test]

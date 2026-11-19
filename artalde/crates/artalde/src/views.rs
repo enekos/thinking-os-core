@@ -65,6 +65,7 @@ pub enum PrSub {
     Conversation,
     Files,
     Checks,
+    Review,
 }
 
 /// One PR tab's state.
@@ -87,6 +88,24 @@ pub struct PrView {
     pub show_resolved: bool,
     pub hide_bots: bool,
     pub wrap: bool,
+    /// The review being prepared (loaded on first use).
+    pub review: Option<artalde_core::review::PendingReview>,
+    /// Index into settings.review_agents.
+    pub agent: usize,
+    pub agent_status: Option<String>,
+    /// An agent reply waiting for the diff to be parsed.
+    pub pending_run: Option<artalde_core::review::AgentReview>,
+    /// The draft being edited and its text.
+    pub editing: Option<(u64, String)>,
+    pub verdict: artalde_core::review::Verdict,
+    pub submitting: bool,
+    /// Show this file and line in Files.
+    pub jump: Option<(String, u32)>,
+    pub jump_line: Option<u32>,
+    /// The line composer: where, and what was typed.
+    pub inline_at: Option<(String, u32, artalde_core::review::Side)>,
+    pub inline_text: String,
+    pub inline_line: String,
 }
 
 #[derive(Default)]
@@ -234,8 +253,25 @@ impl App {
                     self.logs.insert(job, Some(log));
                 }
                 Res::Acted { pr, what, result } => {
-                    if let Some(v) = self.prs.get_mut(&pr) {
+                    if let Some(mut v) = self.prs.remove(&pr) {
                         v.busy = None;
+                        if v.submitting {
+                            v.submitting = false;
+                            if result.is_ok()
+                                && let Some(r) = &mut v.review
+                            {
+                                // Posted: what was sent and what was dropped go.
+                                r.drafts.retain(|d| {
+                                    d.state == artalde_core::review::DraftState::Proposed
+                                });
+                                r.summary.clear();
+                                r.general_notes.clear();
+                                r.agent_verdict.clear();
+                                self.save_review(&pr, &v);
+                                v.sub = PrSub::Conversation;
+                            }
+                        }
+                        self.prs.insert(pr.clone(), v);
                     }
                     let line = match &result {
                         Ok(()) => format!("{pr}: {what} — done"),
@@ -881,6 +917,7 @@ impl App {
             view.sub = match std::env::var("ARTALDE_PR_SUB").as_deref() {
                 Ok("files") => PrSub::Files,
                 Ok("checks") => PrSub::Checks,
+                Ok("review") => PrSub::Review,
                 _ => view.sub,
             };
         }
@@ -990,7 +1027,19 @@ impl App {
         // Sub-tabs.
         let open_threads = d.threads.iter().filter(|t| !t.resolved).count();
         let failing = d.checks.iter().filter(|c| c.failed()).count();
-        let subs = [PrSub::Conversation, PrSub::Files, PrSub::Checks];
+        let subs = [
+            PrSub::Conversation,
+            PrSub::Files,
+            PrSub::Checks,
+            PrSub::Review,
+        ];
+        let drafts = self
+            .pending(pr, view)
+            .drafts
+            .iter()
+            .filter(|d| d.state != artalde_core::review::DraftState::Dismissed)
+            .count();
+        let running = self.reviewer.runs.contains_key(pr);
         let labels = vec![
             (
                 "Conversation".to_owned(),
@@ -1005,10 +1054,18 @@ impl App {
                 },
                 Some(d.checks.len()),
             ),
+            (
+                if running {
+                    "Review · agent running".to_owned()
+                } else {
+                    "Review".to_owned()
+                },
+                Some(drafts),
+            ),
         ];
         let sel = subs.iter().position(|s| *s == view.sub).unwrap_or(0);
         if let Some(i) = kit::tabs(ui, &theme, &labels, sel) {
-            view.sub = subs[i.min(2)];
+            view.sub = subs[i.min(3)];
         }
         ui.add_space(kit::S2);
         if view.sub == PrSub::Files {
@@ -1028,6 +1085,7 @@ impl App {
         let mut left = ui.new_child(UiBuilder::new().max_rect(main));
         match view.sub {
             PrSub::Checks => self.pr_checks(&mut left, pr, &d),
+            PrSub::Review => self.review_tab(&mut left, pr, view, &d),
             _ => self.pr_conversation(&mut left, pr, view, &d),
         }
         if side_w > 0.0 {
@@ -1273,6 +1331,25 @@ impl App {
                     self.act(pr, Action::Reopen);
                 }
             });
+            if d.open() {
+                let running = self.reviewer.runs.contains_key(pr);
+                let label = if running {
+                    "Agent reviewing…"
+                } else {
+                    "Review with agent"
+                };
+                if kit::button(ui, &theme, label, Some("⇧⌘R")).clicked() {
+                    view.sub = PrSub::Review;
+                    if !running {
+                        self.queue_review = Some((pr.clone(), view.agent));
+                    }
+                }
+                let n = self.pending(pr, view).accepted().count();
+                if n > 0 && kit::button(ui, &theme, &format!("Finish review · {n}"), None).clicked()
+                {
+                    view.sub = PrSub::Review;
+                }
+            }
             let r = kit::button(ui, &theme, "Copy ▾", None);
             egui::Popup::menu(&r).show(|ui| self.pr_copy_menu(ui, pr, &d.head, &d.url));
             if kit::button(ui, &theme, "GitHub ↗", None).clicked() {

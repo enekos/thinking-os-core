@@ -80,6 +80,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("config.open", "Open the config folder"),
     ("refresh", "Probe everything now"),
     ("settings.open", "Open Settings"),
+    (
+        "pr.review",
+        "Review the open PR with an agent; you decide on every comment",
+    ),
     ("appearance.toggle", "Switch between light and dark"),
     ("appearance.set", "Set the appearance: <system|light|dark>"),
     ("inbox.open", "Open the pull-request inbox tab"),

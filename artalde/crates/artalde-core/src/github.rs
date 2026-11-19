@@ -657,6 +657,12 @@ pub enum Action {
     },
     Resolve(String),
     Unresolve(String),
+    /// Post the prepared review: verdict, summary and every accepted draft.
+    SubmitReview {
+        verdict: crate::review::Verdict,
+        body: String,
+        review: Box<crate::review::PendingReview>,
+    },
 }
 
 /// How an action runs: `gh` arguments, with an optional stdin body.
@@ -683,6 +689,7 @@ impl Action {
                 | Action::Approve(_)
                 | Action::RequestChanges(_)
                 | Action::UpdateBranch { .. }
+                | Action::SubmitReview { .. }
         )
     }
 
@@ -723,6 +730,16 @@ impl Action {
             Action::Reply { .. } => "Reply".into(),
             Action::Resolve(_) => "Resolve thread".into(),
             Action::Unresolve(_) => "Unresolve thread".into(),
+            Action::SubmitReview {
+                verdict, review, ..
+            } => {
+                let n = review.accepted().count();
+                format!(
+                    "Submit review: {} with {n} comment{}",
+                    verdict.label().to_lowercase(),
+                    if n == 1 { "" } else { "s" }
+                )
+            }
         }
     }
 
@@ -818,6 +835,14 @@ impl Action {
                 "mutation($i: ResolveReviewThreadInput!) { resolveReviewThread(input: $i) { thread { id } } }",
                 json!({ "threadId": thread }),
             )],
+            Action::SubmitReview {
+                verdict,
+                body,
+                review,
+            } => {
+                let d = detail.ok_or("still loading — try again in a moment")?;
+                vec![crate::review::submit_invocation(d, *verdict, body, review)?]
+            }
             Action::Unresolve(thread) => vec![graphql(
                 "mutation($i: UnresolveReviewThreadInput!) { unresolveReviewThread(input: $i) { thread { id } } }",
                 json!({ "threadId": thread }),

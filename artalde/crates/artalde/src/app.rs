@@ -56,6 +56,9 @@ pub struct App {
     pub(crate) label_edit: String,
     pub(crate) settings_draft: Option<artalde_core::config::Settings>,
     pub(crate) hook_confirm: bool,
+    pub(crate) reviewer: crate::reviewer::Reviewer,
+    /// A review to start next frame: PR and agent index.
+    pub(crate) queue_review: Option<(PrRef, usize)>,
     pub(crate) agent_view: AgentView,
     pub(crate) agent_query: String,
     pub(crate) spaces_closed: Vec<String>,
@@ -146,6 +149,8 @@ impl App {
             label_edit: String::new(),
             settings_draft: None,
             hook_confirm: false,
+            reviewer: crate::reviewer::Reviewer::new(),
+            queue_review: None,
             agent_view: AgentView::default(),
             agent_query: String::new(),
             spaces_closed: Vec::new(),
@@ -607,6 +612,17 @@ impl App {
                 }
             }
             "inbox.open" => self.open_tab(Tab::Inbox),
+            "pr.review" => {
+                if let Some(Tab::Pr(pr)) = self.tabs.get(self.active).cloned() {
+                    let agent = self.prs.get(&pr).map_or(0, |v| v.agent);
+                    if let Some(v) = self.prs.get_mut(&pr) {
+                        v.sub = crate::views::PrSub::Review;
+                    }
+                    if !self.reviewer.runs.contains_key(&pr) {
+                        self.queue_review = Some((pr, agent));
+                    }
+                }
+            }
             "settings.open" => {
                 self.settings_draft = None;
                 self.open_tab(Tab::Settings);
@@ -1248,6 +1264,10 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.drain(&ctx);
         self.drain_github(&ctx);
+        self.drain_reviews(&ctx);
+        if let Some((pr, agent)) = self.queue_review.take() {
+            self.start_agent_review(&ctx, &pr, agent);
+        }
         self.apply_config_style(&ctx);
         self.keys(&ctx);
         self.tick_github();

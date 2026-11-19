@@ -17,6 +17,7 @@ pub mod keys;
 pub mod layout;
 pub mod model;
 pub mod probe;
+pub mod review;
 pub mod store;
 pub mod tags;
 pub mod text;

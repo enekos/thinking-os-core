@@ -146,6 +146,26 @@ pub struct Settings {
     pub font_size: f32,
     /// The app `path.edit` opens folders in (`open -a <editor>`).
     pub editor: String,
+    /// Agents that can review a PR. Each runs read-only with the prompt on
+    /// stdin; `{dir}` (pr.md + pr.diff) and `{checkout}` are filled in.
+    pub review_agents: Vec<ReviewAgent>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewAgent {
+    pub name: String,
+    pub command: String,
+}
+
+pub fn default_review_agents() -> Vec<ReviewAgent> {
+    vec![
+        ReviewAgent {
+            name: "Claude".into(),
+            command: "claude -p --output-format text --allowedTools Read Grep Glob --add-dir {dir} {checkout}".into(),
+        },
+        ReviewAgent { name: "Codex".into(), command: "codex exec --sandbox read-only --skip-git-repo-check -C {dir} -".into() },
+    ]
 }
 
 impl Default for Settings {
@@ -163,6 +183,7 @@ impl Default for Settings {
             agents: vec!["claude".into(), "codex".into()],
             font_size: 13.5,
             editor: "Zed".into(),
+            review_agents: default_review_agents(),
         }
     }
 }

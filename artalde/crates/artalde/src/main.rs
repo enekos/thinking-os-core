@@ -13,6 +13,8 @@ mod layout_view;
 mod markdown;
 mod mod_view;
 mod panels;
+mod review_view;
+mod reviewer;
 mod settings_view;
 mod style;
 mod views;
@@ -40,7 +42,9 @@ usage:
   artalde check              load the config folder, render every mod against live data
   artalde snapshot           print one probe pass as JSON
   artalde inbox              list your PR inbox (review requested, mine, involved, merged)
-  artalde pr <owner/repo#N|url>  summarise one PR: state, checks, reviews, threads
+    artalde pr <owner/repo#N|url>  summarise one PR: state, checks, reviews, threads
+  artalde review <owner/repo#N> [--agent NAME]  run a read-only agent review; its comments
+                             are saved as proposals for the PR's Review tab (nothing is posted)
   artalde commands           list commands for keys.json and mods
   artalde hooks [--install]  print (or merge into ~/.claude/settings.json) the hook entries
   artalde init               write missing default files into the config folder
@@ -93,6 +97,7 @@ fn main() -> ExitCode {
         }
         Some("inbox") => inbox_cli(),
         Some("pr") => pr_cli(args.get(1).map(String::as_str).unwrap_or_default()),
+        Some("review") => review_cli(args.get(1..).unwrap_or_default()),
         Some("hooks") => hooks(args.get(1).is_some_and(|a| a == "--install")),
         Some("init") => {
             let dir = config::config_dir();
@@ -413,4 +418,56 @@ fn civil(days: u64) -> (i64, u32, u32) {
     let d = u32::try_from(doy - (153 * mp + 2) / 5 + 1).unwrap_or(1);
     let m = u32::try_from(if mp < 10 { mp + 3 } else { mp - 9 }).unwrap_or(1);
     (yoe + era * 400 + i64::from(m <= 2), m, d)
+}
+
+fn review_cli(args: &[String]) -> anyhow::Result<ExitCode> {
+    use artalde_core::github::{self, PrRef};
+    use artalde_core::review;
+    let pr = args
+        .first()
+        .and_then(|a| PrRef::parse(a))
+        .ok_or_else(|| anyhow::anyhow!("usage: artalde review owner/repo#N [--agent NAME]"))?;
+    let cfg = config::Config::load(&config::config_dir(), None);
+    let agents = cfg.settings.review_agents;
+    let agent = match flag(args, "--agent") {
+        Some(name) => agents.iter().find(|a| a.name.eq_ignore_ascii_case(name)),
+        None => agents.first(),
+    }
+    .ok_or_else(|| anyhow::anyhow!("no such review agent in settings.json"))?;
+    let detail = github::fetch_detail(&pr).map_err(|e| anyhow::anyhow!(e))?;
+    let files = github::fetch_diff(&pr).map_err(|e| anyhow::anyhow!(e))?;
+    let dir = review::review_dir(&store::state_dir(), &pr);
+    eprintln!(
+        "{}: {} is reviewing (read-only) in {}",
+        pr,
+        agent.name,
+        dir.display()
+    );
+    let (pid_tx, _pid_rx) = std::sync::mpsc::channel();
+    let reply = reviewer::run(&pr, &agent.command, &detail, &dir, None, &pid_tx)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let run = review::parse_agent_output(&reply).map_err(|e| anyhow::anyhow!(e))?;
+    let mut pending = review::load(&dir);
+    let (anchored, loose) = pending.absorb(run, &files);
+    review::save(&dir, &pending)?;
+    println!("summary: {}", pending.summary);
+    println!("verdict: {}", pending.agent_verdict);
+    for d in pending
+        .drafts
+        .iter()
+        .filter(|d| d.state == review::DraftState::Proposed)
+    {
+        println!(
+            "- [{}] {}:{} {} — {}",
+            d.severity,
+            d.path,
+            d.line,
+            d.title,
+            artalde_core::text::clip(&d.body, 120)
+        );
+    }
+    println!(
+        "{anchored} proposed on lines, {loose} general notes · open the PR's Review tab to decide"
+    );
+    Ok(ExitCode::SUCCESS)
 }
