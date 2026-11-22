@@ -10,7 +10,7 @@ Three searches, one snapshot, a diff:
 
 ```
 my open PRs  +  my merged PRs  +  PRs awaiting my review
-   (+ my Linear issues, when os.yaml has `linear:`)
+   (+ assigned GitHub Issues; my Linear issues when os.yaml has `linear:`)
         │
         └─ diff vs scripts/.gh-watch-state.json  (gitignored)
               ├─ graph/events/YYYY-MM.tsv  the ledger — append-only, one file a month
@@ -23,7 +23,7 @@ my open PRs  +  my merged PRs  +  PRs awaiting my review
 Seven event kinds: `pr.merged`, `pr.approved`, `pr.changes_requested`,
 `pr.checks_red`, `pr.checks_green`, `pr.closed`, `pr.review_requested`.
 
-With Linear on, six more: `issue.assigned`, `issue.state_changed` (a timeline
+For GitHub Issues and optional Linear, six more: `issue.assigned`, `issue.state_changed` (a timeline
 line, not a box), `issue.done`, `issue.unblocked`, `issue.priority_raised`
 (to high or urgent only), `issue.commented` (someone else's comment, never
 your own). A `pr.merged` then also names the ticket it implements and the

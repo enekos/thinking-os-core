@@ -2,7 +2,7 @@
 
 The engine behind a **thinking-os**: a personal knowledge graph an LLM keeps on
 your behalf. Pages are nodes, frontmatter edges are typed and validated against
-an ontology, git repos, bounded commit/path history, GitHub PRs and (opt-in)
+an ontology, git repos, bounded commit/path history, GitHub PRs, assigned GitHub Issues and (opt-in)
 Linear issues join the graph automatically, and Claude Code skills do the bookkeeping.
 
 This repo is the engine only. Your wiki is a separate git repo, created from
@@ -12,7 +12,7 @@ This repo is the engine only. Your wiki is a separate git repo, created from
 
 ```
 tools/       one Rust crate, three binaries
-               sare    pipeline: extract (pages, git, github, linear) · fuse · serve · retype · viz
+               sare    pipeline: extract (pages, git, github, github-issues, linear) · fuse · serve · retype · viz
                zaindu  watcher: PR and Linear issue transitions → ledger + inbox proposals
                ikusi   graph viewer on 127.0.0.1:4747
 artalde/     the agent control plane: an egui window over every coding agent on the machine
@@ -144,6 +144,25 @@ shell profile exports. `scripts/zaindu-poll.sh` sources
 `~/.config/thinking-os/env` when that file exists — put `export LINEAR_API_KEY=…`
 there (mode 600) if the CLI is not logged in on its own. The details are in
 `skills/graph/references/linear.md`.
+
+## Agent workflow and shortcuts
+
+`AGENTS.md` / `CLAUDE.md` route coding agents to the relevant workspace and
+references. `make help` lists build, lint, test and check targets for both Rust
+workspaces. New and upgraded wikis get a Makefile (an existing one is preserved).
+
+`sare today` collects bounded JSON briefing inputs offline: generated view
+excerpts, active project metadata, deduplicated git probes, pending proposals,
+recent log entries and the last briefing. `sare today --refresh` rebuilds first;
+refresh output goes to stderr so stdout remains JSON. The `/today` skill owns
+ranking and writing, and reads only shortlisted project bodies.
+
+GitHub Issues work with your existing `gh` authentication and `me.github`.
+Assigned open and recently closed issues flow through the graph, work view,
+watcher/inbox, briefing collector, ikusi board and artalde ticket links. No
+remote writes happen while polling. Set `github_issues: false` to opt out.
+See `skills/graph/references/integrations.md` for priority labels, identity,
+partial-read behavior and the additive ontology update for existing wikis.
 
 ## Tests
 

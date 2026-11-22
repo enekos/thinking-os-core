@@ -64,6 +64,10 @@ fn query_for(bucket: &str, login: &str, since_days: i64) -> String {
 const MAX_PAGES: usize = 25;
 
 fn fetch_page(query: &str, after: Option<&str>) -> Result<Value, String> {
+    fetch_query_page(QUERY, query, after)
+}
+
+pub(crate) fn fetch_query_page(document: &str, query: &str, after: Option<&str>) -> Result<Value, String> {
     let mut last = String::new();
     for attempt in 0..3 {
         if attempt > 0 {
@@ -74,7 +78,7 @@ fn fetch_page(query: &str, after: Option<&str>) -> Result<Value, String> {
             "api",
             "graphql",
             "-f",
-            &format!("query={QUERY}"),
+            &format!("query={document}"),
             "-f",
             &format!("q={query}"),
         ]);
@@ -83,7 +87,8 @@ fn fetch_page(query: &str, after: Option<&str>) -> Result<Value, String> {
         }
         match run_capture(&mut cmd, Duration::from_secs(90)) {
             Ok(body) => match serde_json::from_str::<Value>(&body) {
-                Ok(v) if v.pointer("/data/hits/nodes").is_some() => return Ok(v),
+                Ok(v) if v.pointer("/data/hits/nodes").is_some_and(Value::is_array)
+                    && v.get("errors").and_then(Value::as_array).is_none_or(Vec::is_empty) => return Ok(v),
                 Ok(v) => {
                     last = v
                         .pointer("/errors/0/message")
@@ -101,20 +106,20 @@ fn fetch_page(query: &str, after: Option<&str>) -> Result<Value, String> {
 
 /// Every page of one search. A bucket read short of its end is an error, not
 /// a shorter list: a PR missing from the window reads as "closed unmerged".
-fn collect_pages(
+pub(crate) fn collect_pages(
     mut page: impl FnMut(Option<&str>) -> Result<Value, String>,
 ) -> Result<Vec<Value>, String> {
     let mut nodes = Vec::new();
     let mut cursor: Option<String> = None;
     for _ in 0..MAX_PAGES {
         let v = page(cursor.as_deref())?;
-        if let Some(Value::Array(batch)) = v.pointer("/data/hits/nodes") {
-            nodes.extend(batch.iter().cloned());
-        }
+        let batch = v.pointer("/data/hits/nodes").and_then(Value::as_array)
+            .ok_or_else(|| "search response has no nodes array".to_string())?;
+        nodes.extend(batch.iter().cloned());
         let more = v
             .pointer("/data/hits/pageInfo/hasNextPage")
             .and_then(Value::as_bool)
-            .unwrap_or(false);
+            .ok_or_else(|| "search response has no pagination metadata".to_string())?;
         if !more {
             return Ok(nodes);
         }
@@ -395,6 +400,12 @@ mod tests {
     fn a_search_that_never_ends_is_an_error_not_a_short_list() {
         let err = collect_pages(|_| Ok(page(40, Some("again")))).unwrap_err();
         assert!(err.contains("truncated"), "{err}");
+    }
+
+    #[test]
+    fn missing_pagination_is_not_a_complete_empty_list() {
+        let err = collect_pages(|_| Ok(json!({"data":{"hits":{"nodes":[]}}}))).unwrap_err();
+        assert!(err.contains("pagination"));
     }
 
     #[test]

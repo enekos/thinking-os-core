@@ -178,13 +178,41 @@ fn poll(args: &Args) -> Result<i32, String> {
         }
     };
 
+    // A third independent source. Never turn a failed read into issue closures
+    // or discard its last complete state. Fixture runs never access the network.
+    let github_on = (os::kg::Paths { root: root.clone() }).github_issues();
+    let github_pull = match args.get("fixture") {
+        Some(_) => payload.pointer("/data/githubIssues/nodes").and_then(Value::as_array)
+            .cloned().map(Ok),
+        None if github_on => Some(os::watch::github_issues::fetch(&login, &clock::days_ago(since_days))),
+        None => None,
+    };
+    let mut fresh_github = false;
+    match github_pull {
+        Some(Ok(nodes)) => match os::watch::github_issues::validate(&nodes) {
+            Ok(()) => {
+                curr.github_issues = os::watch::github_issues::parse(&nodes, &login);
+                curr.github_issues_at = curr.taken_at.clone();
+                fresh_github = true;
+            }
+            Err(error) => warnings.push(format!("github-issues: {error}")),
+        },
+        Some(Err(error)) => warnings.push(format!("github-issues: {error}")),
+        None => {}
+    }
+    if !fresh_github && github_on {
+        curr.github_issues = prev.github_issues.clone();
+        curr.github_issues_at = prev.github_issues_at.clone();
+    }
+    let seeding_github = fresh_github && (prev.github_issues_at.is_empty() || args.on("seed"));
+
     let widened = !prev.prs.is_empty() && prev.window < WINDOW;
     let seeding = prev.prs.is_empty() || widened || args.on("seed");
     let seeding_issues = fresh_issues && (prev.issues_at.is_empty() || args.on("seed"));
     let window = Window {
         ts: curr.taken_at.clone(),
         merged_from: clock::days_ago(since_days),
-        complete: warnings.is_empty(),
+        complete: missing.is_empty(),
     };
     let mut found = if seeding {
         Vec::new()
@@ -194,6 +222,14 @@ fn poll(args: &Args) -> Result<i32, String> {
     linear::annotate_merges(&mut found, &curr, &teams);
     if fresh_issues && !seeding_issues {
         found.extend(linear::diff(&prev, &curr, &curr.taken_at));
+    }
+    if fresh_github && !seeding_github {
+        found.extend(os::watch::github_issues::diff(&prev, &curr));
+    }
+    for event in found.iter_mut().filter(|e| e.kind == events::Kind::Merged) {
+        for issue in curr.github_issues.values().filter(|i| i.prs.contains(&event.subject)) {
+            event.detail.push_str(&format!(" · {} ({})", issue.id, issue.state));
+        }
     }
     warnings.extend(linear_warnings);
 
@@ -205,6 +241,13 @@ fn poll(args: &Args) -> Result<i32, String> {
         let inbox = proposals::append(&root, &clock::today(), &lines)
             .map_err(|e| format!("inbox: {e}"))?;
         let nodes = graph::write_raw(&root, &prs, &login).map_err(|e| format!("raw: {e}"))?;
+        if fresh_github {
+            let paths = os::kg::Paths { root: root.clone() };
+            let ontology = os::kg::Ontology::load(&paths.ontology())?;
+            let (issue_nodes, issue_edges) = os::watch::github_issues::graph(&curr.github_issues, &login, &ontology);
+            os::kg::dump_raw(&paths, "github-issues", &issue_nodes, &issue_edges)
+                .map_err(|e| format!("github-issues graph: {e}"))?;
+        }
         save_state(&state_file, &curr).map_err(|e| format!("state: {e}"))?;
         if !found.is_empty() {
             for (ledger, added) in &ledgers {
@@ -227,6 +270,8 @@ fn poll(args: &Args) -> Result<i32, String> {
             "seeded": seeding,
             "watched": curr.prs.len(),
             "issues": curr.issues.len(),
+            "github_issues": curr.github_issues.len(),
+            "github_issues_seeded": seeding_github,
             "events": found.iter().map(|e| serde_json::json!({
                 "kind": e.kind.tag(), "subject": e.subject, "detail": e.detail
             })).collect::<Vec<_>>(),
@@ -258,6 +303,7 @@ fn poll(args: &Args) -> Result<i32, String> {
     if seeding_issues {
         println!("zaindu · seeded {} Linear issues ({open_issues} open) — no issue events on a first read", curr.issues.len());
     }
+    if seeding_github { println!("zaindu · seeded {} GitHub issues — no issue events on first read", curr.github_issues.len()); }
     for e in &found {
         println!("  {:<22} {:<28} {}", e.kind.tag(), e.slug(), e.detail);
     }
@@ -305,7 +351,7 @@ fn show_proposals(args: &Args) -> Result<i32, String> {
 fn show_status(args: &Args) -> Result<i32, String> {
     let root = resolve_root(args.get("root"));
     let snap = load_state(&state_path(&root, args.get("state")));
-    if snap.prs.is_empty() {
+    if snap.prs.is_empty() && snap.issues_at.is_empty() && snap.github_issues_at.is_empty() {
         println!("no state yet — run `zaindu poll` once to seed");
         return Ok(0);
     }
@@ -327,6 +373,12 @@ fn show_status(args: &Args) -> Result<i32, String> {
         .filter(|p| p.lifecycle == Lifecycle::Open && p.checks == model::Checks::Red)
         .count();
     println!("{} watched · {open_red} red", snap.prs.len());
+    if !snap.github_issues_at.is_empty() {
+        println!("GitHub issues as of {}", snap.github_issues_at);
+        for issue in snap.github_issues.values().filter(|i| i.is_open()) {
+            println!("  {}  {}  {}", issue.id, issue.state, issue.title.chars().take(60).collect::<String>());
+        }
+    }
     if !snap.issues.is_empty() {
         println!("issues as of {}", snap.issues_at);
         for issue in snap.sorted_issues().into_iter().filter(|i| i.is_open()) {

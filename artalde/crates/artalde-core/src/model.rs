@@ -128,7 +128,7 @@ pub enum ResourceKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Resource {
     pub kind: ResourceKind,
-    /// `owner/repo#12` or `THU-123`.
+    /// `owner/repo#12`, `gh:owner/repo/issues/12`, or `THU-123`.
     pub id: String,
     pub title: Option<String>,
     /// `open`, `merged`, `open+red`, `In Progress`, … when the wiki knows it.
@@ -143,7 +143,16 @@ impl Resource {
     pub fn short(&self) -> String {
         match self.kind {
             ResourceKind::Pr => self.id.rsplit('/').next().unwrap_or(&self.id).to_owned(),
-            ResourceKind::Ticket => self.id.clone(),
+            ResourceKind::Ticket => match self
+                .id
+                .strip_prefix("gh:")
+                .and_then(|id| id.split_once("/issues/"))
+            {
+                Some((repo, number)) => {
+                    format!("{}#{number}", repo.rsplit('/').next().unwrap_or(repo))
+                }
+                None => self.id.clone(),
+            },
         }
     }
 }

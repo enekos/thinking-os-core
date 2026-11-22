@@ -609,7 +609,7 @@ fn linear_issues_fuse_into_the_graph_and_reach_the_views() {
     let projects = graph.view_projects(&o);
     assert!(projects.contains("| tracks | my open tickets |"));
     assert!(projects.contains("| [importer](projects/importer.md) | active | — | — |  | Importer | 2 |"), "{projects}");
-    assert!(graph.view_index().contains("- **Linear issues** — 4"));
+    assert!(graph.view_index().contains("- **Issues** — 4"));
 }
 
 #[test]

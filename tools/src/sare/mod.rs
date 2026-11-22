@@ -2,6 +2,7 @@ pub mod extract;
 pub mod fuse;
 pub mod retype;
 pub mod serve;
+pub mod today;
 pub mod viz;
 pub mod viz_html;
 

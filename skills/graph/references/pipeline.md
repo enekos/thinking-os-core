@@ -64,7 +64,7 @@ decision look like it settled five projects.
 
 ## 4-6 — extraction
 
-Four extractors, one per source of truth (`linear` only runs when `os.yaml` has a `linear:` key). Each writes `graph/raw/<name>.json`
+Five extractors, one per source of truth (`linear` only runs when `os.yaml` has a `linear:` key). Each writes `graph/raw/<name>.json`
 and none touches the TSVs, so fusion has exactly one place to validate.
 
 | Extractor | Reads | Emits |
@@ -72,6 +72,7 @@ and none touches the TSVs, so fusion has exactly one place to validate.
 | `pages` | wiki frontmatter: `edges:`, `parent:`, `sources:`, `links:` | every wiki node; declared edges at conf 1.0; legacy links as MENTIONS at 0.5 |
 | `git` | `path:` and `history:` on projects; task `commits`; test `commit` | repos and `LIVES_IN`; bounded timestamped commits and changed paths; `CONTAINS`, `TOUCHES`, declared `IMPLEMENTS`, `TESTS`, `VERIFIES` |
 | `github` | `gh search prs` then `gh pr list --json` per repo | PR nodes with check status; `OPENED_IN`, `AUTHORED_BY`, `REVIEWS`, `DEPENDS_ON` for stacks |
+| `github-issues` | `gh api graphql`: assigned open/recently closed GitHub Issues | issue/repo/person nodes; `OPENED_IN`, `ASSIGNED_TO`, `BLOCKS`, `SUBTASK_OF`, `IMPLEMENTS`; keeps last complete pull on failure |
 | `linear` | `linear api`: issues assigned to me, open or finished in the last 30 days | issue, milestone (a Linear project) and cycle nodes; `SCOPED_TO`, `PLANNED_IN`, `ASSIGNED_TO`, `SUBTASK_OF`, `BLOCKS`, and `IMPLEMENTS` from each attached PR |
 
 Plus `graph/raw/watch.json`, written by `zaindu poll` — the only source that

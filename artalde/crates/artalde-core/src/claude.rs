@@ -187,6 +187,9 @@ impl Scan {
         for id in github_prs(line) {
             self.mention(ResourceKind::Pr, id);
         }
+        for id in github_issues(line) {
+            self.mention(ResourceKind::Ticket, id);
+        }
         for id in tickets(line, teams) {
             self.mention(ResourceKind::Ticket, id);
         }
@@ -229,12 +232,21 @@ impl Scan {
 
 /// `owner/repo#N` for every `github.com/owner/repo/pull/N` in `text`.
 pub fn github_prs(text: &str) -> Vec<String> {
+    github_links(text, "pull")
+}
+
+/// Unambiguous graph ids for GitHub Issue URLs; never confuse #N with a PR.
+pub fn github_issues(text: &str) -> Vec<String> {
+    github_links(text, "issues")
+}
+
+fn github_links(text: &str, kind: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = text;
     while let Some(i) = rest.find("github.com/") {
         rest = rest.get(i + "github.com/".len()..).unwrap_or_default();
         let mut parts = rest.splitn(4, '/');
-        let (Some(owner), Some(repo), Some("pull"), Some(tail)) =
+        let (Some(owner), Some(repo), Some(found_kind), Some(tail)) =
             (parts.next(), parts.next(), parts.next(), parts.next())
         else {
             continue;
@@ -245,8 +257,12 @@ pub fn github_prs(text: &str) -> Vec<String> {
                 && s.chars()
                     .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
         };
-        if ok(owner) && ok(repo) && !num.is_empty() {
-            let id = format!("{owner}/{repo}#{num}");
+        if found_kind == kind && ok(owner) && ok(repo) && !num.is_empty() {
+            let id = if kind == "issues" {
+                format!("gh:{owner}/{repo}/issues/{num}")
+            } else {
+                format!("{owner}/{repo}#{num}")
+            };
             if !out.contains(&id) {
                 out.push(id);
             }
@@ -320,6 +336,7 @@ mod tests {
     fn pr_urls_and_tickets_extract() {
         let text = "see https://github.com/join-com/data/pull/7939#x and github.com/a/b/pull/1, github.com/a/b/issues/2; THU-4771 and xTHU-1 THU-12a ENG-9 THU-123-desc";
         assert_eq!(github_prs(text), ["join-com/data#7939", "a/b#1"]);
+        assert_eq!(github_issues(text), ["gh:a/b/issues/2"]);
         assert_eq!(
             tickets(text, &["THU".into(), "ENG".into()]),
             ["THU-4771", "ENG-9"]

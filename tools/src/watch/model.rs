@@ -111,6 +111,8 @@ pub struct Issue {
     /// Empty when the latest comment is my own or an integration's.
     pub comment_by: String,
     pub prs: Vec<String>,
+    #[serde(default)]
+    pub parent: String,
 }
 
 impl Issue {
@@ -141,6 +143,11 @@ pub struct Snapshot {
     /// which seeds silently.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub issues_at: String,
+    /// GitHub Issues are seeded and retained independently from Linear.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub github_issues: BTreeMap<String, Issue>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub github_issues_at: String,
 }
 
 impl Snapshot {

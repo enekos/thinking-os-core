@@ -1257,21 +1257,19 @@ impl App {
             }
         };
         ui.horizontal_wrapped(|ui| {
-            let mut push = |cmd: &'static str| fire.push(cmd);
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             match s.rec.state {
                 AgentState::Blocked if has_tty => {
-                    if kit::primary_with(
+                    let answer = kit::primary_with(
                         ui,
                         &theme,
                         Some(Icon::Focus),
                         "Answer",
                         k("f"),
                         style::c(theme.blocked),
-                    )
-                    .clicked()
-                    {
-                        push("session.focus");
+                    );
+                    if answer.clicked() {
+                        fire.push("session.focus");
                     }
                 }
                 AgentState::Done if claude && has_tty => {
@@ -1286,31 +1284,30 @@ impl App {
                     .on_hover_text("Type /wrap: verify, commit, push, draft PR")
                     .clicked()
                     {
-                        push("session.wrap");
+                        fire.push("session.wrap");
                     }
                     if ghost(ui, Icon::Focus, "Focus", "f").clicked() {
-                        push("session.focus");
+                        fire.push("session.focus");
                     }
                 }
                 AgentState::Working if has_tty => {
                     if ghost(ui, Icon::Stop, "Stop turn", ".").clicked() {
-                        push("session.stop");
+                        fire.push("session.stop");
                     }
                     if ghost(ui, Icon::Focus, "Focus", "f").clicked() {
-                        push("session.focus");
+                        fire.push("session.focus");
                     }
                 }
                 _ if has_tty && ghost(ui, Icon::Focus, "Focus", "f").clicked() => {
-                    push("session.focus");
+                    fire.push("session.focus");
                 }
                 _ => {}
             }
             if !in_tab
                 && kit::icon_button(ui, &theme, Icon::ChevronRight, "Open as a tab (↵)").clicked()
             {
-                push("session.open");
+                fire.push("session.open");
             }
-            drop(push);
             if let Some(w) = &s.worktree
                 && kit::icon_button(
                     ui,

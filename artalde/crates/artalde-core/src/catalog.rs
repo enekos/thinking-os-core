@@ -13,7 +13,12 @@ use crate::model::{Resource, ResourceKind};
 
 /// Graph files larger than this are skipped.
 const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
-const RAW_FILES: [&str; 3] = ["github.json", "watch.json", "linear.json"];
+const RAW_FILES: [&str; 4] = [
+    "github.json",
+    "watch.json",
+    "linear.json",
+    "github-issues.json",
+];
 /// Linear workspace used for links when the wiki has none.
 const DEFAULT_LINEAR: &str = "https://linear.app/issue";
 
@@ -99,7 +104,10 @@ impl Catalog {
                     self.prs.insert(id.to_owned(), entry());
                 }
             }
-            "issue" if !n.id.starts_with("gh:") => {
+            "issue" if n.id.starts_with("gh:") => {
+                self.tickets.insert(n.id.clone(), entry());
+            }
+            "issue" => {
                 if self.linear_base.is_none() {
                     self.linear_base = n
                         .url
@@ -124,6 +132,9 @@ impl Catalog {
                 Some((repo, n)) => format!("https://github.com/{repo}/pull/{n}"),
                 None => String::new(),
             },
+            ResourceKind::Ticket if id.starts_with("gh:") && id.contains("/issues/") => {
+                format!("https://github.com/{}", id.trim_start_matches("gh:"))
+            }
             ResourceKind::Ticket => format!(
                 "{}/issue/{id}",
                 self.linear_base
@@ -194,6 +205,10 @@ mod tests {
             "me:\n  github: x\nlinear:\n  teams: [THU, ENG]\n",
         )
         .unwrap();
+        fs::write(
+            wiki.join("graph/raw/github-issues.json"),
+            r#"{"nodes":[{"id":"gh:acme/core/issues/12","type":"issue","title":"Improve agents","state":"Open","url":"https://github.com/acme/core/issues/12"}]}"#,
+        ).unwrap();
         let mut c = Catalog::default();
         c.refresh(&wiki);
         let pr = c.resolve(ResourceKind::Pr, "join-com/data#7939", 3);
@@ -208,6 +223,15 @@ mod tests {
         assert_eq!(
             c.resolve(ResourceKind::Pr, "a/b#2", 1).url,
             "https://github.com/a/b/pull/2"
+        );
+        let issue = c.resolve(ResourceKind::Ticket, "gh:acme/core/issues/12", 1);
+        assert_eq!(issue.title.as_deref(), Some("Improve agents"));
+        assert_eq!(issue.short(), "core#12");
+        assert_eq!(issue.url, "https://github.com/acme/core/issues/12");
+        assert_eq!(
+            c.resolve(ResourceKind::Ticket, "gh:other/repo/issues/7", 0)
+                .url,
+            "https://github.com/other/repo/issues/7"
         );
         assert_eq!(linear_teams(&wiki), ["THU", "ENG"]);
     }

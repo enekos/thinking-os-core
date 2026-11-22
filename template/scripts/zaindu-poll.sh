@@ -1,6 +1,6 @@
 #!/bin/bash
 # Event watcher. Polls three GitHub searches (my open PRs, my merged PRs, PRs
-# waiting on my review) and, when os.yaml has a `linear:` key, my Linear issues;
+# waiting on my review), assigned GitHub Issues and optional Linear issues;
 # diffs them against scripts/.gh-watch-state.json and writes any transition to
 # graph/events/YYYY-MM.tsv + inbox/events/YYYY-MM-DD.md.
 # Read-only against both; writes nothing outside this wiki. No notifications.

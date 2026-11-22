@@ -284,6 +284,7 @@ if [ -f "$WIKI/graph/ontology.yaml" ]; then
   cp "$CORE/template/scripts/"*.sh "$WIKI/scripts/"
   chmod +x "$WIKI/scripts/"*.sh
   note "scripts/ refreshed from the core"
+  [ -e "$WIKI/Makefile" ] || cp "$CORE/template/Makefile" "$WIKI/Makefile"
   added=0
   for page in "$CORE"/template/{concepts,sources}/*.md "$CORE"/template/{tasks,attempts,tests}/_example.md \
               "$CORE"/template/projects/{sutegi,osagai}.md \

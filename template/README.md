@@ -7,7 +7,7 @@ files, links and rebuilds.
   `concepts/`, `decisions/`, `people/`, `sources/`, `briefings/`. Markdown with
   YAML frontmatter.
 - **Edges are typed** — `edges:` in frontmatter, validated against
-  `graph/ontology.yaml`. Git repos, bounded commit/path history and GitHub PRs
+  `graph/ontology.yaml`. Git repos, bounded commit/path history and GitHub PRs/assigned Issues
   join the graph automatically.
 - **Views are generated** — `index.md`, `graph/views/{work,projects,health}.md`.
   Never edit them; edit a page and run `sare build pages`.
@@ -23,6 +23,12 @@ files, links and rebuilds.
 | `/quality-gate` | risk-led code review, tests, and exact-commit evidence |
 | `/synthesis` | compact the log and project pages |
 | `/fan <work>` | split work across agents — only where it splits |
+
+`make help` lists local graph, watcher and briefing shortcuts. `make today`
+collects briefing inputs offline; `make today-refresh` rebuilds first.
+
+GitHub Issues use the existing `gh` login and `me.github` in `os.yaml`.
+Optional Linear remains independent. Both feed the work view and event inbox.
 
 Look at the graph: `ikusi` (opens `http://127.0.0.1:4747`).
 

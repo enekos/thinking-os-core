@@ -152,7 +152,7 @@ impl Graph {
         for (kind, label) in [
             ("pr", "GitHub PRs"), ("repo", "Repos"), ("service", "Services"),
             ("commit", "Commits"), ("path", "Changed paths"),
-            ("issue", "Linear issues"), ("milestone", "Linear projects"), ("cycle", "Linear cycles"),
+            ("issue", "Issues"), ("milestone", "Linear projects"), ("cycle", "Linear cycles"),
         ] {
             let c = self.by_type(kind).len();
             if c > 0 {
@@ -231,8 +231,7 @@ impl Graph {
         l.join("\n")
     }
 
-    /// My open Linear issues, furthest along first, each with the PRs Linear
-    /// attached to it. Absent entirely on a wiki that does not use Linear.
+    /// My open GitHub and Linear issues with their explicitly linked PRs.
     fn tickets_section(&self, me: &str, l: &mut Vec<String>) {
         const ORDER: [&str; 4] = ["started", "unstarted", "backlog", "triage"];
         let rank = |id: &str| ORDER.iter().position(|s| *s == self.attr(id, "status"));
@@ -305,12 +304,13 @@ impl Graph {
             }
         }
         let stale_days = ont.gate.stale_project_days;
-        // Ticket columns only exist once some page TRACKS a Linear project.
+        // GitHub tickets attach to repositories; Linear tickets to milestones.
         let tracks = self.rel_map_many("TRACKS");
         let mut open_tickets: Counter = Counter::new();
         for e in &self.edges {
             let open = matches!(self.attr(g(e, "src"), "status").as_str(), "triage" | "backlog" | "unstarted" | "started");
-            if g(e, "rel") == "SCOPED_TO" && open {
+            if open && (g(e, "rel") == "SCOPED_TO"
+                || (g(e, "rel") == "OPENED_IN" && self.attr(g(e, "src"), "type") == "issue")) {
                 open_tickets.add(g(e, "dst"));
             }
         }
@@ -320,7 +320,8 @@ impl Graph {
             format!("`last commit` is read from the repo on disk, not from the page. When a page says active and the repo has not moved in {stale_days} days, the graph says so here."),
             "".into(),
         ];
-        if tracks.is_empty() {
+        let has_tickets = !tracks.is_empty() || self.by_type("issue").iter().any(|n| g(n, "id").starts_with("gh:"));
+        if !has_tickets {
             l.push("| project | status | last commit | repo | open PRs |".into());
             l.push("|---|---|---|---|---|".into());
         } else {
@@ -347,7 +348,7 @@ impl Graph {
             };
             let status = if g(n, "status").is_empty() { "?" } else { g(n, "status") };
             let mut row = format!("| [{id}]({}) | {status} | {age} | {repo_txt} | {prs} |", g(n, "path"));
-            if !tracks.is_empty() {
+            if has_tickets {
                 let milestones = tracks.get(id).cloned().unwrap_or_default();
                 let names: Vec<String> = milestones
                     .iter()
@@ -356,7 +357,7 @@ impl Graph {
                         if title.is_empty() { format!("`{m}`") } else { title }
                     })
                     .collect();
-                let tickets: usize = milestones.iter().map(|m| open_tickets.get(m)).sum();
+                let tickets: usize = milestones.iter().chain(repos.iter()).map(|m| open_tickets.get(m)).sum();
                 let tickets = if tickets == 0 { String::new() } else { tickets.to_string() };
                 row.push_str(&format!(" {} | {tickets} |", names.join(", ")));
             }

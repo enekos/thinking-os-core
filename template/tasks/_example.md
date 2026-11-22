@@ -6,6 +6,7 @@ status: ready
 updated: YYYY-MM-DD
 project: example-project
 commits: []
+# issue: gh:owner/repo/issues/123  # or a Linear identifier, e.g. APP-123
 # exemplar:                 # only for a rare, merged, verified reference example
 #   concepts: [verification-patterns]
 #   why: "one line naming the pattern this code demonstrates"

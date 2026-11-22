@@ -736,10 +736,10 @@ async function showBoard() {
     board.innerHTML = `<p class="muted b-empty">${esc(e.message)}</p>`;
     return;
   }
-  const linear = data.linear
-    ? boardList("Working on", "Linear issues assigned to me, in a started state", data.doing, "issue") +
+  const linear = data.linear || data.github_issues
+    ? boardList("Working on", "Issues assigned to me, in a started state", data.doing, "issue") +
       boardList("Pick up next", "assigned to me, not started — newest first", data.next, "issue")
-    : `<section class="b-col"><h2>Linear</h2><p class="muted">Not watched. Add a <code>linear:</code> key to <code>os.yaml</code>.</p></section>`;
+    : `<section class="b-col"><h2>Issues</h2><p class="muted">No issue snapshot yet. Run <code>zaindu poll</code>.</p></section>`;
   board.innerHTML = `<div class="b-head"><h1>status</h1>
       <span class="muted">${esc(data.login)} · polled <span title="${esc(data.taken_at)}">${esc(ago(data.taken_at))}</span>
       ${data.taken_at ? "at " + esc(new Date(data.taken_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })) : ""}</span></div>

@@ -21,15 +21,18 @@ domain/range check is what stops this from becoming a word cloud with arrows.
 
 ```
 sare extract  →  graph/raw/*.json  →  sare fuse  →  nodes.tsv + edges.tsv  →  sare serve  →  views
- pages git           per source        gate + merge    (gitignored)                       index.md, work.md,
- github                                               wiki-{nodes,edges}.tsv (tracked)    projects.md, health.md
+ pages/git/github/    per source        gate + merge    (gitignored)                       index.md, work.md,
+ github-issues/linear                                  wiki-{nodes,edges}.tsv (tracked)    projects.md, health.md
 ```
 
-zaindu's `graph/raw/watch.json` is a fourth input to fusion — see
+zaindu's `graph/raw/watch.json` is another input to fusion — see
 [references/zaindu.md](references/zaindu.md).
 
 Never write a TSV by hand and never hand-edit a generated view. Edges come from
 page frontmatter or a source system; views come from the graph.
+
+GitHub Issues are included through `gh`, independently of optional Linear.
+See [references/integrations.md](references/integrations.md) for scope, ids and events.
 
 ## Commands
 
