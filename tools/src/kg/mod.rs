@@ -119,6 +119,14 @@ impl Paths {
         (!id.is_empty()).then_some(id)
     }
     /// `Some` when `os.yaml` turns the Linear integration on.
+    /// GitHub Issues use the existing gh login by default; false opts out.
+    pub fn github_issues(&self) -> bool {
+        let doc = std::fs::read_to_string(self.config()).ok()
+            .and_then(|text| serde_yaml::from_str::<serde_yaml::Value>(&text).ok());
+        doc.as_ref().and_then(|d| d.get("github_issues"))
+            .and_then(serde_yaml::Value::as_bool) != Some(false)
+    }
+
     pub fn linear(&self) -> Option<LinearConfig> {
         linear_config(&self.root)
     }

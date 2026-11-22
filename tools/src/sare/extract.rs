@@ -111,6 +111,9 @@ pub fn pages(paths: &Paths, ont: &Ontology) -> Pull {
                 }
             }
         }
+        if ntype == "task" && !fm.text("issue").is_empty() {
+            edges.push(Edge::new(&id, "TRACKS", &ont.canon(&fm.text("issue")), &updated, "page", 1.0, &rel_path));
+        }
         if ntype == "task" && !fm.list("commits").is_empty() && fm.text("project").is_empty() {
             problems.push(format!("{rel_path}: commits require a project so their SHAs can be resolved"));
         }

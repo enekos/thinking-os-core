@@ -47,7 +47,9 @@ commits:
 
 `project` creates `task PART_OF project`. Each entry in `commits` resolves to
 `commit IMPLEMENTS task`; there is no issue-key or commit-message inference.
-Add a SHA after the commit exists. Keep acceptance criteria and constraints in
+Add a SHA after the commit exists. Optional `issue: gh:owner/repo/issues/123`
+(or `issue: APP-123` for Linear) creates `task TRACKS issue`; retain acceptance
+criteria in the task rather than copying the issue description. Keep acceptance criteria and constraints in
 the body, not in graph attributes.
 
 ## Attempt — what not to repeat

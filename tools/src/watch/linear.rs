@@ -186,6 +186,7 @@ pub fn parse(nodes: &[Value]) -> Vec<Issue> {
             comment_at: text(&comment, "/createdAt"),
             comment_by: author,
             prs,
+            parent: text(node, "/parent/identifier"),
         };
         by_id.insert(id, issue);
     }

@@ -159,13 +159,14 @@ nodes:
     attrs: [title, summary, updated]
 
   issue:
-    owner: linear
-    id: "APP-123"
+    owner: github-or-linear
+    id: "gh:<owner>/<repo>/issues/<number> | APP-123"
     attrs: [title, status, state, summary, updated, url]
     state: [triage, backlog, unstarted, started, completed, canceled]
     identity: >
-      A Linear issue assigned to the owner. `status` is Linear's fixed state
-      category, `state` the team's own name for it, `summary` the priority.
+      An issue assigned to the owner in GitHub or Linear. GitHub ids are
+      distinct from PR ids. `status` uses the shared workflow categories;
+      `state` is the source label and `summary` the normalized priority.
 
 # ---------------------------------------------------------------------------
 # RELATION TYPES
@@ -198,8 +199,8 @@ relations:
     card: many-to-many
     doc: >
       An explicitly declared commit SHA in a task's `commits` list implements
-      that task, and a pull request Linear itself lists as an attachment of an
-      issue implements that issue. No issue-key or commit-message inference.
+      that task. A pull request explicitly linked by GitHub closing references
+      or Linear attachments implements that issue. No title/branch inference.
 
   ATTEMPTS:
     domain: [attempt]
@@ -298,12 +299,12 @@ relations:
     card: many-to-many
 
   OPENED_IN:
-    domain: [pr]
+    domain: [pr, issue]
     range: [repo]
     card: many-to-one
 
   AUTHORED_BY:
-    domain: [pr]
+    domain: [pr, issue]
     range: [person]
     card: many-to-one
 
@@ -312,13 +313,14 @@ relations:
     range: [pr]
     card: many-to-many
 
-  # --- work tracking (Linear) ---
+  # --- work tracking (GitHub Issues and Linear) ---
   TRACKS:
-    domain: [project]
-    range: [milestone]
+    domain: [project, task]
+    range: [milestone, issue]
     card: many-to-many
     doc: >
-      A wiki project page TRACKS a Linear project — the one hand-written edge
+      A wiki project page TRACKS a Linear project; a coding task TRACKS its
+      GitHub or Linear issue. This is a hand-written edge
       of this group. It is what lets /today walk from "what am I building" to
       "which tickets are open on it", and what files an issue event under the
       right page.

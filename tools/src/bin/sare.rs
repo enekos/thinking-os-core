@@ -5,9 +5,10 @@ const USAGE: &str = "\
 sare — the thinking-os graph pipeline
 
   sare build [pages|local]        extract + fuse + serve (local: pages + git, no network)
-  sare extract [all|pages|git|github|linear]   (linear joins `all` once os.yaml has a `linear:` key)
+  sare extract [all|pages|git|github|github-issues|linear]   (linear joins `all` once os.yaml has a `linear:` key)
   sare fuse [--strict]
   sare serve
+  sare today [--refresh]          bounded JSON briefing inputs (offline by default)
   sare hop <node> [-d N]
   sare why <node>
   sare retype [page] [--apply]
@@ -19,6 +20,7 @@ fn extract_all(paths: &Paths, ont: &Ontology, which: &str) -> i32 {
     let order: Vec<&str> = if which == "all" {
         // Linear is opt-in (`linear:` in os.yaml); naming it explicitly always runs it.
         let mut all = vec!["pages", "git", "github"];
+        if paths.github_issues() { all.push("github-issues"); }
         if paths.linear().is_some() {
             all.push("linear");
         }
@@ -45,6 +47,7 @@ fn extract_all(paths: &Paths, ont: &Ontology, which: &str) -> i32 {
                 }
                 extract::github(paths, ont, &repo_ids)
             }
+            "github-issues" => os::watch::github_issues::extract(paths, ont),
             "linear" => extract::linear(paths, ont),
             other => {
                 eprintln!("sare: unknown extractor: {other}");
@@ -129,6 +132,22 @@ fn main() {
     };
 
     let paths = Paths::resolve(value("--root").as_deref());
+    if command == "today" {
+        if flag("--refresh") {
+            let result = std::env::current_exe().map_err(|e| e.to_string()).and_then(|exe| {
+                os::kg::run_capture(
+                    std::process::Command::new(exe).args(["build", "--root"]).arg(&paths.root),
+                    std::time::Duration::from_secs(600),
+                )
+            });
+            match result {
+                Ok(log) => eprint!("{log}"),
+                Err(error) => { eprintln!("sare today: refresh failed: {error}"); std::process::exit(1); }
+            }
+        }
+        println!("{}", os::sare::today::collect(&paths));
+        return;
+    }
     let ont = match Ontology::load(&paths.ontology()) {
         Ok(o) => o,
         Err(e) => {

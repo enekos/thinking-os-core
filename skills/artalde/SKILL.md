@@ -49,9 +49,9 @@ without their say-so. Closed log: `<state dir>/closed.json`.
 - Colour-tag a session (`session.tag:<colour>`, swatches in the Session panel
   or the palette); the tag also colours its iTerm2 tab. Labels override titles.
   Both live in `~/.local/state/artalde/tags.json`.
-- Related PRs and tickets are mined from the transcript (GitHub PR URLs, Linear
+- Related PRs and tickets are mined from the transcript (GitHub PR and Issue URLs, Linear
   ids for the teams in `os.yaml`, the branch name) and resolved against
-  `<wiki>/graph/raw/{watch,github,linear}.json` — no network calls.
+  `<wiki>/graph/raw/{watch,github,github-issues,linear}.json` — no network calls.
 
 ## Pull requests (after adar)
 

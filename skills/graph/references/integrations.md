@@ -40,3 +40,40 @@ place aliases belong.
   decay into a blank `not-open` placeholder.
 - **Rate limits** — `gh` backs off and the extractor reports a partial pull.
   The next build fills the gap.
+
+## GitHub Issues
+
+GitHub Issues use the existing `gh` login and `me.github`; no Linear setup is
+needed. `sare extract github-issues` reads assigned open issues and closed
+issues updated in the last 14 days. Full `sare build` includes it by default;
+`github_issues: false` in `os.yaml` opts out. Local/pages builds stay offline.
+
+- Identity: `gh:<owner>/<repo>/issues/<number>`; PRs remain `gh:<owner>/<repo>#<number>`.
+- Edges: issue `OPENED_IN` repo, `ASSIGNED_TO` owner, `SUBTASK_OF` parent,
+  blocker `BLOCKS` issue, PR `IMPLEMENTS` issue from GitHub's own closing links.
+  A title or branch mentioning `#123` is not proof of implementation.
+- State: Open → `unstarted`, completed closure → `completed`, not-planned
+  closure → `canceled`. Reopening returns to `unstarted`; GitHub Projects
+  custom workflow fields are not inferred from labels.
+- Priority labels: `urgent/high/medium/low`, `priority: <level>`, or `p0`–`p3`.
+  Other labels do not imply priority.
+- `zaindu poll` seeds Issues independently, then records assignment, state,
+  completion, priority, unblocking and other people's latest comments. A missing
+  issue does not imply closure. Own/bot comments do not request a reply.
+- Failed/truncated reads retain the last complete snapshot. The work view,
+  `sare today`, ikusi status board and artalde ticket links consume the result.
+
+Scope is issues assigned to the configured owner, across repositories. Assign
+an issue to yourself to include it. Polling does not create, close or comment
+on remote issues. Use explicit user instructions for remote writes, then
+`gh issue view <number> --repo <owner/repo>` and the appropriate `gh issue`
+command. Link project pages to their repository with `LIVES_IN`; proposals file
+GitHub Issue events under that project automatically.
+
+Coding tasks can set `issue: gh:owner/repo/issues/123` (or a Linear id) to
+create `task TRACKS issue`.
+
+Existing wikis must add `issue` to the `OPENED_IN` domain, and allow
+`TRACKS` from tasks to issues in their ontology;
+compare `template/graph/ontology.yaml`. The installer never replaces a curated
+ontology. New wikis receive this rule automatically.

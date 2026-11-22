@@ -68,10 +68,11 @@ pub fn board(snap: &Snapshot, limit: usize) -> Value {
     let open: Vec<&Pr> = snap.prs.values().filter(|p| p.lifecycle == Lifecycle::Open).collect();
     let mine: Vec<&Pr> = open.iter().copied().filter(|p| p.mine).collect();
     let review: Vec<&Pr> = open.iter().copied().filter(|p| !p.mine && p.review_requested_of_me).collect();
-    let doing: Vec<&Issue> = snap.issues.values().filter(|i| i.state_type == "started").collect();
+    let doing: Vec<&Issue> = snap.issues.values().chain(snap.github_issues.values()).filter(|i| i.state_type == "started").collect();
     let next: Vec<&Issue> = snap
         .issues
         .values()
+        .chain(snap.github_issues.values())
         .filter(|i| i.is_open() && i.state_type != "started")
         .collect();
 
@@ -90,6 +91,8 @@ pub fn board(snap: &Snapshot, limit: usize) -> Value {
         "taken_at": snap.taken_at,
         "login": snap.login,
         "linear": !snap.issues_at.is_empty(),
+        "github_issues": !snap.github_issues_at.is_empty(),
+        "issues_at": {"linear": snap.issues_at, "github": snap.github_issues_at},
         "opened": prs(mine),
         "review": prs(review),
         "doing": issues(doing),

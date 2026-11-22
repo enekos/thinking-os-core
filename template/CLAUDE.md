@@ -17,7 +17,7 @@ belongs in a skill reference.
 ## Layout
 
 ```
-CLAUDE.md  README.md  os.yaml (me.github, linear)  log.md (append-only)  index.md (GENERATED)
+CLAUDE.md  README.md  Makefile  os.yaml (me.github, github_issues, linear)  log.md (append-only)  index.md (GENERATED)
 graph/      ontology.yaml · services.tsv (hand-kept) · wiki-{nodes,edges}.tsv (GENERATED, tracked)
             nodes.tsv/edges.tsv (GENERATED, gitignored — full graph incl. GitHub)
             events/YYYY-MM.tsv (zaindu ledger) · raw/ (gitignored) · views/ (GENERATED)
@@ -73,6 +73,8 @@ sources:
 
 - Copy `tasks/_example.md`, `attempts/_example.md`, `tests/_example.md`; never
   edit the underscore examples into real records.
+- Optional task `issue:` links a GitHub Issue (`gh:owner/repo/issues/123`)
+  or Linear identifier through `TRACKS`; remote trackers own ticket text.
 - Projects keep the latest 20 non-merge commits by default (`history: N`).
   Task `commits` and test `commit` SHAs retain older relevant commits.
 - `TESTS` records an execution; only `passed` + `exit_code: 0` earns `VERIFIES`.
