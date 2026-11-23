@@ -1,0 +1,141 @@
+# The icons artalde ships, one Lucide name per line (https://lucide.dev/icons).
+# `name: Variant` picks the Rust variant; otherwise it is the PascalCase name.
+# After editing: python3 tools/icons.py <path to lucide.ttf + codepoints.json dir>
+search
+plus
+x: Close
+square: Stop
+crosshair: Focus
+rotate-ccw: Reopen
+ellipsis: More
+settings: Gear
+sun
+moon
+square-terminal: Terminal
+terminal: Prompt
+send
+arrow-up
+arrow-down
+arrow-left
+arrow-right
+arrow-up-right
+chevron-right
+chevron-down
+chevron-left
+chevron-up
+check
+check-check
+trash-2: Sweep
+git-branch: Branch
+square-code: Editor
+code
+refresh-cw: Refresh
+external-link: External
+copy
+clipboard
+clipboard-check
+git-pull-request: PullRequest
+git-pull-request-draft: PullRequestDraft
+git-pull-request-closed: PullRequestClosed
+git-merge: Merge
+git-commit-horizontal: Commit
+git-compare: Compare
+git-fork: Fork
+folder
+folder-open
+folder-git-2: Repo
+file
+file-diff
+file-text
+diff
+message-square: Comment
+message-square-plus: CommentPlus
+reply
+eye
+eye-off
+scan-eye: Peek
+bot
+inbox
+bell
+bell-off
+layout-grid
+layout-dashboard
+columns-2: SplitRight
+rows-2: SplitDown
+panel-left
+panel-right
+panel-bottom
+maximize-2: Maximize
+minimize-2: Minimize
+play
+pause
+circle
+circle-dot
+circle-check
+circle-x
+circle-alert
+circle-dashed
+triangle-alert: Warning
+info
+clock
+history
+command
+keyboard
+sparkles
+pin
+tag
+link
+filter
+list
+list-checks
+list-tree
+corner-down-left: Return
+palette
+zap
+rocket
+package
+user
+users
+bookmark
+star
+lock
+download
+upload
+pencil
+square-pen: Compose
+undo-2: Undo
+shield-check
+bug
+activity
+layers
+globe
+server
+cpu
+hash
+at-sign
+power
+save
+loader-circle: Loader
+thumbs-up
+thumbs-down
+sliders-horizontal: Sliders
+grip-vertical: Grip
+app-window: Window
+plug
+wrench
+book-open
+monitor
+archive
+flag
+workflow
+radar
+gauge
+scroll-text: Log
+square-plus
+square-minus
+square-check-big: SquareCheck
+unfold-vertical: Unfold
+fold-vertical: Fold
+cloud
+ship
+container

@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["crates/artalde-core", "crates/artalde-mods", "crates/artalde"]
+members = [
+    "crates/artalde-core",
+    "crates/artalde-mods",
+    "crates/artalde-vt",
+    "crates/artalde-host",
+    "crates/artalde",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +18,8 @@ repository = "https://github.com/enekos/artalde"
 [workspace.dependencies]
 artalde-core = { path = "crates/artalde-core" }
 artalde-mods = { path = "crates/artalde-mods" }
+artalde-vt = { path = "crates/artalde-vt" }
+artalde-host = { path = "crates/artalde-host" }
 anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }

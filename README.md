@@ -65,9 +65,16 @@ Then, from the wiki directory in Claude Code: `/today`, `/ingest <url>`,
 ## artalde — the agent control plane
 
 `artalde` is a native window (egui) over the coding agents running on this
-machine, in the spirit of [herdr](https://github.com/herdrdev/herdr-app) but as
-a control plane: agents keep running in your terminal, artalde shows which
-need you and gets you there.
+machine, in the spirit of [herdr](https://github.com/herdrdev/herdr-app): it
+shows which agents need you, runs them in its own terminals, and reviews their
+pull requests.
+
+- **Terminals** — Ghostty's emulator (`libghostty-vt`) in split panes and
+  tabs. A small host process owns the programs, so they outlive the window;
+  `artalde term run|ls|read|send` drives them from a shell or an agent.
+  Agents can stay in iTerm2 instead (`"terminal": "iterm"`). See
+  `artalde/docs/terminals.md`; building needs Zig 0.16 and the
+  `artalde/vendor/ghostty` submodule.
 
 - **Agents** — every Claude Code session reports through its hooks
   (`artalde hooks` prints the entries; `--install` merges them). Status is

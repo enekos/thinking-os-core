@@ -8,6 +8,7 @@
 //! - [`config`] loads the live-reloaded layouts, themes, keys and settings.
 
 pub mod catalog;
+pub mod changes;
 pub mod claude;
 pub mod command;
 pub mod config;
@@ -18,6 +19,7 @@ pub mod keys;
 pub mod layout;
 pub mod lifecycle;
 pub mod model;
+pub mod panes;
 pub mod probe;
 pub mod review;
 pub mod store;

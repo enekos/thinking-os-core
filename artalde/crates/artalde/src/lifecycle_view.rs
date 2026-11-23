@@ -66,6 +66,12 @@ impl App {
         let Some(s) = self.snap.session(id) else {
             return;
         };
+        if self.session_terminal(id).is_some() {
+            let name = s.name();
+            self.type_in_terminal(id, "<esc>", false);
+            self.push_log(format!("stopped the turn of {name}"));
+            return;
+        }
         match s.rec.tty.clone() {
             Some(tty) => {
                 let name = s.name();
@@ -82,6 +88,9 @@ impl App {
 
     /// `session.wrap`: ask a Claude session to close out its work.
     pub(crate) fn wrap_session(&mut self, id: &str) {
+        if self.type_in_terminal(id, "/wrap", true) {
+            return;
+        }
         let Some(tty) = self.snap.session(id).and_then(|s| s.rec.tty.clone()) else {
             return self.push_log("wrap: that session has no terminal");
         };
@@ -126,6 +135,15 @@ impl App {
             self.closing.insert(id.clone(), now);
             names.push(s.name());
             if self.shot.is_some() {
+                continue;
+            }
+            if let Some(t) = self.session_terminal(id) {
+                // The host ends everything in the terminal with it.
+                if self.terms.enabled() {
+                    self.close_terminal(t);
+                } else {
+                    self.push_log(format!("dry run: close terminal {t}"));
+                }
                 continue;
             }
             self.submit_job(Job::Close {
@@ -203,7 +221,9 @@ impl App {
             self.closed.push(c);
             return;
         };
-        self.submit_job(Job::Spawn { line });
+        if !self.run_embedded(&line, Some(&c.name)) {
+            self.submit_job(Job::Spawn { line });
+        }
         self.launches.push(Launch {
             repo: c.repo.clone().unwrap_or_default(),
             dir: Some(c.cwd.clone()),
@@ -561,7 +581,7 @@ impl App {
         }
         if start && let Ok(line) = self.spawn_line(&form) {
             let launch = self.launch_of(&form);
-            if self.shot.is_none() {
+            if self.shot.is_none() && !self.run_embedded(&line, None) {
                 self.submit_job(Job::Spawn { line });
             }
             self.launches.push(launch);

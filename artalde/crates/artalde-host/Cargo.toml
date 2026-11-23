@@ -1,0 +1,21 @@
+[package]
+name = "artalde-host"
+description = "The process that owns artalde's terminals, its wire protocol and client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rustix = { version = "1.1", default-features = false, features = ["std", "event", "fs", "process", "pty", "stdio", "termios"] }
+signal-hook = { version = "0.3", default-features = false, features = ["iterator"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = { version = "0.2", default-features = false }
+
+[lints]
+workspace = true

@@ -15,6 +15,11 @@ pub fn show(ui: &mut egui::Ui, theme: &Theme, node: &UiNode, clicked: &mut Vec<A
     draw(ui, theme, node, clicked, &mut path);
 }
 
+/// An unknown name draws a dashed circle rather than nothing.
+fn named_icon(name: &str) -> kit::Icon {
+    kit::Icon::named(name).unwrap_or(kit::Icon::CircleDashed)
+}
+
 fn rich(theme: &Theme, node: &UiNode, default_color: Option<Color32>) -> RichText {
     let mut t = RichText::new(&node.text);
     if let Some(size) = node.size {
@@ -162,7 +167,20 @@ fn draw(
             }
             Some(resp)
         }
-        Kind::Button => Some(kit::button(ui, theme, &node.text, None)),
+        Kind::Button => Some(match node.icon.as_deref().map(named_icon) {
+            Some(icon) => kit::button_icon(ui, theme, icon, &node.text, None),
+            None => kit::button(ui, theme, &node.text, None),
+        }),
+        Kind::Icon => {
+            let color = node
+                .color
+                .as_deref()
+                .map_or(style::c(theme.dim), |c| token(theme, c));
+            let size = node.size.unwrap_or(14.0);
+            let (rect, resp) = ui.allocate_exact_size(egui::vec2(size, size), Sense::hover());
+            kit::paint_icon(ui.painter(), rect, named_icon(&node.text), color);
+            Some(resp)
+        }
         Kind::Badge => {
             let color = node
                 .color

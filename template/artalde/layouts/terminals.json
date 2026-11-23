@@ -1,0 +1,14 @@
+{
+  "title": "Terminals",
+  "root": { "column": [
+    { "row": [
+      { "block": "agents", "padding": 12, "size": { "px": 300 }, "min": 220, "max": 520, "resizable": true },
+      { "block": "terminal", "padding": 0, "border": false, "background": "background", "min": 360 },
+      { "stack": [
+        { "block": "detail", "title": "Session", "padding": 14 },
+        { "block": "prs", "title": "Pull requests" }
+      ], "size": { "px": 360 }, "min": 280, "max": 720, "resizable": true, "padding": 14 }
+    ], "gap": 10 },
+    { "block": "status", "size": { "px": 44 }, "min": 44, "padding": 8, "border": false, "background": "background" }
+  ] }
+}

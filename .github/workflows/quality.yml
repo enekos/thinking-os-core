@@ -47,9 +47,15 @@ jobs:
   artalde:
     # eframe needs a desktop target; artalde's terminal actions are macOS-only.
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Ghostty's emulator, built by artalde-vt.
+          submodules: true
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
