@@ -4,7 +4,8 @@ import type { Meta, Scene } from '../src/api';
 
 const meta: Meta = {
   root: '/wiki',
-  loaded_at: '1',
+  loaded_at: '2026-01-01T00:00:00Z',
+  revision: '1',
   nodes: 1200,
   edges: 2400,
   types: [

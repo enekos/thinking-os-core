@@ -8,6 +8,7 @@ export interface Meta {
   nodes: number;
   edges: number;
   loaded_at: string;
+  revision: string;
   root: string;
   types: NodeType[];
   type_links: { source: string; target: string; count: number }[];

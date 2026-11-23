@@ -7,7 +7,7 @@
   import Spotlight from './Spotlight.svelte';
   let { meta }: { meta: Meta } = $props();
   const starts = query(() => {
-    void meta.loaded_at;
+    void meta.revision;
     return api.search('', '', 6);
   });
   const types = $derived([...meta.types].sort((a, b) => b.c - a.c).slice(0, 5));
@@ -27,7 +27,7 @@
     />
   </section>
 {:else if anchor}
-  <Spotlight node={anchor} version={meta.loaded_at} />
+  <Spotlight node={anchor} version={meta.revision} />
 {:else if starts.error}<QueryError query={starts} />{:else}<div class="surface-loading">
     Loading your neighborhood…
   </div>{/if}

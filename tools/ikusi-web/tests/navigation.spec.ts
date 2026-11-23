@@ -24,7 +24,8 @@ async function workspace(page: Page) {
       case '/api/meta':
         return reply({
           root: '/wiki',
-          loaded_at: String(state.version),
+          loaded_at: '2026-01-01T00:00:00Z',
+          revision: String(state.version),
           nodes: nodes.length,
           edges: 0,
           type_links: [],

@@ -35,13 +35,13 @@
   const grouped = $derived(!id && mapView === 'collections');
   const scene = query(
     () => {
-      return api.scene(id, id ? depth : 0, meta.loaded_at);
+      return api.scene(id, id ? depth : 0, meta.revision);
     },
     { enabled: () => !grouped },
   );
   const detail = query(
     () => {
-      void meta.loaded_at;
+      void meta.revision;
       return api.node(id);
     },
     { enabled: () => !!id },

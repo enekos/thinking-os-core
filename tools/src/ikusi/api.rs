@@ -153,6 +153,7 @@ fn meta(store: &Store) -> Value {
         "edges": store.edges.len(),
         "dangling": store.dangling,
         "loaded_at": store.loaded_at,
+        "revision": store.revision(),
         "root": store.root.to_string_lossy(),
         "types": types,
         "relations": relations,

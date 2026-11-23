@@ -18,7 +18,7 @@
     ...meta.types.map((t) => ({ label: collection(t.t), value: t.t })),
   ]);
   const result = query(() => {
-    void meta.loaded_at;
+    void meta.revision;
     const start = offset;
     return api.search(term, type, size, start).then((page) => ({ ...page, start }));
   });

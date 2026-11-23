@@ -12,12 +12,12 @@
   let meta = $state.raw<Meta>();
   $effect(() => {
     const next = metadata.data;
-    if (next && next.loaded_at !== meta?.loaded_at) meta = next;
+    if (next && next.revision !== meta?.revision) meta = next;
   });
   let route = $state(currentRoute());
   const ids = query(
     () => {
-      void meta?.loaded_at;
+      void meta?.revision;
       return api.ids();
     },
     { enabled: () => !!meta && (!!route.id || route.page === 'status') },

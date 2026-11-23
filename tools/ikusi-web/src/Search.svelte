@@ -11,7 +11,7 @@
   let list: HTMLDivElement;
   const result = query(
     () => {
-      void meta.loaded_at;
+      void meta.revision;
       return api.search(term, types.join(','), 50);
     },
     { enabled: () => open },
