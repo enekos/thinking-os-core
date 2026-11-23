@@ -22,13 +22,16 @@ and accepts title, ID and summary searches. Collection links narrow it by type.
 1. **Search reaches every surface form.** `42` finds `gh:owner/repo#42`. Ranking
    is id > title > summary, word boundary over mid-word, with a subsequence
    fallback and a type weight, so a project beats the PR that touched it.
-2. **The node details list the whole neighborhood.** Every edge touching
-   the node, grouped by verb and split by direction, each row carrying the other
-   node's type, state and provenance, linking out to GitHub or the live host.
-   The Wiki page tab renders markdown and navigable `[[links]]`.
-3. **Neighborhood depth is adjustable.** Opening a node starts with its immediate
-   neighbors. Choose two or three hops to expand further. Traversal stops at hubs:
-   two hops from a PR reach its author, not the author's hundreds of other PRs.
+2. **Read the node at full width.** Wiki nodes open on their rendered page with
+   navigable `[[links]]`. PR nodes open on lifecycle, review decision, checks,
+   branch names and file-by-file diffs read from GitHub through the local
+   authenticated `gh` CLI. Refresh updates the status and diff. Files are paged
+   ten at a time. Binary files and oversized patches link out to GitHub.
+   If GitHub is unavailable, the last graph status and connections remain usable.
+3. **Explore connections on demand.** Connections lists incoming and outgoing
+   edges grouped by relation, with provenance. Neighborhood opens the map at
+   the chosen hop depth. Press 1, 2 or 3 to open it at that depth. Traversal
+   stops at hubs so a PR can reach its author without expanding all their PRs.
 4. **It reloads itself.** TSV mtimes are checked per request, so a `sare build`
    in another terminal lands in the open tab.
 

@@ -736,7 +736,6 @@ main:focus {
 .search-hint,
 .filter-toggle,
 .map-tools,
-.actions,
 .node-meta,
 .work-tags {
   display: flex;
@@ -840,15 +839,12 @@ main:focus {
   border-bottom: 1px solid var(--o-border);
   font-size: 0.9rem;
 }
-.explore-grid,
 .board-grid {
   display: grid;
   gap: 18px;
   align-items: start;
 }
-.explore-grid.focused {
-  grid-template-columns: minmax(0, 1.45fr) minmax(300px, 1fr);
-}
+
 .map-tools {
   padding: 10px 14px;
   justify-content: space-between;
@@ -936,22 +932,32 @@ main:focus {
   display: block;
   padding: 0 14px 12px;
 }
+.node-workspace {
+  max-width: none;
+}
 .inspector {
+  --reader-pad: clamp(16px, 2.4vw, 34px);
+  min-width: 0;
   overflow-wrap: anywhere;
 }
-.inspect-head,
-.inspect-tabs,
-.wiki-body,
-.relations {
-  padding: 17px 19px;
+.inspect-head {
+  padding: var(--reader-pad) var(--reader-pad) 18px;
 }
-.inspect-head h2 {
-  font-size: 1.6rem;
-  margin: 11px 0 4px;
-  letter-spacing: -0.045em;
+.node-toolbar,
+.node-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.node-toolbar {
+  justify-content: space-between;
+  gap: 10px;
+}
+.node-actions {
+  margin-left: auto;
 }
 .node-meta,
-.actions,
 .work-tags {
   flex-wrap: wrap;
 }
@@ -959,27 +965,60 @@ main:focus {
   font-size: 0.82rem;
   color: var(--o-text-2);
 }
+.node-meta a {
+  text-decoration: none;
+  font-weight: 600;
+}
+.node-meta a:hover {
+  text-decoration: underline;
+}
 .id-text {
   font: 0.78rem var(--o-mono);
   color: var(--o-text-3);
 }
-.summary {
-  margin: 10px 0 6px;
-  font-size: 0.95rem;
-}
-.actions {
+.inspect-head h1 {
   margin-top: 14px;
-  gap: 6px;
+  font-size: clamp(1.8rem, 3.3vw, 3.1rem);
+  text-wrap: pretty;
+}
+.summary {
+  margin-top: 10px;
+  font-size: 1.04rem;
+  color: var(--o-text-2);
+}
+.node-stamps {
+  margin-top: 12px;
 }
 .inspect-tabs {
-  padding-top: 0;
+  padding: 0 var(--reader-pad) 14px;
+  overflow-x: auto;
 }
 .wiki-body,
 .relations {
   border-top: 1px solid var(--o-border);
+  padding: var(--reader-pad);
 }
 .wiki-body {
-  overflow: auto;
+  min-width: 0;
+  overflow-x: auto;
+}
+.wiki-body .o-prose {
+  max-width: none;
+  width: 100%;
+}
+.inspector > .graph-card {
+  border: 0;
+  border-top: 1px solid var(--o-border);
+  border-radius: 0;
+}
+@media (max-width: 650px) {
+  .inspect-tabs .o-segmented {
+    flex-wrap: wrap;
+  }
+  .inspect-tabs .o-segmented button {
+    padding-inline: 8px;
+    font-size: 0.77rem;
+  }
 }
 .wiki-body pre {
   overflow-x: auto;
@@ -1096,9 +1135,7 @@ main:focus {
   .home-columns .row-count {
     display: none;
   }
-  .explore-grid.focused {
-    grid-template-columns: minmax(0, 1.2fr) minmax(265px, 1fr);
-  }
+
   .metric {
     padding: 16px;
     gap: 10px;
@@ -1120,9 +1157,6 @@ main:focus {
   }
   .breadcrumbs {
     margin-right: auto;
-  }
-  .explore-grid.focused {
-    grid-template-columns: minmax(0, 1.2fr) minmax(255px, 1fr);
   }
 }
 @media (max-width: 650px) {
@@ -1198,7 +1232,6 @@ main:focus {
     font-size: 0.75rem;
   }
   .home-columns,
-  .explore-grid.focused,
   .board-grid {
     grid-template-columns: 1fr;
     gap: 14px;
@@ -1248,8 +1281,7 @@ main:focus {
   }
 }
 
-.mobile-brand,
-.jump-details {
+.mobile-brand {
   display: none;
 }
 @media (max-width: 650px) {
@@ -1259,8 +1291,5 @@ main:focus {
     font-weight: 700;
     letter-spacing: -0.05em;
     text-decoration: none;
-  }
-  .jump-details {
-    display: inline-flex;
   }
 }

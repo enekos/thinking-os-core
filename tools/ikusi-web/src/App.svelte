@@ -95,7 +95,7 @@
 </script>
 
 <svelte:window onhashchange={navigate} onkeydown={keydown} />
-<svelte:head><title>{route.type ? collection(route.type) : crumb} · Ikusi</title></svelte:head>
+<svelte:head><title>{route.id ? 'Node details' : route.type ? collection(route.type) : crumb} · Ikusi</title></svelte:head>
 <a
   class="skip"
   href="#workspace"
@@ -174,7 +174,7 @@
       <div class="breadcrumbs">
         <a class="mobile-brand" href="#/">ikusi</a><Icon name="columns" size={16} /><span>
           Workspace
-        </span><span>/</span><b>{route.type ? collection(route.type) : crumb}</b>
+        </span><span>/</span><b>{route.id ? 'Node details' : route.type ? collection(route.type) : crumb}</b>
       </div>
       <div class="top-actions">
         <button class="search-trigger" aria-label="Search workspace" onclick={() => (search = true)}>
@@ -196,7 +196,7 @@
         </button>
       </div>
     </header>
-    <main id="workspace" tabindex="-1">
+    <main id="workspace" class:node-workspace={!!route.id} tabindex="-1">
       {#if metadata.error}<QueryError query={metadata} title="Could not refresh the workspace" />{/if}
       {#if meta}
         {#if route.page === 'overview'}<Overview {meta} />

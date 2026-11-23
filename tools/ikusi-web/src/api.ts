@@ -25,6 +25,27 @@ export interface GraphNode {
   link: string | null;
   local: string | null;
 }
+export type NodeView = 'page' | 'pr' | 'connections' | 'map';
+export interface PullStatus {
+  state: 'OPEN' | 'CLOSED' | 'MERGED';
+  isDraft: boolean;
+  reviewDecision: string | null;
+  checks: string | null;
+  headRefName: string;
+  baseRefName: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+}
+export interface ChangedFile {
+  filename: string;
+  previous_filename: string | null;
+  status: string;
+  additions: number;
+  deletions: number;
+  patch: string | null;
+  truncated: boolean;
+}
 export interface Neighbor extends GraphNode {
   prov: string;
   conf: number;
@@ -130,6 +151,8 @@ export const api = {
   search: (q = '', type = '', limit = 20, offset = 0) =>
     request<Search>('search', { q, type, limit: String(limit), offset: String(offset) }),
   node: (id: string) => request<Detail>('node', { id, per_relation: '25' }),
+  pullStatus: (id: string) => request<PullStatus>('pr', { id }),
+  pullFiles: (id: string, page: number) => request<ChangedFile[]>('pr/files', { id, page: String(page) }),
   connections: (id: string, group: Group, offset: number) =>
     request<{ items: Neighbor[]; count: number; offset: number }>('connections', {
       id,

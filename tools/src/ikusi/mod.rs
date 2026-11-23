@@ -1,5 +1,6 @@
 pub mod api;
 mod layout;
+mod pull_request;
 pub mod status;
 pub mod store;
 

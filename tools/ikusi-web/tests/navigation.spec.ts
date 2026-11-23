@@ -60,6 +60,7 @@ test('a poll refreshes the open neighborhood only when its graph changes', async
   const state = await workspace(page);
   await page.clock.install();
   await page.goto('/#/n/project%2F1');
+  await page.getByRole('radio', { name: 'Neighborhood' }).click();
   await expect(page.locator('canvas')).toBeVisible();
   const tick = async () => {
     const response = page.waitForResponse((r) => r.url().endsWith('/api/meta'));
@@ -90,7 +91,7 @@ test('directory counts match the displayed page and back restores that page', as
   release();
   await expect(page.getByText('31–35 of 35')).toBeVisible();
   await page.getByRole('link', { name: /Project 31/ }).click();
-  await expect(page.locator('.inspector h2')).toHaveText('Project 31');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Project 31');
   await page.goBack();
   await expect(page.getByText('31–35 of 35')).toBeVisible();
   await expect(page.getByRole('link', { name: /Project 31/ })).toBeVisible();

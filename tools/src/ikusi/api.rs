@@ -250,6 +250,26 @@ fn number(c: &Ctx, key: &str, fallback: usize, cap: usize) -> usize {
     param(c, key).and_then(|v| v.parse().ok()).unwrap_or(fallback).min(cap)
 }
 
+fn pr_view(c: &Ctx, files: bool) -> Response {
+    let snap = c.state::<Live>().current();
+    let Some(i) = param(c, "id").and_then(|id| snap.store.idx(&id)) else {
+        return fail(404, "Pull request node not found.");
+    };
+    let node = &snap.store.nodes[i];
+    let Some(pr) = super::pull_request::PullRequest::from_id(&node.id).filter(|_| node.kind == "pr") else {
+        return fail(400, "This node is not a GitHub pull request.");
+    };
+    let result = if files {
+        pr.files(number(c, "page", 1, 300).max(1))
+    } else {
+        pr.status()
+    };
+    match result {
+        Ok(data) => ok(&data),
+        Err(message) => fail(502, &message),
+    }
+}
+
 pub fn app(live: Live) -> App {
     App::new("ikusi")
         .state(live)
@@ -299,6 +319,8 @@ pub fn app(live: Live) -> App {
                 None => fail(404, &format!("no node `{id}`")),
             }
         })
+        .get("/api/pr", "Current pull request status, review and checks.", |c: &Ctx| pr_view(c, false))
+        .get("/api/pr/files", "One page of changed files and unified diffs.", |c: &Ctx| pr_view(c, true))
         .get("/api/connections", "One page of a node's incoming or outgoing relation.", |c: &Ctx| {
             let snap = c.state::<Live>().current();
             let Some(i) = param(c, "id").and_then(|id| snap.store.idx(&id)) else {
