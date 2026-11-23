@@ -3,6 +3,7 @@
 
 mod actions;
 mod app;
+mod changes_view;
 mod diff_view;
 #[cfg(feature = "headless")]
 mod drive;
@@ -10,6 +11,8 @@ mod feed;
 mod fonts;
 mod gfm;
 mod gh;
+mod host_cli;
+mod icons;
 mod kit;
 mod layout_view;
 mod lifecycle_view;
@@ -22,6 +25,11 @@ mod review_view;
 mod reviewer;
 mod settings_view;
 mod style;
+mod term_app;
+mod term_panes;
+mod term_sprites;
+mod term_view;
+mod terms;
 mod views;
 
 use std::io::Read;
@@ -52,6 +60,9 @@ usage:
     artalde repo <owner/repo>  open PRs, what is deployed where, recent releases
   artalde review <owner/repo#N> [--agent NAME]  run a read-only agent review; its comments
                              are saved as proposals for the PR's Review tab (nothing is posted)
+  artalde host [--foreground]  be the terminal host for this state dir (clients start it on demand)
+  artalde term <cmd>         terminals kept by the host: run | ls | read | send | kill | rm |
+                             attach | status | stop  (`artalde term help`)
   artalde commands           list commands for keys.json and mods
   artalde hooks [--install]  print (or merge into ~/.claude/settings.json) the hook entries
   artalde init               write missing default files into the config folder
@@ -109,6 +120,8 @@ fn main() -> ExitCode {
             }
             Ok(ExitCode::SUCCESS)
         }
+        Some("host") => host_cli::host(args.get(1..).unwrap_or_default()),
+        Some("term") => host_cli::term(args.get(1..).unwrap_or_default()),
         Some("inbox") => inbox_cli(),
         Some("pr") => pr_cli(args.get(1).map(String::as_str).unwrap_or_default()),
         Some("review") => review_cli(args.get(1..).unwrap_or_default()),
@@ -198,6 +211,11 @@ fn run_hook(store: &Store) -> anyhow::Result<()> {
             rec.tty.clone_from(&p.tty);
             rec.agent.clone_from(&p.name);
         }
+    }
+    if rec.terminal.is_none() {
+        rec.terminal = std::env::var("ARTALDE_TERMINAL")
+            .ok()
+            .and_then(|t| t.parse().ok());
     }
     store.save(&rec)?;
     Ok(())

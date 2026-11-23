@@ -12,6 +12,7 @@ fn card(c) { #{ t: "card", children: c } }
 fn button(label, action) { #{ t: "button", text: `${label}`, action: action } }
 fn badge(s) { #{ t: "badge", text: `${s}` } }
 fn dot() { #{ t: "dot" } }
+fn icon(name) { #{ t: "icon", text: `${name}` } }
 fn sep() { #{ t: "sep" } }
 fn space(n) { #{ t: "space", value: n } }
 fn bar(v) { #{ t: "bar", value: v } }
@@ -21,6 +22,7 @@ fn fill(c) { this.fill = c; this }
 fn size(n) { this.size = n; this }
 fn bold() { this.bold = true; this }
 fn mono() { this.mono = true; this }
+fn with_icon(name) { this.icon = `${name}`; this }
 fn tip(s) { this.tip = `${s}`; this }
 fn on_click(a) { this.action = a; this }
 

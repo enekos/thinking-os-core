@@ -52,6 +52,18 @@ impl Lane {
     }
 }
 
+/// The shape a session's state takes in lists and tabs.
+pub(crate) fn state_mark(state: AgentState, stale: bool) -> kit::Mark {
+    match state {
+        _ if stale => kit::Mark::Ghost,
+        AgentState::Working => kit::Mark::Spin,
+        AgentState::Blocked => kit::Mark::Alert,
+        AgentState::Done => kit::Mark::Dot,
+        AgentState::Idle => kit::Mark::Ring,
+        AgentState::Unknown => kit::Mark::Ghost,
+    }
+}
+
 impl App {
     pub(crate) fn builtin(&mut self, ui: &mut egui::Ui, name: &str) {
         match name {
@@ -62,6 +74,10 @@ impl App {
             "detail" => self.detail(ui),
             "status" => self.status(ui),
             "log" => self.log_panel(ui),
+            "terminal" => {
+                let rect = ui.max_rect();
+                self.terminal_page(ui, rect, crate::terms::HOME_WORKSPACE, false);
+            }
             other => {
                 ui.weak(format!("no panel {other:?}"));
             }
@@ -165,7 +181,6 @@ impl App {
     fn agents(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
         let now = artalde_core::now();
-        let t = ui.input(|i| i.time);
         // Toolbar: lanes on the left, search and New agent on the right.
         let counts: Vec<usize> = Lane::ALL
             .iter()
@@ -266,7 +281,7 @@ impl App {
         if !launches.is_empty() && self.lane == Lane::All {
             kit::section(ui, &theme, "Starting", Some(launches.len()), |_| {});
             for l in &launches {
-                self.launch_row(ui, l, now, t, wide);
+                self.launch_row(ui, l, now, wide);
             }
             ui.add_space(kit::S2);
         }
@@ -309,7 +324,7 @@ impl App {
                 }
             });
             for s in group {
-                self.agent_row(ui, s, now, t, wide);
+                self.agent_row(ui, s, now, wide);
             }
             ui.add_space(kit::S2);
         }
@@ -325,7 +340,7 @@ impl App {
         });
     }
 
-    fn launch_row(&mut self, ui: &mut egui::Ui, l: &Launch, now: u64, t: f64, wide: bool) {
+    fn launch_row(&mut self, ui: &mut egui::Ui, l: &Launch, now: u64, wide: bool) {
         let theme = self.theme.clone();
         let place = match (&l.branch, &l.dir) {
             (Some(b), _) => format!("{} · {b}", l.repo),
@@ -339,8 +354,6 @@ impl App {
             cols.push(Col::Px(170.0));
         }
         cols.push(Col::Px(ACTIONS_W));
-        #[expect(clippy::cast_possible_truncation, reason = "an animation phase")]
-        let pulse = (0.5 + 0.5 * (t * 4.0).sin()) as f32;
         let working = style::c(theme.working);
         kit::row(
             ui,
@@ -350,7 +363,7 @@ impl App {
             false,
             &cols,
             |c, ui| match (c, wide) {
-                (0, _) => kit::status_dot(ui, working.gamma_multiply(0.4 + 0.6 * pulse), pulse),
+                (0, _) => kit::mark(ui, kit::Mark::Spin, working),
                 (1, _) => {
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 1.0;
@@ -374,8 +387,6 @@ impl App {
                 ),
             },
         );
-        ui.ctx()
-            .request_repaint_after(std::time::Duration::from_millis(100));
     }
 
     fn closed_rows(&mut self, ui: &mut egui::Ui, now: u64) {
@@ -409,7 +420,7 @@ impl App {
                 false,
                 &[Col::Px(16.0), Col::Flex, Col::Px(120.0), Col::Px(ACTIONS_W)],
                 |col, ui| match col {
-                    0 => kit::status_dot(ui, style::c(theme.unknown), 0.0),
+                    0 => kit::mark(ui, kit::Mark::Ghost, style::c(theme.unknown)),
                     1 => {
                         kit::text(ui, &c.name, 12.5, style::c(theme.dim));
                     }
@@ -445,7 +456,7 @@ impl App {
         }
     }
 
-    fn agent_row(&mut self, ui: &mut egui::Ui, s: &Session, now: u64, t: f64, wide: bool) {
+    fn agent_row(&mut self, ui: &mut egui::Ui, s: &Session, now: u64, wide: bool) {
         let theme = self.theme.clone();
         let id = s.rec.id.clone();
         let on = self.selected.as_deref() == Some(id.as_str());
@@ -494,15 +505,7 @@ impl App {
             on,
             &cols,
             |c, ui| match (c, wide) {
-                (0, _) => {
-                    #[expect(clippy::cast_possible_truncation, reason = "an animation phase")]
-                    let halo = match state {
-                        AgentState::Blocked => (0.5 + 0.5 * (t * 3.0).sin()) as f32,
-                        AgentState::Working => 0.6,
-                        _ => 0.0,
-                    };
-                    kit::status_dot(ui, sc, halo);
-                }
+                (0, _) => kit::mark(ui, state_mark(state, stage == Stage::Stale), sc),
                 (1, _) => {
                     let content_h = if sub.is_some() { 34.0 } else { 18.0 };
                     let rect = egui::Rect::from_center_size(
@@ -649,74 +652,78 @@ impl App {
 
     /// Right-click menu for a session: the things a developer copies.
     fn session_menu(&mut self, ui: &mut egui::Ui, s: &Session) {
+        let theme = self.theme.clone();
         let id = s.rec.id.clone();
+        let has_tty = s.rec.tty.is_some();
+        let mut fire = None;
+        let item = |ui: &mut egui::Ui, icon: Icon, label: &str, keys: Option<&str>| {
+            let hit = kit::menu_action(ui, &theme, icon, label, keys).clicked();
+            if hit {
+                ui.close();
+            }
+            hit
+        };
+        if item(ui, Icon::ArrowUpRight, "Open as tab", Some("↵")) {
+            fire = Some("session.open");
+        }
+        if has_tty && item(ui, Icon::Focus, "Focus terminal", Some("f")) {
+            fire = Some("session.focus");
+        }
         if s.rec.state == AgentState::Working
-            && s.rec.tty.is_some()
-            && ui.button("Stop turn").clicked()
+            && has_tty
+            && item(ui, Icon::Stop, "Stop turn", Some("."))
         {
-            self.queue.push(Command::new("session.stop", Some(&id)));
+            fire = Some("session.stop");
         }
-        if s.rec.agent == "claude" && s.rec.tty.is_some() && ui.button("Wrap up (/wrap)").clicked()
+        if s.rec.agent == "claude" && has_tty && item(ui, Icon::CheckCheck, "Wrap up (/wrap)", None)
         {
-            self.queue.push(Command::new("session.wrap", Some(&id)));
-        }
-        if ui.button("Close agent").clicked() {
-            self.queue.push(Command::new("session.close", Some(&id)));
-        }
-        ui.separator();
-        if ui.button("Open as tab").clicked() {
-            self.queue.push(Command::new("session.open", Some(&id)));
-        }
-        if ui
-            .add_enabled(s.rec.tty.is_some(), egui::Button::new("Focus terminal"))
-            .clicked()
-        {
-            self.queue.push(Command::new("session.focus", Some(&id)));
+            fire = Some("session.wrap");
         }
         if let Some(w) = &s.worktree {
-            if ui.button("Open in editor").clicked() {
-                self.queue
-                    .push(Command::new("path.edit", Some(&w.display().to_string())));
+            kit::menu_rule(ui, &theme);
+            let path = w.display().to_string();
+            if item(ui, Icon::Editor, "Open in editor", None) {
+                self.queue.push(Command::new("path.edit", Some(&path)));
             }
-            if ui.button("Reveal in Finder").clicked() {
-                self.queue
-                    .push(Command::new("path.open", Some(&w.display().to_string())));
+            if item(ui, Icon::FolderOpen, "Reveal in Finder", None) {
+                self.queue.push(Command::new("path.open", Some(&path)));
             }
         }
-        ui.separator();
-        let copy = |ui: &mut egui::Ui, label: &str, value: String| {
-            if ui.button(label).on_hover_text(&value).clicked() {
-                ui.ctx().copy_text(value);
-            }
-        };
-        copy(ui, "Copy session id", id.clone());
+        kit::menu_rule(ui, &theme);
+        let mut copies = vec![("Copy session id", id.clone())];
         if s.rec.agent == "claude" && !id.starts_with("pid-") {
-            copy(
-                ui,
+            copies.push((
                 "Copy resume command",
                 format!(
                     "cd {} && claude --resume {id}",
                     shell_quote(&s.rec.cwd.display().to_string())
                 ),
-            );
+            ));
         }
         if let Some(w) = &s.worktree {
-            copy(
-                ui,
+            copies.push((
                 "Copy cd to worktree",
                 format!("cd {}", shell_quote(&w.display().to_string())),
-            );
-            copy(ui, "Copy worktree path", w.display().to_string());
+            ));
+            copies.push(("Copy worktree path", w.display().to_string()));
         }
         if let Some(b) = &s.branch {
-            copy(ui, "Copy branch", b.clone());
+            copies.push(("Copy branch", b.clone()));
         }
-        ui.separator();
+        for (label, value) in copies {
+            let r = kit::menu_action(ui, &theme, Icon::Copy, label, None).on_hover_text(&value);
+            if r.clicked() {
+                ui.ctx().copy_text(value);
+                ui.close();
+            }
+        }
+        kit::menu_rule(ui, &theme);
         ui.horizontal(|ui| {
+            ui.add_space(6.0);
             for (name, rgba) in tags::PALETTE {
-                let (rect, resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), Sense::click());
-                ui.painter()
-                    .circle_filled(rect.center(), 6.0, style::c(rgba));
+                let (rect, resp) = ui.allocate_exact_size(egui::vec2(18.0, 22.0), Sense::click());
+                let r = if resp.hovered() { 6.5 } else { 5.5 };
+                ui.painter().circle_filled(rect.center(), r, style::c(rgba));
                 if resp.on_hover_text(name).clicked() {
                     self.queue
                         .push(Command::new("session.tag", Some(&format!("{id}:{name}"))));
@@ -724,6 +731,13 @@ impl App {
                 }
             }
         });
+        kit::menu_rule(ui, &theme);
+        if item(ui, Icon::Close, "Close agent", Some("x")) {
+            fire = Some("session.close");
+        }
+        if let Some(cmd) = fire {
+            self.queue.push(Command::new(cmd, Some(&id)));
+        }
     }
 
     fn spaces(&mut self, ui: &mut egui::Ui) {
@@ -816,17 +830,22 @@ impl App {
             )
             .context_menu(|ui| {
                 if let Some(s) = &slug
-                    && ui.button(format!("Open {s}")).clicked()
+                    && kit::menu_action(ui, &theme, Icon::Repo, &format!("Open {s}"), None)
+                        .clicked()
                 {
                     self.queue.push(Command::new("repo.open", Some(s)));
                     ui.close();
                 }
-                if ui.button("Filter agents to this repo").clicked() {
+                if kit::menu_action(ui, &theme, Icon::Filter, "Filter agents to this repo", None)
+                    .clicked()
+                {
                     self.queue
                         .push(Command::new("space.filter", Some(&sp.repo)));
                     ui.close();
                 }
-                if ui.button("New agent in a new worktree").clicked() {
+                if kit::menu_action(ui, &theme, Icon::Plus, "New agent in a new worktree", None)
+                    .clicked()
+                {
                     self.queue.push(Command::new("spawn.open", Some(&sp.repo)));
                     ui.close();
                 }
@@ -883,22 +902,26 @@ impl App {
                 let path = wt.path.display().to_string();
                 let r = r.on_hover_text(&path);
                 r.context_menu(|ui| {
-                    if ui.button("New agent here").clicked() {
-                        self.queue.push(Command::new("spawn.open", Some(&path)));
+                    for (icon, label, cmd) in [
+                        (Icon::Plus, "New agent here", "spawn.open"),
+                        (Icon::Editor, "Open in editor", "path.edit"),
+                        (Icon::FolderOpen, "Reveal in Finder", "path.open"),
+                    ] {
+                        if kit::menu_action(ui, &theme, icon, label, None).clicked() {
+                            self.queue.push(Command::new(cmd, Some(&path)));
+                            ui.close();
+                        }
                     }
-                    if ui.button("Open in editor").clicked() {
-                        self.queue.push(Command::new("path.edit", Some(&path)));
-                    }
-                    if ui.button("Reveal in Finder").clicked() {
-                        self.queue.push(Command::new("path.open", Some(&path)));
-                    }
-                    if ui.button("Copy path").clicked() {
+                    kit::menu_rule(ui, &theme);
+                    if kit::menu_action(ui, &theme, Icon::Copy, "Copy path", None).clicked() {
                         ui.ctx().copy_text(path.clone());
+                        ui.close();
                     }
                     if let Some(b) = &wt.branch
-                        && ui.button("Copy branch").clicked()
+                        && kit::menu_action(ui, &theme, Icon::Branch, "Copy branch", None).clicked()
                     {
                         ui.ctx().copy_text(b.clone());
+                        ui.close();
                     }
                 });
             }

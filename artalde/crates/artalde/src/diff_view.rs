@@ -13,7 +13,7 @@ use eframe::egui::{
 
 use crate::app::App;
 use crate::gh::Req;
-use crate::kit::{self, Col};
+use crate::kit::{self, Col, Icon};
 use crate::style::{self, tint};
 use crate::views::PrView;
 
@@ -501,6 +501,22 @@ impl App {
             kit::empty(ui, &theme, "No changes", "This PR's diff is empty.");
             return;
         }
+        self.files_split(ui, pr, view, &files);
+    }
+
+    /// The file tree beside the selected file's diff. `pr` with number 0 is
+    /// a local worktree (its `repo` is the path): no GitHub, no comments.
+    pub(crate) fn files_split(
+        &mut self,
+        ui: &mut egui::Ui,
+        pr: &PrRef,
+        view: &mut PrView,
+        files: &[DiffFile],
+    ) {
+        let theme = self.theme.clone();
+        if files.is_empty() {
+            return;
+        }
         // [ and ] step through files.
         let typing = ui.ctx().memory(|m| m.focused().is_some());
         if !typing {
@@ -529,7 +545,7 @@ impl App {
         let tree = egui::Rect::from_min_max(rect.min, egui::pos2(rect.min.x + tree_w, rect.max.y));
         let body = egui::Rect::from_min_max(egui::pos2(tree.max.x + 14.0, rect.min.y), rect.max);
         let mut left = ui.new_child(egui::UiBuilder::new().max_rect(tree));
-        self.file_tree(&mut left, pr, view, &files);
+        self.file_tree(&mut left, pr, view, files);
         ui.painter().vline(
             tree.max.x + 7.0,
             rect.y_range(),
@@ -689,14 +705,13 @@ impl App {
                         .layout(egui::Layout::right_to_left(egui::Align::Center)),
                 );
                 right.spacing_mut().item_spacing.x = 6.0;
-                if kit::button(&mut right, &theme, "›", Some("]"))
-                    .on_hover_text("Next file")
+                right.spacing_mut().item_spacing.x = 2.0;
+                if kit::icon_button(&mut right, &theme, Icon::ChevronRight, "Next file  ]")
                     .clicked()
                 {
                     view.file = (view.file + 1).min(total - 1);
                 }
-                if kit::button(&mut right, &theme, "‹", Some("["))
-                    .on_hover_text("Previous file")
+                if kit::icon_button(&mut right, &theme, Icon::ChevronLeft, "Previous file  [")
                     .clicked()
                 {
                     view.file = view.file.saturating_sub(1);
@@ -717,16 +732,31 @@ impl App {
                 if copy.clicked() {
                     right.ctx().copy_text(f.path.clone());
                 }
-                let github = if narrow {
-                    kit::icon_button(&mut right, &theme, kit::Icon::External, "Open on GitHub")
+                if pr.number == 0 {
+                    let edit = if narrow {
+                        kit::icon_button(&mut right, &theme, kit::Icon::Editor, "Open in editor")
+                    } else {
+                        kit::button_icon(&mut right, &theme, kit::Icon::Editor, "Edit", None)
+                    };
+                    if edit.clicked() {
+                        let full = std::path::Path::new(&pr.repo).join(&f.path);
+                        self.queue.push(artalde_core::command::Command::new(
+                            "path.edit",
+                            Some(&full.display().to_string()),
+                        ));
+                    }
                 } else {
-                    kit::button_icon(&mut right, &theme, kit::Icon::External, "GitHub", None)
-                };
-                if github.clicked() {
-                    self.queue.push(artalde_core::command::Command::new(
-                        "url.open",
-                        Some(&format!("{}/files", pr.url())),
-                    ));
+                    let github = if narrow {
+                        kit::icon_button(&mut right, &theme, kit::Icon::External, "Open on GitHub")
+                    } else {
+                        kit::button_icon(&mut right, &theme, kit::Icon::External, "GitHub", None)
+                    };
+                    if github.clicked() {
+                        self.queue.push(artalde_core::command::Command::new(
+                            "url.open",
+                            Some(&format!("{}/files", pr.url())),
+                        ));
+                    }
                 }
                 let used = right.min_rect().width();
                 let left_rect = egui::Rect::from_min_max(
@@ -859,6 +889,7 @@ impl App {
                 .id_salt(("diff-wrap", pr.to_string(), view.file))
                 .auto_shrink([false, false]);
         }
+        let local = pr.number == 0;
         let row = |ui: &mut egui::Ui, idx: usize, line: &DiffLine| -> Option<(u32, Side, String)> {
             let (bg, gutter_bg, sign, sign_color) = match line.kind {
                 LineKind::Add => (
@@ -961,6 +992,7 @@ impl App {
             let raw = line.text.get(1..).unwrap_or_default().to_owned();
             let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, h), Sense::click());
             let target = match line.kind {
+                _ if local => None,
                 LineKind::Add | LineKind::Context => line.new.map(|n| (n, Side::Right)),
                 LineKind::Remove => line.old.map(|n| (n, Side::Left)),
                 _ => None,

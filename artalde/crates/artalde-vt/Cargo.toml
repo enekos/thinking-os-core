@@ -1,0 +1,15 @@
+[package]
+name = "artalde-vt"
+description = "Ghostty's terminal emulator (libghostty-vt), built from source and wrapped safely"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+links = "ghostty-vt"
+
+[build-dependencies]
+bindgen = "0.72"
+
+[lints]
+workspace = true

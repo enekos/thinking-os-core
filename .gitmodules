@@ -1,0 +1,4 @@
+[submodule "artalde/vendor/ghostty"]
+	path = artalde/vendor/ghostty
+	url = https://github.com/ghostty-org/ghostty
+	shallow = true

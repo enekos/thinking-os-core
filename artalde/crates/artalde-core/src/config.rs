@@ -47,6 +47,10 @@ pub const DEFAULT_FILES: &[(&str, &str)] = &[
         include_str!("../../../../template/artalde/layouts/radar.json"),
     ),
     (
+        "layouts/terminals.json",
+        include_str!("../../../../template/artalde/layouts/terminals.json"),
+    ),
+    (
         "themes/graphite.json",
         include_str!("../../../../template/artalde/themes/graphite.json"),
     ),
@@ -157,6 +161,16 @@ pub struct Settings {
     pub stale_after_mins: u64,
     /// Close the agent's iTerm2 tab too when closing a session.
     pub close_terminal: bool,
+    /// Where agents start and focus goes: `embedded` (artalde's own
+    /// terminals) or `iterm`.
+    pub terminal: String,
+    /// The terminal's font size in points.
+    pub terminal_font_size: f32,
+    /// Option sends Alt (Meta) in terminals instead of typing the layout's
+    /// characters. Off by default: many layouts need Option for `@` or `[`.
+    pub option_as_alt: bool,
+    /// The program a new terminal runs; empty is the login shell.
+    pub shell: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, serde::Serialize)]
@@ -194,6 +208,10 @@ impl Default for Settings {
             review_agents: default_review_agents(),
             stale_after_mins: 60,
             close_terminal: true,
+            terminal: "embedded".into(),
+            terminal_font_size: 12.5,
+            option_as_alt: false,
+            shell: Vec::new(),
         }
     }
 }

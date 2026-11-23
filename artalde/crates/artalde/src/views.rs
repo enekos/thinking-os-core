@@ -18,7 +18,7 @@ use eframe::egui::{self, Color32, CornerRadius, RichText, Sense, Stroke, UiBuild
 
 use crate::app::App;
 use crate::gh::Req;
-use crate::kit::{self, Col};
+use crate::kit::{self, Col, Icon};
 use crate::style::{self, tint};
 use crate::{fonts, markdown};
 
@@ -39,6 +39,8 @@ pub enum Tab {
     Session(String),
     Settings,
     Repo(String),
+    /// A workspace of terminal panes.
+    Terminal(u32),
 }
 
 impl Tab {
@@ -50,6 +52,7 @@ impl Tab {
             Tab::Session(id) => format!("session:{id}"),
             Tab::Settings => "settings".into(),
             Tab::Repo(r) => format!("repo:{r}"),
+            Tab::Terminal(ws) => format!("term:{ws}"),
         }
     }
 
@@ -61,6 +64,7 @@ impl Tab {
             Some(("pr", r)) => PrRef::parse(r).map(Tab::Pr),
             Some(("session", id)) if !id.is_empty() => Some(Tab::Session(id.to_owned())),
             Some(("repo", r)) => crate::repo_view::parse_repo(r).map(Tab::Repo),
+            Some(("term", ws)) => ws.parse().ok().map(Tab::Terminal),
             _ => None,
         }
     }
@@ -376,14 +380,23 @@ impl App {
             ui.label("This writes to GitHub and is not undone automatically.");
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                let go = egui::Button::new(
-                    RichText::new(action.describe()).color(style::c(theme.background)),
+                ui.spacing_mut().item_spacing.x = kit::S2;
+                if kit::primary_with(
+                    ui,
+                    &theme,
+                    None,
+                    &action.describe(),
+                    Some("↵"),
+                    style::c(theme.accent),
                 )
-                .fill(style::c(theme.accent));
-                if ui.add(go).clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                .clicked()
+                    || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                {
                     decided = Some(true);
                 }
-                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                if kit::button(ui, &theme, "Cancel", Some("esc")).clicked()
+                    || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                {
                     decided = Some(false);
                 }
             });
@@ -438,6 +451,22 @@ impl App {
             }
             Tab::Settings => ("⚙".into(), "Settings".into()),
             Tab::Repo(r) => ("▣".into(), r.rsplit('/').next().unwrap_or(r).to_owned()),
+            Tab::Terminal(ws) => {
+                let w = self.terms.workspace(*ws);
+                let name = w.and_then(|w| self.terms.infos.get(&w.focus)).map_or_else(
+                    || "terminal".into(),
+                    |i| clip(&crate::terms::display_name(i), 30),
+                );
+                let panes = w.map_or(1, |w| w.root.leaves().len());
+                (
+                    "❯".into(),
+                    if panes > 1 {
+                        format!("{name} · {panes}")
+                    } else {
+                        name
+                    },
+                )
+            }
             Tab::Session(id) => (
                 "●".into(),
                 self.snap
@@ -500,17 +529,30 @@ impl App {
             let resp = ui.interact(r, egui::Id::unique(("tab", tab.key())), Sense::click());
             let accent = style::c(theme.accent);
             let fill = if on {
-                tint(surface, accent, 0.15)
+                tint(surface, style::c(theme.text), 0.09)
             } else if resp.hovered() {
                 tint(surface, style::c(theme.text), 0.06)
             } else {
                 Color32::TRANSPARENT
             };
-            painter.rect_filled(r, CornerRadius::same(kit::PILL_RADIUS), fill);
-            let fg = if on { accent } else { style::c(theme.dim) };
+            painter.rect_filled(r, CornerRadius::same(kit::BUTTON_RADIUS), fill);
+            if on {
+                painter.rect_stroke(
+                    r,
+                    CornerRadius::same(kit::BUTTON_RADIUS),
+                    Stroke::new(1.0, style::c(theme.border)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            let fg = if on {
+                style::c(theme.text)
+            } else {
+                style::c(theme.dim)
+            };
+            let icon_fg = if on { accent } else { fg };
             let icon_rect = egui::Rect::from_center_size(
                 egui::pos2(r.min.x + 16.0, r.center().y),
-                egui::vec2(13.0, 13.0),
+                egui::vec2(14.0, 14.0),
             );
             match tab {
                 Tab::Session(id) => {
@@ -520,20 +562,39 @@ impl App {
                             |t| style::token(&theme, t),
                         )
                     });
-                    painter.circle_filled(icon_rect.center(), 4.0, c);
+                    let mark = self.snap.session(id).map_or(kit::Mark::Ghost, |s| {
+                        crate::panels::state_mark(s.rec.state, false)
+                    });
+                    let t = ui.input(|i| i.time);
+                    kit::paint_mark(&painter, icon_rect.center(), mark, c, t);
                 }
                 Tab::Pr(pr) => {
                     let c = self
                         .prs
                         .get(pr)
                         .and_then(|v| v.detail.as_ref())
-                        .map_or(fg, |d| check_color(&theme, &d.checks_state));
-                    kit::paint_icon(&painter, icon_rect, kit::Icon::Branch, c);
+                        .map_or(icon_fg, |d| check_color(&theme, &d.checks_state));
+                    kit::paint_icon(&painter, icon_rect, kit::Icon::PullRequest, c);
                 }
-                Tab::Home => kit::paint_icon(&painter, icon_rect, kit::Icon::Terminal, fg),
-                Tab::Inbox => kit::paint_icon(&painter, icon_rect, kit::Icon::Branch, fg),
-                Tab::Settings => kit::paint_icon(&painter, icon_rect, kit::Icon::Gear, fg),
-                Tab::Repo(_) => kit::paint_icon(&painter, icon_rect, kit::Icon::Editor, fg),
+                Tab::Home => {
+                    kit::paint_icon(&painter, icon_rect, kit::Icon::LayoutDashboard, icon_fg)
+                }
+                Tab::Inbox => kit::paint_icon(&painter, icon_rect, kit::Icon::Inbox, icon_fg),
+                Tab::Settings => kit::paint_icon(&painter, icon_rect, kit::Icon::Gear, icon_fg),
+                Tab::Repo(_) => kit::paint_icon(&painter, icon_rect, kit::Icon::Repo, icon_fg),
+                Tab::Terminal(ws) => {
+                    let leaves = self
+                        .terms
+                        .workspace(*ws)
+                        .map(|w| w.root.leaves())
+                        .unwrap_or_default();
+                    if leaves.iter().any(|t| self.terms.bells.contains(t)) {
+                        let t = ui.input(|i| i.time);
+                        kit::paint_mark(&painter, icon_rect.center(), kit::Mark::Alert, accent, t);
+                    } else {
+                        kit::paint_icon(&painter, icon_rect, kit::Icon::Terminal, icon_fg);
+                    }
+                }
             }
             // Only the active tab keeps room for its close button; a hovered
             // one shows it over the end of its label.
@@ -624,17 +685,21 @@ impl App {
             );
             resp.clicked()
         };
-        let plus = right(x + 2.0, kit::Icon::Plus, "Open… (⌘T)", "plus");
+        let plus = right(x + 2.0, kit::Icon::Plus, "New terminal (⌘T)", "plus");
         let settings = right(rect.max.x - h, kit::Icon::Gear, "Settings (⌘,)", "settings");
         let mode = right(
             rect.max.x - 2.0 * h - 4.0,
-            kit::Icon::Sun,
-            "Light / dark (⇧⌘D)",
+            if theme.dark {
+                kit::Icon::Sun
+            } else {
+                kit::Icon::Moon
+            },
+            "Light / dark (⌥⌘D)",
             "mode",
         );
         if plus {
             self.queue
-                .push(artalde_core::command::Command::new("palette.open", None));
+                .push(artalde_core::command::Command::new("term.new", None));
         }
         if settings {
             self.queue
@@ -664,7 +729,21 @@ impl App {
         self.save_tabs();
     }
 
+    /// Close tab `i`. A terminal tab ends its terminals first, and goes
+    /// once the last of them has.
     pub(crate) fn close_tab(&mut self, i: usize) {
+        if let Some(Tab::Terminal(ws)) = self.tabs.get(i)
+            && let Some(w) = self.terms.workspace(*ws)
+        {
+            let terminals = w.root.leaves();
+            self.request_close_terminals(terminals);
+            return;
+        }
+        self.remove_tab(i);
+    }
+
+    /// Take tab `i` away without touching what it showed.
+    pub(crate) fn remove_tab(&mut self, i: usize) {
         if i == 0 || i >= self.tabs.len() {
             return;
         }
@@ -806,7 +885,7 @@ impl App {
         }
         if let Some(e) = &self.inbox.error {
             ui.label(RichText::new(e).color(style::c(theme.danger)));
-            if ui.button("Retry").clicked() {
+            if kit::button_icon(ui, &theme, Icon::Refresh, "Retry", None).clicked() {
                 self.refresh_inbox();
             }
         }
@@ -952,14 +1031,19 @@ impl App {
                 format!("zz -c {repo_name}@{head} claude"),
             ),
         ];
+        let theme = self.theme.clone();
         for (label, value) in items {
-            if !value.is_empty() && ui.button(label).on_hover_text(&value).clicked() {
+            if !value.is_empty()
+                && kit::menu_action(ui, &theme, kit::Icon::Copy, label, None)
+                    .on_hover_text(&value)
+                    .clicked()
+            {
                 ui.ctx().copy_text(value);
                 ui.close();
             }
         }
-        ui.separator();
-        if ui.button("Open on GitHub").clicked() {
+        kit::menu_rule(ui, &theme);
+        if kit::menu_action(ui, &theme, kit::Icon::External, "Open on GitHub", None).clicked() {
             self.queue
                 .push(artalde_core::command::Command::new("url.open", Some(url)));
             ui.close();
@@ -993,7 +1077,7 @@ impl App {
                 match &view.error {
                     Some(e) => {
                         ui.label(RichText::new(e).color(style::c(theme.danger)));
-                        if ui.button("Retry").clicked() {
+                        if kit::button_icon(ui, &theme, Icon::Refresh, "Retry", None).clicked() {
                             self.load_pr(pr);
                         }
                     }
@@ -1318,7 +1402,16 @@ impl App {
                             } else {
                                 style::c(theme.dim)
                             };
-                            if kit::primary(ui, &theme, method.label(), color).clicked() {
+                            if kit::primary_with(
+                                ui,
+                                &theme,
+                                Some(Icon::Merge),
+                                method.label(),
+                                None,
+                                color,
+                            )
+                            .clicked()
+                            {
                                 self.act(
                                     pr,
                                     Action::Merge {
@@ -1327,8 +1420,8 @@ impl App {
                                     },
                                 );
                             }
-                            let r =
-                                kit::button(ui, &theme, "▾", None).on_hover_text("Merge options");
+                            let r = kit::menu_button(ui, &theme, None, "")
+                                .on_hover_text("Merge options");
                             egui::Popup::menu(&r).show(|ui| {
                                 for m in &d.merge_methods {
                                     if kit::menu_item(
@@ -1340,7 +1433,7 @@ impl App {
                                         view.method = Some(*m);
                                     }
                                 }
-                                ui.separator();
+                                kit::menu_rule(ui, &theme);
                                 kit::check(
                                     ui,
                                     &theme,
@@ -1348,12 +1441,30 @@ impl App {
                                     "Delete branch after merge",
                                     12.5,
                                 );
-                                ui.separator();
+                                kit::menu_rule(ui, &theme);
                                 if d.auto_merge.is_some() {
-                                    if ui.button("Disable auto-merge").clicked() {
+                                    if kit::menu_action(
+                                        ui,
+                                        &theme,
+                                        Icon::CircleX,
+                                        "Disable auto-merge",
+                                        None,
+                                    )
+                                    .clicked()
+                                    {
+                                        ui.close();
                                         self.act(pr, Action::DisableAutoMerge);
                                     }
-                                } else if ui.button("Auto-merge when ready").clicked() {
+                                } else if kit::menu_action(
+                                    ui,
+                                    &theme,
+                                    Icon::Zap,
+                                    "Auto-merge when ready",
+                                    None,
+                                )
+                                .clicked()
+                                {
+                                    ui.close();
                                     self.act(
                                         pr,
                                         Action::AutoMerge {
@@ -1365,10 +1476,11 @@ impl App {
                             });
                         }
                         if !d.viewer_is_author {
-                            if kit::button(ui, &theme, "Approve", None).clicked() {
+                            if kit::button_icon(ui, &theme, Icon::Check, "Approve", None).clicked()
+                            {
                                 self.act(pr, Action::Approve(view.composer.trim().to_owned()));
                             }
-                            if kit::button(ui, &theme, "Request changes", None)
+                            if kit::button_icon(ui, &theme, Icon::FileDiff, "Request changes", None)
                                 .on_hover_text("Uses the comment box as the review body")
                                 .clicked()
                             {
@@ -1380,15 +1492,17 @@ impl App {
                         }
                         if d.can_update_branch
                             && d.merge_state == "BEHIND"
-                            && kit::button(ui, &theme, "Update branch", None).clicked()
+                            && kit::button_icon(ui, &theme, Icon::ArrowDown, "Update branch", None)
+                                .clicked()
                         {
                             self.act(pr, Action::UpdateBranch { rebase: false });
                         }
                         let failed = d.failed_runs();
                         if !failed.is_empty()
-                            && kit::button(
+                            && kit::button_icon(
                                 ui,
                                 &theme,
+                                Icon::Refresh,
                                 &format!("Re-run failed ({})", failed.len()),
                                 None,
                             )
@@ -1397,28 +1511,64 @@ impl App {
                             self.act(pr, Action::RerunFailed(failed));
                         }
                         if d.viewer_is_author || d.can_write {
-                            let r = kit::button(ui, &theme, "More ▾", None);
+                            let r = kit::menu_button(ui, &theme, Some(Icon::More), "More");
                             egui::Popup::menu(&r).show(|ui| {
+                                let mut pick = None;
                                 if d.draft {
-                                    if ui.button("Mark ready for review").clicked() {
-                                        self.act(pr, Action::Ready);
+                                    if kit::menu_action(
+                                        ui,
+                                        &theme,
+                                        Icon::PullRequest,
+                                        "Mark ready for review",
+                                        None,
+                                    )
+                                    .clicked()
+                                    {
+                                        pick = Some(Action::Ready);
                                     }
-                                } else if ui.button("Convert to draft").clicked() {
-                                    self.act(pr, Action::ToDraft);
+                                } else if kit::menu_action(
+                                    ui,
+                                    &theme,
+                                    Icon::PullRequestDraft,
+                                    "Convert to draft",
+                                    None,
+                                )
+                                .clicked()
+                                {
+                                    pick = Some(Action::ToDraft);
                                 }
                                 if d.can_update_branch
-                                    && ui.button("Update branch (rebase)").clicked()
+                                    && kit::menu_action(
+                                        ui,
+                                        &theme,
+                                        Icon::ArrowDown,
+                                        "Update branch (rebase)",
+                                        None,
+                                    )
+                                    .clicked()
                                 {
-                                    self.act(pr, Action::UpdateBranch { rebase: true });
+                                    pick = Some(Action::UpdateBranch { rebase: true });
                                 }
-                                ui.separator();
-                                if ui.button("Close pull request").clicked() {
-                                    self.act(pr, Action::Close);
+                                kit::menu_rule(ui, &theme);
+                                if kit::menu_action(
+                                    ui,
+                                    &theme,
+                                    Icon::PullRequestClosed,
+                                    "Close pull request",
+                                    None,
+                                )
+                                .clicked()
+                                {
+                                    pick = Some(Action::Close);
+                                }
+                                if let Some(action) = pick {
+                                    ui.close();
+                                    self.act(pr, action);
                                 }
                             });
                         }
                     } else if d.state == "CLOSED"
-                        && kit::button(ui, &theme, "Reopen", None).clicked()
+                        && kit::button_icon(ui, &theme, Icon::Reopen, "Reopen", None).clicked()
                     {
                         self.act(pr, Action::Reopen);
                     }
@@ -1431,27 +1581,35 @@ impl App {
                 } else {
                     "Review with agent"
                 };
-                if kit::button(ui, &theme, label, Some("⇧⌘R")).clicked() {
+                if kit::button_icon(ui, &theme, Icon::Sparkles, label, Some("⇧⌘R")).clicked() {
                     view.sub = PrSub::Review;
                     if !running {
                         self.queue_review = Some((pr.clone(), view.agent));
                     }
                 }
                 let n = self.pending(pr, view).accepted().count();
-                if n > 0 && kit::button(ui, &theme, &format!("Finish review · {n}"), None).clicked()
+                if n > 0
+                    && kit::button_icon(
+                        ui,
+                        &theme,
+                        Icon::CheckCheck,
+                        &format!("Finish review · {n}"),
+                        None,
+                    )
+                    .clicked()
                 {
                     view.sub = PrSub::Review;
                 }
             }
-            let r = kit::button(ui, &theme, "Copy ▾", None);
+            let r = kit::menu_button(ui, &theme, Some(Icon::Copy), "Copy");
             egui::Popup::menu(&r).show(|ui| self.pr_copy_menu(ui, pr, &d.head, &d.url));
-            if kit::button(ui, &theme, "GitHub ↗", None).clicked() {
+            if kit::button_icon(ui, &theme, Icon::External, "GitHub", None).clicked() {
                 self.queue.push(artalde_core::command::Command::new(
                     "url.open",
                     Some(&d.url),
                 ));
             }
-            if kit::button(ui, &theme, "Reload", Some("⌘R")).clicked() {
+            if kit::button_icon(ui, &theme, Icon::Refresh, "Reload", Some("⌘R")).clicked() {
                 self.load_pr(pr);
             }
         });
@@ -1564,14 +1722,25 @@ impl App {
                             self.md(ui, &c.body, 13.5);
                         }
                         let reply = view.replies.entry(t.id.clone()).or_default();
+                        ui.add_space(kit::S1);
                         ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = kit::S2;
                             if t.can_reply {
-                                ui.add(
-                                    egui::TextEdit::singleline(reply)
-                                        .hint_text("Reply…")
-                                        .desired_width(ui.available_width() - 170.0),
+                                let field = kit::input(
+                                    ui,
+                                    &theme,
+                                    reply,
+                                    "Reply…",
+                                    (ui.available_width() - 190.0).max(120.0),
+                                    false,
                                 );
-                                if ui.button("Reply").clicked() && !reply.trim().is_empty() {
+                                let sent = field.lost_focus()
+                                    && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                if (kit::button_icon(ui, &theme, Icon::Reply, "Reply", None)
+                                    .clicked()
+                                    || sent)
+                                    && !reply.trim().is_empty()
+                                {
                                     let body = std::mem::take(reply);
                                     self.act(
                                         pr,
@@ -1582,10 +1751,18 @@ impl App {
                                     );
                                 }
                             }
-                            if !t.resolved && t.can_resolve && ui.button("Resolve").clicked() {
+                            if !t.resolved
+                                && t.can_resolve
+                                && kit::button_icon(ui, &theme, Icon::Check, "Resolve", None)
+                                    .clicked()
+                            {
                                 self.act(pr, Action::Resolve(t.id.clone()));
                             }
-                            if t.resolved && t.can_unresolve && ui.button("Unresolve").clicked() {
+                            if t.resolved
+                                && t.can_unresolve
+                                && kit::button_icon(ui, &theme, Icon::Undo, "Unresolve", None)
+                                    .clicked()
+                            {
                                 self.act(pr, Action::Unresolve(t.id.clone()));
                             }
                         });
@@ -1690,14 +1867,34 @@ TimelineItem::Comment(c) => card(ui, &theme, None, |ui| {
                     );
                     ui.horizontal(|ui| {
                         let has = !view.composer.trim().is_empty();
-                        if ui
-                            .add_enabled(has && view.busy.is_none(), egui::Button::new("Comment"))
-                            .clicked()
-                        {
+                        ui.spacing_mut().item_spacing.x = kit::S2;
+                        let send = ui
+                            .add_enabled_ui(has && view.busy.is_none(), |ui| {
+                                kit::primary_with(
+                                    ui,
+                                    &theme,
+                                    Some(Icon::Send),
+                                    "Comment",
+                                    None,
+                                    style::c(theme.accent),
+                                )
+                            })
+                            .inner;
+                        if send.clicked() {
                             let body = std::mem::take(&mut view.composer);
                             self.act(pr, Action::Comment(body));
                         }
-                        if has && !d.viewer_is_author && ui.button("Comment as review").clicked() {
+                        if has
+                            && !d.viewer_is_author
+                            && kit::button_icon(
+                                ui,
+                                &theme,
+                                Icon::Comment,
+                                "Comment as review",
+                                None,
+                            )
+                            .clicked()
+                        {
                             let body = std::mem::take(&mut view.composer);
                             self.act(pr, Action::ReviewComment(body));
                         }
@@ -1934,8 +2131,17 @@ TimelineItem::Comment(c) => card(ui, &theme, None, |ui| {
         }
         let rect = ui.available_rect_before_wrap();
         let side_w = SIDE_WIDTH.min(rect.width() * 0.4);
-        let main =
-            egui::Rect::from_min_max(rect.min, egui::pos2(rect.max.x - side_w - 10.0, rect.max.y));
+        // Changes take the whole tab: a diff wants the width more than the
+        // side detail does.
+        let terminal = self.session_terminal(id);
+        let on_changes = self.session_changes.contains(id);
+        let on_terminal =
+            terminal.is_some() && !on_changes && !self.session_transcripts.contains(id);
+        let main = if on_changes {
+            rect
+        } else {
+            egui::Rect::from_min_max(rect.min, egui::pos2(rect.max.x - side_w - 10.0, rect.max.y))
+        };
         let side = egui::Rect::from_min_max(egui::pos2(rect.max.x - side_w, rect.min.y), rect.max);
         let mut left = ui.new_child(UiBuilder::new().max_rect(main));
         left.horizontal(|ui| {
@@ -1947,6 +2153,62 @@ TimelineItem::Comment(c) => card(ui, &theme, None, |ui| {
             ui.painter().circle_filled(dot.center(), 5.0, c);
             ui.label(RichText::new(s.name()).font(fonts::display(22.0)));
         });
+        let dir = s.worktree.clone().unwrap_or_else(|| s.rec.cwd.clone());
+        // The live terminal leads when the agent runs inside artalde.
+        let mut labels = Vec::new();
+        if terminal.is_some() {
+            labels.push(("Terminal".to_owned(), None));
+        }
+        let first = labels.len();
+        labels.push(("Transcript".to_owned(), None));
+        labels.push(("Changes".to_owned(), self.changes_count(&dir)));
+        let current = if on_changes {
+            first + 1
+        } else if on_terminal {
+            0
+        } else {
+            first
+        };
+        left.add_space(kit::S1);
+        if let Some(picked) = kit::tabs(&mut left, &theme, &labels, current) {
+            self.session_changes.remove(id);
+            self.session_transcripts.remove(id);
+            if picked == first + 1 {
+                self.session_changes.insert(id.to_owned());
+            } else if picked == first && terminal.is_some() {
+                self.session_transcripts.insert(id.to_owned());
+            }
+        }
+        left.add_space(kit::S2);
+        if self.session_changes.contains(id) {
+            self.changes_view(&mut left, &dir);
+            return;
+        }
+        if let Some(t) = self.shown_session_terminal(id) {
+            let area = left.available_rect_before_wrap();
+            self.terminal_alone(&mut left, area, t);
+        } else {
+            self.transcript(&mut left, &s, id);
+        }
+        let mut right = ui.new_child(UiBuilder::new().max_rect(side));
+        egui::Frame::new()
+            .fill(style::c(theme.surface))
+            .stroke(Stroke::new(1.0, style::c(theme.border)))
+            .corner_radius(CornerRadius::same(8))
+            .inner_margin(egui::Margin::same(12))
+            .show(&mut right, |ui| {
+                let inner = egui::vec2(side.width() - 26.0, side.height() - 26.0);
+                ui.set_min_size(inner);
+                ui.set_max_width(inner.x);
+                egui::ScrollArea::vertical()
+                    .id_salt(("session-side", id))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| self.builtin(ui, "detail"));
+            });
+    }
+
+    fn transcript(&mut self, left: &mut egui::Ui, s: &artalde_core::model::Session, id: &str) {
+        let theme = self.theme.clone();
         let turns = s
             .rec
             .transcript
@@ -1957,7 +2219,7 @@ TimelineItem::Comment(c) => card(ui, &theme, None, |ui| {
             .id_salt(("convo", id))
             .stick_to_bottom(true)
             .auto_shrink([false, false])
-            .show(&mut left, |ui| {
+            .show(left, |ui| {
                 if turns.is_empty() {
                     ui.label(
                         RichText::new("No transcript for this session.").color(style::c(theme.dim)),
@@ -1982,21 +2244,6 @@ TimelineItem::Comment(c) => card(ui, &theme, None, |ui| {
                         self.md(ui, &t.text, 14.0);
                     });
                 }
-            });
-        let mut right = ui.new_child(UiBuilder::new().max_rect(side));
-        egui::Frame::new()
-            .fill(style::c(theme.surface))
-            .stroke(Stroke::new(1.0, style::c(theme.border)))
-            .corner_radius(CornerRadius::same(8))
-            .inner_margin(egui::Margin::same(12))
-            .show(&mut right, |ui| {
-                let inner = egui::vec2(side.width() - 26.0, side.height() - 26.0);
-                ui.set_min_size(inner);
-                ui.set_max_width(inner.x);
-                egui::ScrollArea::vertical()
-                    .id_salt(("session-side", id))
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| self.builtin(ui, "detail"));
             });
     }
 

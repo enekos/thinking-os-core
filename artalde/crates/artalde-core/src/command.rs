@@ -121,6 +121,18 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("tab.next", "Next tab"),
     ("tab.prev", "Previous tab"),
     ("tab.select", "Go to tab <n>"),
+    ("term.new", "New terminal tab: [<folder>]"),
+    ("term.split", "Split the focused terminal: <right|down>"),
+    ("term.close", "Close the focused terminal pane"),
+    ("term.focus", "Focus the pane to the: <left|right|up|down>"),
+    (
+        "term.zoom",
+        "Zoom the focused pane, or bring the others back",
+    ),
+    ("term.open", "Show a terminal the host is running: <id>"),
+    ("term.clear", "Clear the focused terminal's screen (Ctrl+L)"),
+    ("term.find", "Search the focused terminal"),
+    ("term.reconnect", "Reach for the terminal host again"),
 ];
 
 #[cfg(test)]

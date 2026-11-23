@@ -105,7 +105,7 @@ impl App {
         };
         let base = self.settings_base.take();
         let mut draft = match self.settings_draft.take() {
-            // Saved settings changed underneath (the file, ⇧⌘D, a command):
+            // Saved settings changed underneath (the file, ⌥⌘D, a command):
             // an untouched draft follows them.
             Some(d) if base.as_ref() != Some(&cfg.settings) && base.as_ref() == Some(&d) => {
                 cfg.settings.clone()
@@ -159,7 +159,7 @@ impl App {
             ui.set_width(w);
             // Appearance.
             kit::section(ui, &theme, "Appearance", None, |_| {});
-            field(ui, &theme, "Mode", "System follows macOS. ⇧⌘D toggles light and dark.", |ui| {
+            field(ui, &theme, "Mode", "System follows macOS. ⌥⌘D toggles light and dark.", |ui| {
                 const MODES: [&str; 3] = ["system", "light", "dark"];
                 let labels: Vec<(String, Option<usize>)> =
                     ["System", "Light", "Dark"].iter().map(|l| ((*l).to_owned(), None)).collect();
@@ -226,6 +226,30 @@ impl App {
             });
             field(ui, &theme, "Existing folder", "{dir} {agent} {prompt} are filled in.", |ui| {
                 kit::input(ui, &theme, &mut draft.spawn_here, "", FIELD_W, true);
+            });
+            // Terminals.
+            divider(ui, &theme);
+            kit::section(ui, &theme, "Terminals", None, |_| {});
+            field(ui, &theme, "Agents run in", "Embedded terminals live in a host that outlives this window. iTerm2 keeps the old tabs.", |ui| {
+                const WHERE: [&str; 2] = ["embedded", "iterm"];
+                let labels: Vec<(String, Option<usize>)> =
+                    ["artalde", "iTerm2"].iter().map(|l| ((*l).to_owned(), None)).collect();
+                let at = WHERE.iter().position(|m| *m == draft.terminal).unwrap_or(0);
+                if let Some(i) = kit::tabs(ui, &theme, &labels, at) {
+                    draft.terminal = WHERE[i].to_owned();
+                }
+            });
+            field(ui, &theme, "Terminal font size", "JetBrains Mono, with your Nerd Font for icons.", |ui| {
+                ui.add(egui::Slider::new(&mut draft.terminal_font_size, 9.0..=20.0).step_by(0.5).fixed_decimals(1).suffix(" pt"));
+            });
+            field(ui, &theme, "Option key", "Off types accents (⌥E → ´); on sends Alt, which shells and editors bind.", |ui| {
+                kit::toggle(ui, &theme, &mut draft.option_as_alt, "Option sends Alt");
+            });
+            field(ui, &theme, "Shell", "The program a new terminal runs. Empty is your login shell.", |ui| {
+                let mut line = draft.shell.join(" ");
+                if kit::input(ui, &theme, &mut line, "login shell", FIELD_W, true).changed() {
+                    draft.shell = line.split_whitespace().map(str::to_owned).collect();
+                }
             });
             // GitHub.
             divider(ui, &theme);

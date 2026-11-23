@@ -11,3 +11,10 @@ Each weight ships as its own family name, so weight resolution is exact and
 never silently falls back.
 
 Copied from azala (the design system adar, taula and lemazain share), so artalde reads like them.
+
+## Icons
+
+- **Lucide** — ISC License (`LICENSE-Lucide.txt`). https://lucide.dev
+  `lucide.ttf` is a subset holding only the glyphs in `icons.txt`; add a name
+  there and run `python3 tools/icons.py <lucide dir>`, which rebuilds the
+  subset and `src/icons.rs`.

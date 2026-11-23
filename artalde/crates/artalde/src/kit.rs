@@ -1,12 +1,13 @@
 //! Shared widgets, ported from azala's SwiftUI components so every panel
 //! looks the same: section headers, fixed-height rows with aligned columns,
 //! pills and pill tabs, ghost / primary / danger buttons, icon buttons, a
-//! search field, cards, key hints and empty states. Icons are drawn with
-//! the painter, so they are crisp at any scale and need no font.
+//! search field, cards, key hints and empty states. Icons are Lucide glyphs
+//! from a subset font (`fonts/icons.txt`, `tools/icons.py`).
 
 use artalde_core::theme::Theme;
+use eframe::egui::emath::GuiRounding as _;
 use eframe::egui::{
-    self, Color32, CornerRadius, Pos2, Rect, RichText, Sense, Stroke, UiBuilder, pos2, vec2,
+    self, Color32, CornerRadius, Rect, RichText, Sense, Stroke, UiBuilder, pos2, vec2,
 };
 
 use crate::fonts;
@@ -38,159 +39,15 @@ pub enum Col {
     Flex,
 }
 
-/// Painter-drawn glyphs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Icon {
-    Search,
-    Plus,
-    Close,
-    Stop,
-    Focus,
-    Reopen,
-    More,
-    Gear,
-    Sun,
-    Terminal,
-    Send,
-    ChevronRight,
-    ChevronDown,
-    Check,
-    Sweep,
-    Branch,
-    Editor,
-    Refresh,
-    External,
-    Copy,
-}
+pub use crate::icons::Icon;
 
-/// Draw `icon` centred in `rect`.
+/// Draw `icon` centred in `rect`, as large as its shorter side. The glyph
+/// comes from the bundled Lucide subset, so it is hinted and cached like text.
 pub fn paint_icon(p: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
-    let s = rect.width().min(rect.height());
-    let c = rect.center();
-    let at = |x: f32, y: f32| pos2(c.x + (x - 0.5) * s, c.y + (y - 0.5) * s);
-    let w = (s / 10.0).clamp(1.2, 1.8);
-    let st = Stroke::new(w, color);
-    let line = |a: Pos2, b: Pos2| p.line_segment([a, b], st);
-    let poly = |pts: &[(f32, f32)]| {
-        p.add(egui::Shape::line(
-            pts.iter().map(|(x, y)| at(*x, *y)).collect(),
-            st,
-        ));
-    };
-    match icon {
-        Icon::Search => {
-            p.circle_stroke(at(0.43, 0.43), s * 0.27, st);
-            line(at(0.63, 0.63), at(0.88, 0.88));
-        }
-        Icon::Plus => {
-            line(at(0.5, 0.18), at(0.5, 0.82));
-            line(at(0.18, 0.5), at(0.82, 0.5));
-        }
-        Icon::Close => {
-            line(at(0.24, 0.24), at(0.76, 0.76));
-            line(at(0.76, 0.24), at(0.24, 0.76));
-        }
-        Icon::Stop => {
-            p.rect_filled(
-                Rect::from_center_size(c, vec2(s * 0.62, s * 0.62)),
-                CornerRadius::same(1),
-                color,
-            );
-        }
-        Icon::Focus | Icon::External => {
-            // A box with an arrow leaving its corner.
-            poly(&[(0.55, 0.2), (0.2, 0.2), (0.2, 0.8), (0.8, 0.8), (0.8, 0.45)]);
-            line(at(0.45, 0.55), at(0.85, 0.15));
-            line(at(0.6, 0.15), at(0.85, 0.15));
-            line(at(0.85, 0.15), at(0.85, 0.4));
-        }
-        Icon::Reopen | Icon::Refresh => {
-            let r = s * 0.3;
-            let pts: Vec<Pos2> = (0..=20)
-                .map(|i| {
-                    let a = std::f32::consts::PI * (0.15 + 1.55 * i as f32 / 20.0);
-                    pos2(c.x + r * a.cos(), c.y - r * a.sin())
-                })
-                .collect();
-            let head = pts[0];
-            p.add(egui::Shape::line(pts, st));
-            line(head, head + vec2(-s * 0.2, -s * 0.02));
-            line(head, head + vec2(-s * 0.02, -s * 0.2));
-        }
-        Icon::More => {
-            for x in [0.25, 0.5, 0.75] {
-                p.circle_filled(at(x, 0.5), s * 0.07, color);
-            }
-        }
-        Icon::Gear => {
-            p.circle_stroke(c, s * 0.16, st);
-            for i in 0..8 {
-                let a = std::f32::consts::TAU * i as f32 / 8.0;
-                let d = vec2(a.cos(), a.sin());
-                line(c + d * s * 0.26, c + d * s * 0.4);
-            }
-        }
-        Icon::Sun => {
-            p.circle_filled(c, s * 0.17, color);
-            for i in 0..8 {
-                let a = std::f32::consts::TAU * i as f32 / 8.0;
-                let d = vec2(a.cos(), a.sin());
-                line(c + d * s * 0.3, c + d * s * 0.42);
-            }
-        }
-        Icon::Terminal => {
-            p.rect_stroke(
-                Rect::from_center_size(c, vec2(s * 0.8, s * 0.64)),
-                CornerRadius::same(2),
-                st,
-                egui::StrokeKind::Middle,
-            );
-            poly(&[(0.3, 0.38), (0.42, 0.5), (0.3, 0.62)]);
-            line(at(0.5, 0.63), at(0.7, 0.63));
-        }
-        Icon::Send => {
-            line(at(0.2, 0.5), at(0.8, 0.5));
-            poly(&[(0.55, 0.25), (0.8, 0.5), (0.55, 0.75)]);
-        }
-        Icon::ChevronRight => poly(&[(0.4, 0.25), (0.65, 0.5), (0.4, 0.75)]),
-        Icon::ChevronDown => poly(&[(0.25, 0.4), (0.5, 0.65), (0.75, 0.4)]),
-        Icon::Check => poly(&[(0.22, 0.52), (0.42, 0.72), (0.8, 0.3)]),
-        Icon::Sweep => {
-            // A bin: lid, body, two ribs.
-            line(at(0.2, 0.28), at(0.8, 0.28));
-            line(at(0.4, 0.18), at(0.6, 0.18));
-            poly(&[(0.28, 0.28), (0.33, 0.85), (0.67, 0.85), (0.72, 0.28)]);
-            line(at(0.45, 0.42), at(0.45, 0.72));
-            line(at(0.55, 0.42), at(0.55, 0.72));
-        }
-        Icon::Branch => {
-            p.circle_stroke(at(0.3, 0.22), s * 0.09, st);
-            p.circle_stroke(at(0.3, 0.8), s * 0.09, st);
-            p.circle_stroke(at(0.72, 0.36), s * 0.09, st);
-            line(at(0.3, 0.31), at(0.3, 0.71));
-            poly(&[(0.72, 0.45), (0.72, 0.52), (0.3, 0.66)]);
-        }
-        Icon::Copy => {
-            // Two sheets, the front one offset down-right.
-            p.rect_stroke(
-                Rect::from_min_max(at(0.18, 0.18), at(0.62, 0.62)),
-                CornerRadius::same(2),
-                st,
-                egui::StrokeKind::Middle,
-            );
-            p.rect_stroke(
-                Rect::from_min_max(at(0.38, 0.38), at(0.82, 0.82)),
-                CornerRadius::same(2),
-                st,
-                egui::StrokeKind::Middle,
-            );
-        }
-        Icon::Editor => {
-            poly(&[(0.35, 0.28), (0.15, 0.5), (0.35, 0.72)]);
-            poly(&[(0.65, 0.28), (0.85, 0.5), (0.65, 0.72)]);
-            line(at(0.56, 0.2), at(0.44, 0.8));
-        }
-    }
+    let size = rect.width().min(rect.height());
+    let galley = p.layout_no_wrap(icon.glyph().to_string(), fonts::icon(size), color);
+    let at = rect.center() - galley.size() / 2.0;
+    p.galley(at.round_to_pixels(p.pixels_per_point()), galley, color);
 }
 
 /// An icon laid out inline, `size` square.
@@ -199,7 +56,14 @@ pub fn icon(ui: &mut egui::Ui, icon: Icon, size: f32, color: Color32) {
     paint_icon(ui.painter(), rect, icon, color);
 }
 
-/// azala's IconButton: 26×24, quiet until hovered.
+/// Width and glyph size of an [`icon_button`]; it is `CONTROL` tall.
+pub const ICON_BUTTON: f32 = 28.0;
+const ICON_BUTTON_GLYPH: f32 = 15.0;
+/// The icon that leads a button's label.
+const LEAD_ICON: f32 = 14.0;
+const MENU_CHEVRON: f32 = 12.0;
+
+/// A square-ish icon button, quiet until hovered.
 pub fn icon_button(ui: &mut egui::Ui, theme: &Theme, icon: Icon, help: &str) -> egui::Response {
     icon_button_tinted(ui, theme, icon, help, style::c(theme.dim))
 }
@@ -211,23 +75,32 @@ pub fn icon_button_tinted(
     help: &str,
     color: Color32,
 ) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(26.0, 24.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(ICON_BUTTON, CONTROL), Sense::click());
     let enabled = ui.is_enabled();
-    if resp.hovered() && enabled {
+    let hot = resp.hovered() && enabled;
+    if hot {
+        let pressed = resp.is_pointer_button_down_on();
         ui.painter().rect_filled(
             rect,
-            CornerRadius::same(PILL_RADIUS),
-            tint(style::c(theme.surface), style::c(theme.text), 0.08),
+            CornerRadius::same(BUTTON_RADIUS),
+            tint(
+                style::c(theme.surface),
+                style::c(theme.text),
+                if pressed { 0.14 } else { 0.08 },
+            ),
         );
     }
-    let color = if enabled {
-        color
-    } else {
+    // Quiet at rest, full strength under the pointer.
+    let color = if !enabled {
         color.gamma_multiply(0.35)
+    } else if hot && color == style::c(theme.dim) {
+        style::c(theme.text)
+    } else {
+        color
     };
     paint_icon(
         ui.painter(),
-        Rect::from_center_size(rect.center(), vec2(13.0, 13.0)),
+        Rect::from_center_size(rect.center(), vec2(ICON_BUTTON_GLYPH, ICON_BUTTON_GLYPH)),
         icon,
         color,
     );
@@ -486,10 +359,81 @@ pub fn status_dot(ui: &mut egui::Ui, color: Color32, halo: f32) {
     ui.painter().circle_filled(rect.center(), 3.8, color);
 }
 
+/// How a live thing shows its state: the shape carries the meaning, so it
+/// reads without colour.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    /// A turning arc: something is running.
+    Spin,
+    /// A filled dot inside a breathing halo: it waits on you.
+    Alert,
+    /// A filled dot: finished, unseen.
+    Dot,
+    /// A hollow ring: at rest.
+    Ring,
+    /// A faint dashed ring: nothing known.
+    Ghost,
+}
+
+/// Paint `mark` centred at `at`; `t` is the frame time driving animation.
+pub fn paint_mark(p: &egui::Painter, at: egui::Pos2, mark: Mark, color: Color32, t: f64) {
+    match mark {
+        Mark::Spin => {
+            p.circle_stroke(at, 5.0, Stroke::new(1.6, color.gamma_multiply(0.22)));
+            #[expect(clippy::cast_possible_truncation, reason = "an animation phase")]
+            let start = (t * 5.0).rem_euclid(std::f64::consts::TAU) as f32;
+            let points: Vec<egui::Pos2> = (0..=10)
+                .map(|i| {
+                    let a = start + i as f32 * (std::f32::consts::PI * 0.85 / 10.0);
+                    at + vec2(a.cos(), a.sin()) * 5.0
+                })
+                .collect();
+            p.add(egui::Shape::line(points, Stroke::new(1.6, color)));
+        }
+        Mark::Alert => {
+            #[expect(clippy::cast_possible_truncation, reason = "an animation phase")]
+            let pulse = (0.5 + 0.5 * (t * 3.0).sin()) as f32;
+            p.circle_filled(
+                at,
+                4.5 + 2.5 * pulse,
+                color.gamma_multiply(0.28 * (1.0 - 0.5 * pulse)),
+            );
+            p.circle_filled(at, 4.0, color);
+        }
+        Mark::Dot => {
+            p.circle_filled(at, 3.5, color);
+        }
+        Mark::Ring => {
+            p.circle_stroke(at, 3.6, Stroke::new(1.4, color));
+        }
+        Mark::Ghost => {
+            p.circle_stroke(at, 3.6, Stroke::new(1.2, color.gamma_multiply(0.5)));
+        }
+    }
+}
+
+/// A [`Mark`] laid out inline in a 14-point cell. Animated marks keep the
+/// frame loop awake.
+pub fn mark(ui: &mut egui::Ui, mark: Mark, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+    let t = ui.input(|i| i.time);
+    paint_mark(ui.painter(), rect.center(), mark, color, t);
+    match mark {
+        Mark::Spin => ui
+            .ctx()
+            .request_repaint_after(std::time::Duration::from_millis(33)),
+        Mark::Alert => ui
+            .ctx()
+            .request_repaint_after(std::time::Duration::from_millis(50)),
+        _ => {}
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Ghost,
-    Primary,
+    /// Filled with this colour.
+    Primary(Color32),
     Danger,
 }
 
@@ -500,21 +444,25 @@ fn control(
     lead: Option<Icon>,
     text: &str,
     keys: Option<&str>,
-    fill_color: Color32,
+    menu: bool,
 ) -> egui::Response {
+    let fill_color = match kind {
+        Kind::Primary(c) => c,
+        Kind::Ghost | Kind::Danger => Color32::TRANSPARENT,
+    };
     let enabled = ui.is_enabled();
-    let font = if kind == Kind::Primary {
+    let font = if matches!(kind, Kind::Primary(_)) {
         fonts::semibold(12.5)
     } else {
         egui::FontId::proportional(12.5)
     };
     let fg = match kind {
-        Kind::Primary => Color32::WHITE,
+        Kind::Primary(_) => Color32::WHITE,
         Kind::Danger => style::c(theme.danger),
         Kind::Ghost => style::c(theme.text),
     };
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, fg);
-    let key_color = if kind == Kind::Primary {
+    let key_color = if matches!(kind, Kind::Primary(_)) {
         Color32::from_white_alpha(230)
     } else {
         style::c(theme.dim)
@@ -523,9 +471,20 @@ fn control(
         ui.painter()
             .layout_no_wrap(k.to_owned(), egui::FontId::monospace(10.0), key_color)
     });
-    let lead_w = if lead.is_some() { 18.0 } else { 0.0 };
+    let lead_w = if lead.is_some() { LEAD_ICON + 6.0 } else { 0.0 };
+    // An icon sits a little closer to the edge than text does.
+    let pad = if lead.is_some() { 10.0 } else { 12.0 };
     let key_w = key_galley.as_ref().map_or(0.0, |g| g.size().x + 14.0);
-    let size = vec2(galley.size().x + 24.0 + lead_w + key_w, CONTROL);
+    // A menu button ends in a chevron, a little closer to the edge.
+    let (trail_w, end) = if menu {
+        (MENU_CHEVRON + 4.0, 8.0)
+    } else {
+        (0.0, 12.0)
+    };
+    let size = vec2(
+        galley.size().x + pad + end + lead_w + key_w + trail_w,
+        CONTROL,
+    );
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let surface = style::c(theme.surface);
     let hovered = resp.hovered() && enabled;
@@ -533,7 +492,7 @@ fn control(
     let p = ui.painter();
     let radius = CornerRadius::same(BUTTON_RADIUS);
     match kind {
-        Kind::Primary => {
+        Kind::Primary(_) => {
             let fill = if pressed {
                 fill_color.gamma_multiply(0.85)
             } else if hovered {
@@ -573,23 +532,41 @@ fn control(
         }
     }
     let fg = if enabled { fg } else { fg.gamma_multiply(0.4) };
-    let mut x = rect.min.x + 12.0;
+    let mut x = rect.min.x + pad;
     if let Some(i) = lead {
         paint_icon(
             p,
-            Rect::from_center_size(pos2(x + 6.0, rect.center().y), vec2(12.0, 12.0)),
+            Rect::from_center_size(
+                pos2(x + LEAD_ICON / 2.0, rect.center().y),
+                vec2(LEAD_ICON, LEAD_ICON),
+            ),
             i,
             fg,
         );
         x += lead_w;
     }
     p.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, fg);
+    if menu {
+        paint_icon(
+            p,
+            Rect::from_center_size(
+                pos2(rect.max.x - end - MENU_CHEVRON / 2.0, rect.center().y + 0.5),
+                vec2(MENU_CHEVRON, MENU_CHEVRON),
+            ),
+            Icon::ChevronDown,
+            if matches!(kind, Kind::Primary(_)) {
+                fg
+            } else {
+                style::c(theme.dim)
+            },
+        );
+    }
     if let Some(kg) = key_galley {
         let chip = Rect::from_min_size(
             pos2(rect.max.x - kg.size().x - 16.0, rect.center().y - 8.0),
             vec2(kg.size().x + 8.0, 16.0),
         );
-        let chip_fill = if kind == Kind::Primary {
+        let chip_fill = if matches!(kind, Kind::Primary(_)) {
             Color32::from_white_alpha(45)
         } else {
             tint(surface, style::c(theme.text), 0.07)
@@ -606,15 +583,7 @@ fn control(
 
 /// azala's GhostButton: hairline border, quiet until hovered.
 pub fn button(ui: &mut egui::Ui, theme: &Theme, text: &str, keys: Option<&str>) -> egui::Response {
-    control(
-        ui,
-        theme,
-        Kind::Ghost,
-        None,
-        text,
-        keys,
-        Color32::TRANSPARENT,
-    )
+    control(ui, theme, Kind::Ghost, None, text, keys, false)
 }
 
 /// A ghost button with a leading icon.
@@ -625,20 +594,22 @@ pub fn button_icon(
     text: &str,
     keys: Option<&str>,
 ) -> egui::Response {
-    control(
-        ui,
-        theme,
-        Kind::Ghost,
-        Some(icon),
-        text,
-        keys,
-        Color32::TRANSPARENT,
-    )
+    control(ui, theme, Kind::Ghost, Some(icon), text, keys, false)
+}
+
+/// A ghost button that opens a menu: optional icon, label, chevron.
+pub fn menu_button(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    icon: Option<Icon>,
+    text: &str,
+) -> egui::Response {
+    control(ui, theme, Kind::Ghost, icon, text, None, true)
 }
 
 /// azala's PrimaryButton in `color`, for the one main action.
 pub fn primary(ui: &mut egui::Ui, theme: &Theme, text: &str, color: Color32) -> egui::Response {
-    control(ui, theme, Kind::Primary, None, text, None, color)
+    control(ui, theme, Kind::Primary(color), None, text, None, false)
 }
 
 /// The primary button with a leading icon and key hint.
@@ -650,7 +621,7 @@ pub fn primary_with(
     keys: Option<&str>,
     color: Color32,
 ) -> egui::Response {
-    control(ui, theme, Kind::Primary, icon, text, keys, color)
+    control(ui, theme, Kind::Primary(color), icon, text, keys, false)
 }
 
 /// A ghost button in the danger colour, for ending things.
@@ -661,15 +632,7 @@ pub fn danger(
     text: &str,
     keys: Option<&str>,
 ) -> egui::Response {
-    control(
-        ui,
-        theme,
-        Kind::Danger,
-        icon,
-        text,
-        keys,
-        Color32::TRANSPARENT,
-    )
+    control(ui, theme, Kind::Danger, icon, text, keys, false)
 }
 
 /// azala's FieldRow: `label  value`, the value copies on click.
@@ -1071,6 +1034,85 @@ pub fn menu_item(ui: &mut egui::Ui, theme: &Theme, label: &str, on: bool) -> boo
         .clicked()
 }
 
+/// One action in a context menu: icon, label, optional key chip. The
+/// caller closes the menu on a click.
+pub fn menu_action(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    icon: Icon,
+    label: &str,
+    keys: Option<&str>,
+) -> egui::Response {
+    let enabled = ui.is_enabled();
+    let fg = if enabled {
+        style::c(theme.text)
+    } else {
+        style::c(theme.faint)
+    };
+    let galley =
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.5), fg);
+    let key_galley = keys.map(|k| {
+        ui.painter().layout_no_wrap(
+            k.to_owned(),
+            egui::FontId::monospace(10.5),
+            style::c(theme.faint),
+        )
+    });
+    let want = 8.0
+        + 14.0
+        + 9.0
+        + galley.size().x
+        + key_galley.as_ref().map_or(0.0, |g| g.size().x + 20.0)
+        + 10.0;
+    let width = ui.available_width().max(want).max(180.0);
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, 30.0), Sense::click());
+    let p = ui.painter();
+    if resp.hovered() && enabled {
+        p.rect_filled(
+            rect,
+            CornerRadius::same(PILL_RADIUS),
+            tint(style::c(theme.surface), style::c(theme.text), 0.08),
+        );
+    }
+    paint_icon(
+        p,
+        Rect::from_center_size(pos2(rect.min.x + 15.0, rect.center().y), vec2(14.0, 14.0)),
+        icon,
+        if enabled {
+            style::c(theme.dim)
+        } else {
+            style::c(theme.faint)
+        },
+    );
+    p.galley(
+        pos2(rect.min.x + 31.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        fg,
+    );
+    if let Some(kg) = key_galley {
+        p.galley(
+            pos2(
+                rect.max.x - kg.size().x - 10.0,
+                rect.center().y - kg.size().y / 2.0,
+            ),
+            kg,
+            style::c(theme.faint),
+        );
+    }
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// A hairline between groups of a menu.
+pub fn menu_rule(ui: &mut egui::Ui, theme: &Theme) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 9.0), Sense::hover());
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        Stroke::new(1.0, style::c(theme.border)),
+    );
+}
+
 /// azala's EmptyState: a tinted disc with an icon, a title and a hint.
 pub fn empty_with(ui: &mut egui::Ui, theme: &Theme, glyph: Icon, title: &str, hint: &str) {
     ui.add_space(S4 * 2.0);
@@ -1242,6 +1284,7 @@ pub fn tabs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eframe::egui::Pos2;
 
     /// Run one frame of `add` in a central panel with `events` as input.
     fn frame(ctx: &egui::Context, events: Vec<egui::Event>, add: &mut impl FnMut(&mut egui::Ui)) {

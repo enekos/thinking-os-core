@@ -11,7 +11,7 @@ good version and the reason lands next to it in `<file>.error`.
 
 | file | what |
 |---|---|
-| `settings.json` | appearance (`system`/`light`/`dark`), `theme` (dark) + `light_theme`, default layout, `editor`, spawn command lines, font size, `stale_after_mins` (default 60, 0 = off), `close_terminal` (close the iTerm2 tab on close) |
+| `settings.json` | appearance (`system`/`light`/`dark`), `theme` (dark) + `light_theme`, default layout, `editor`, spawn command lines, font size, `stale_after_mins` (default 60, 0 = off), `close_terminal` (close the iTerm2 tab on close), `terminal` (`embedded` = agents run in artalde's own terminals, `iterm` = in iTerm2), `terminal_font_size`, `option_as_alt`, `shell` (argv of a new terminal; empty = login shell) |
 | `keys.json` | `"cmd+shift+l": "layout.cycle"` — chord → command |
 | `layouts/<name>.json` | window trees; `layout.cycle` / `layout.select:<name>` |
 | `themes/<name>.json` | colour tokens; missing tokens inherit graphite |
@@ -30,7 +30,7 @@ good version and the reason lands next to it in `<file>.error`.
 - Nodes: `row`, `column` (split), `stack` (tabs), `block` (a panel).
 - Child props: `size` (`{"px": n}` or `{"weight": n}`, default weight 1), `min`, `max`, `resizable`, `hidden`.
 - Block/stack props: `title`, `padding`, `background` (token or `#hex`), `border` (default true). Splits: `gap`.
-- Built-in panels: `agents`, `spaces`, `inbox` (zaindu), `prs` (the pull-request inbox, compact), `detail` (selected session + reply box), `status`, `log`. Mods: `mod:<name>`.
+- Built-in panels: `agents`, `spaces`, `inbox` (zaindu), `prs` (the pull-request inbox, compact), `detail` (selected session + reply box), `status`, `log`, `terminal` (the terminal panes; give it `"padding": 0, "border": false`). Mods: `mod:<name>`.
 - Layouts fill the first tab. Pull requests (`inbox.open`, Cmd+I), single PRs (`pr.open:<owner/repo#N>`, or paste a PR URL into the palette) and agent sessions (`session.open`, double-click a card) open as tabs; Cmd+W closes, Ctrl+Tab cycles.
 
 ## Palette and repositories
@@ -71,9 +71,10 @@ fn render(ctx) {
 ```
 
 - Nodes: `text(s)` `heading(s)` `md(s)` (rendered markdown) `row([..])` `col([..])` `wrap([..])` `grid(n, [..])` `card([..])`
-  `button(label, action)` `badge(s)` `dot()` `sep()` `space(px)` `bar(0.0..1.0)`. A bare string is text; an array is a column.
+  `button(label, action)` `icon(name)` `badge(s)` `dot()` `sep()` `space(px)` `bar(0.0..1.0)`. A bare string is text; an array is a column.
 - Colours: theme tokens, tag names (`blue`, `pink`, …) or `#rrggbb`.
-- Modifiers: `.color(token)` `.fill(token)` (tinted background for cards/badges) `.size(px)` `.bold()` `.mono()` `.tip(s)` `.on_click(action)`.
+- Modifiers: `.color(token)` `.fill(token)` (tinted background for cards/badges) `.size(px)` `.bold()` `.mono()` `.tip(s)` `.on_click(action)` `.with_icon(name)` (buttons).
+- Icons are Lucide names (`git-merge`, `terminal`, `sparkles`; the shipped set is `artalde icons`); an unknown name draws a dashed circle.
 - Actions: `cmd("name")`, `cmd("name", arg)`, `set("key", value)` (merges into `ctx.state`, re-renders; state survives edits).
 - Helpers: `ago(secs)` → `3m`, `clip(s, n)`.
 - `ctx`: `sessions` (each: `id agent state name age index selected repo branch worktree cwd tty pid title ai_title handle tag label last_prompt activity message task pending_tasks last_said discovered resources[kind id title state url mentions]`),
@@ -99,6 +100,16 @@ One opinionated flow, the same in the list, the Session panel, the palette and k
 `artalde commands` lists them. Common: `agent.next`, `agent.select:<id|n>`, `session.focus[:<id>]`,
 `session.ack[:<id>]`, `session.tag:<colour|none>` (or `<id>:<colour>`), `session.label:<text>`, `session.send:<text>`, `space.filter:<repo>`, `spawn.open`, `session.stop[:<id>]`, `session.close[:<id>]`, `session.sweep`, `session.reopen[:<id>]`, `session.wrap[:<id>]`, `layout.select:<name>`,
 `layout.cycle`, `theme.select:<name>`, `theme.cycle`, `url.open:<url>`, `path.open:<path>`, `palette.open`, `refresh`,
-`settings.open` (⌘,), `appearance.toggle` (⇧⌘D), `appearance.set:<system|light|dark>`, `path.edit:<path>`,
+`settings.open` (⌘,), `appearance.toggle` (⌥⌘D), `appearance.set:<system|light|dark>`, `path.edit:<path>`,
 `pr.review` (⇧⌘R: agent-assisted review; proposals wait for your decision, nothing posts until Submit), `repo.open:<owner/repo>` (PRs, deployments per environment, releases),
 `inbox.open`, `pr.open:<owner/repo#N>`, `session.open[:<id>]`, `tab.close`, `tab.next`, `tab.prev`, `tab.select:<n>`.
+
+## Terminals
+
+Embedded terminals (Ghostty's emulator) owned by a host process, so programs outlive the window; `docs/terminals.md` in the engine has the design.
+
+- `term.new[:<folder>]` (⌘T), `term.split:<right|down>` (⌘D / ⇧⌘D), `term.focus:<left|right|up|down>` (⌥⌘arrows), `term.zoom` (⇧⌘↵), `term.find` (⌘F), `term.clear`, `term.close`, `term.open:<id>`, `term.reconnect`.
+- A layout with a `terminal` block (`layouts/terminals.json`) keeps panes beside the agents; without one they open as tabs.
+- With `"terminal": "embedded"` a spawned agent runs in a pane and its session tab gains a Terminal view next to Transcript and Changes.
+- From a shell or an agent: `artalde term run|ls|read|send|kill|rm|attach|status|stop`. A program reports its state with `OSC 7501`; Claude Code needs nothing beyond the hook.
+- A more specific chord wins: `cmd+shift+d` is tried before `cmd+d`.

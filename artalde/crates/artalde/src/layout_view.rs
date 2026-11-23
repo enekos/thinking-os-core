@@ -233,6 +233,11 @@ fn body(ui: &mut egui::Ui, rect: Rect, panel: &Panel, path: &str, draw: &mut Dra
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
     child.set_clip_rect(rect.intersect(ui.clip_rect()));
+    if matches!(panel, Panel::Builtin(b) if b == "terminal") {
+        // A terminal scrolls its own history and wants every pixel.
+        draw(&mut child, panel);
+        return;
+    }
     egui::ScrollArea::vertical()
         .id_salt(path)
         .auto_shrink([false, false])

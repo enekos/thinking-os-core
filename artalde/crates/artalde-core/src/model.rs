@@ -87,6 +87,8 @@ pub struct SessionRecord {
     /// The last absolute path a tool touched: where the work really is.
     pub touched: Option<PathBuf>,
     pub transcript: Option<PathBuf>,
+    /// The artalde terminal the agent runs in (`ARTALDE_TERMINAL`).
+    pub terminal: Option<u32>,
 }
 
 /// A session as the UI shows it: the record plus what probes add.

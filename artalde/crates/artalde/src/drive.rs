@@ -54,10 +54,13 @@ pub fn run(store: Store, config_dir: std::path::PathBuf, script: &Path) -> anyho
         .with_size(size)
         .with_pixels_per_point(scale)
         .with_max_steps(u64::MAX)
+        // A terminal shows whatever a program prints.
+        .allow_missing_glyphs()
         .wgpu()
         .build_eframe(|cc| {
             let mut app = App::new(cc, store, config_dir).expect("artalde app starts offscreen");
             app.dry_run = true;
+            app.terms.dry_run = true;
             app
         });
     h.step();

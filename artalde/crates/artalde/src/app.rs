@@ -102,6 +102,14 @@ pub struct App {
     pub(crate) logs: Logs,
     pub(crate) confirm: Option<(PrRef, github::Action)>,
     pub(crate) conversations: Conversations,
+    pub(crate) changes: crate::changes_view::Changes,
+    /// Session tabs showing Changes instead of the transcript.
+    pub(crate) session_changes: HashSet<String>,
+    /// Session tabs showing the agent's own terminal.
+    pub(crate) session_transcripts: HashSet<String>,
+    pub(crate) terms: crate::terms::Terms,
+    /// Terminals waiting for the user to confirm closing them.
+    pub(crate) term_confirm: Option<Vec<u32>>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -193,6 +201,11 @@ impl App {
             logs: Logs::new(),
             confirm: None,
             conversations: Conversations::new(),
+            changes: crate::changes_view::Changes::default(),
+            session_changes: HashSet::new(),
+            session_transcripts: HashSet::new(),
+            terms: crate::terms::Terms::new(&cc.egui_ctx),
+            term_confirm: None,
             shot: std::env::var_os("ARTALDE_SCREENSHOT").map(|p| Shot {
                 path: PathBuf::from(p),
                 requested: false,
@@ -226,6 +239,7 @@ impl App {
             || self.spawn.is_some()
             || self.confirm.is_some()
             || self.close_confirm.is_some()
+            || self.term_confirm.is_some()
     }
 
     pub(crate) fn toast_line(&mut self, ctx: &egui::Context, text: String) {
@@ -433,6 +447,9 @@ impl App {
         let Some(id) = self.selected.clone() else {
             return self.push_log("send: select a session first");
         };
+        if self.type_in_terminal(&id, &text, enter) {
+            return;
+        }
         match self.tty_of(&id) {
             Some(tty) => self.submit(Job::Type { tty, text, enter }),
             None => self.push_log("send: that session has no terminal"),
@@ -520,6 +537,10 @@ impl App {
             "session.focus" => {
                 if let Some(id) = self.target_id(arg) {
                     self.ack(&id);
+                    if let Some(t) = self.session_terminal(&id) {
+                        self.open_terminal(t);
+                        return;
+                    }
                     match self.tty_of(&id) {
                         Some(tty) => self.submit(Job::Focus { tty }),
                         None => self.push_log("focus: that session has no terminal"),
@@ -664,10 +685,17 @@ impl App {
                     self.load_pr(&pr);
                 }
             }
-            "tab.close" => {
-                let i = arg.and_then(|a| a.parse().ok()).unwrap_or(self.active);
-                self.close_tab(i);
-            }
+            "tab.close" => match arg.and_then(|a| a.parse().ok()) {
+                Some(i) => self.close_tab(i),
+                // In a terminal the key closes the pane; the last pane
+                // takes its tab along.
+                None if self.current_workspace().is_some()
+                    && (self.active != 0 || self.terminal_has_keys(ctx)) =>
+                {
+                    self.term_command(ctx, "term.close", None);
+                }
+                None => self.close_tab(self.active),
+            },
             "tab.next" => self.active = (self.active + 1) % self.tabs.len().max(1),
             "tab.prev" => {
                 self.active = (self.active + self.tabs.len().max(1) - 1) % self.tabs.len().max(1)
@@ -742,7 +770,11 @@ impl App {
                     self.open_tab(Tab::Session(id));
                 }
             }
-            other => self.push_log(format!("unknown command {other:?}")),
+            other => {
+                if !self.term_command(ctx, other, arg) {
+                    self.push_log(format!("unknown command {other:?}"));
+                }
+            }
         }
     }
 
@@ -771,21 +803,42 @@ impl App {
     }
 
     fn keys(&mut self, ctx: &egui::Context) {
-        if self.palette.is_some() || self.spawn.is_some() || self.close_confirm.is_some() {
+        if self.palette.is_some()
+            || self.spawn.is_some()
+            || self.close_confirm.is_some()
+            || self.term_confirm.is_some()
+        {
             return;
         }
+        // A terminal with the keyboard keeps everything a program could
+        // want: only ⌘ chords (and tab switching) stay the window's.
+        let in_terminal = self.terminal_has_keys(ctx);
         let Some(cfg) = &self.config else { return };
         let mut fired = Vec::new();
         let ctrl_k_bound = cfg.keys.bindings.iter().any(|(chord, _)| {
             chord.ctrl && !chord.cmd && !chord.alt && !chord.shift && chord.key == "k"
         });
-        if !ctrl_k_bound && ctx.input_mut(|input| input.consume_key(Modifiers::CTRL, Key::K)) {
+        if !ctrl_k_bound
+            && !in_terminal
+            && ctx.input_mut(|input| input.consume_key(Modifiers::CTRL, Key::K))
+        {
             fired.push(Command::new("palette.open", None));
         }
-        for (chord, cmd) in &cfg.keys.bindings {
+        // egui lets a chord without Shift or Alt match a press that holds
+        // them, so the more specific chord has to be asked first.
+        let mut bindings: Vec<_> = cfg.keys.bindings.iter().collect();
+        bindings.sort_by_key(|(c, _)| {
+            std::cmp::Reverse(
+                u8::from(c.cmd) + u8::from(c.ctrl) + u8::from(c.alt) + u8::from(c.shift),
+            )
+        });
+        for (chord, cmd) in bindings {
             let Some(key) = Key::from_name(&chord.key) else {
                 continue;
             };
+            if in_terminal && (!chord.cmd && key != Key::Tab || key == Key::Backspace) {
+                continue;
+            }
             if ctx.input_mut(|i| i.consume_key(modifiers(chord), key)) {
                 fired.push(cmd.clone());
             }
@@ -908,6 +961,32 @@ impl App {
                     .keywords(format!("agent focus {}", s.rec.id)),
                 );
             }
+        }
+        let mut terminals: Vec<_> = self.terms.infos.values().collect();
+        terminals.sort_by_key(|i| i.id);
+        for info in terminals {
+            let shown = self.terms.workspace_of(info.id).is_some();
+            let state = match (info.state.is_running(), shown) {
+                (true, true) => "open",
+                (true, false) => "detached",
+                (false, true) => "ended",
+                // Nothing to go back to.
+                (false, false) => continue,
+            };
+            out.push(
+                PaletteEntry::new(
+                    PaletteKind::Terminal,
+                    crate::terms::display_name(info),
+                    crate::terms::short_path(&info.cwd),
+                    Command::new("term.open", Some(&info.id.to_string())),
+                )
+                .hint(state)
+                .keywords(format!(
+                    "terminal shell {} {}",
+                    info.id,
+                    info.argv.join(" ")
+                )),
+            );
         }
         for (name, desc) in COMMANDS {
             if desc.contains('<') {
@@ -1216,6 +1295,7 @@ impl App {
                 let icon = match entry.kind {
                     PaletteKind::Action | PaletteKind::Command => kit::Icon::ChevronRight,
                     PaletteKind::Agent => kit::Icon::Terminal,
+                    PaletteKind::Terminal => kit::Icon::Terminal,
                     PaletteKind::Repository => kit::Icon::Branch,
                     PaletteKind::PullRequest => kit::Icon::Editor,
                     PaletteKind::Layout => kit::Icon::More,
@@ -1399,25 +1479,47 @@ impl App {
         if self.toasts.is_empty() {
             return;
         }
-        ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
         let theme = &self.theme;
+        let mut dismissed = None;
         egui::Area::new(egui::Id::unique("toasts"))
-            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-16.0, -40.0))
+            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-16.0, -44.0))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                for (text, _) in &self.toasts {
-                    egui::Frame::new()
-                        .fill(style::c(theme.raised))
-                        .stroke(egui::Stroke::new(1.0, style::c(theme.border)))
-                        .corner_radius(egui::CornerRadius::same(8))
-                        .inner_margin(egui::Margin::symmetric(12, 8))
-                        .show(ui, |ui| {
-                            ui.set_max_width(380.0);
-                            ui.label(text);
-                        });
-                    ui.add_space(6.0);
+                ui.spacing_mut().item_spacing.y = kit::S2;
+                for (i, (text, until)) in self.toasts.iter().enumerate() {
+                    // The last third of a second fades out.
+                    #[expect(clippy::cast_possible_truncation, reason = "0..=1")]
+                    let alpha = ((until - now) / 0.3).clamp(0.0, 1.0) as f32;
+                    let (icon, color) = toast_kind(text, theme);
+                    let resp = ui
+                        .scope(|ui| {
+                            ui.set_opacity(alpha);
+                            egui::Frame::new()
+                                .fill(style::c(theme.raised))
+                                .stroke(egui::Stroke::new(1.0, style::c(theme.border)))
+                                .corner_radius(egui::CornerRadius::same(kit::CARD_RADIUS))
+                                .shadow(ui.visuals().popup_shadow)
+                                .inner_margin(egui::Margin::symmetric(12, 9))
+                                .show(ui, |ui| {
+                                    ui.set_max_width(380.0);
+                                    ui.horizontal_top(|ui| {
+                                        ui.spacing_mut().item_spacing.x = kit::S2;
+                                        kit::icon(ui, icon, 15.0, color);
+                                        ui.add(egui::Label::new(text).wrap());
+                                    });
+                                })
+                                .response
+                        })
+                        .inner;
+                    if resp.interact(egui::Sense::click()).clicked() {
+                        dismissed = Some(i);
+                    }
                 }
             });
+        if let Some(i) = dismissed {
+            self.toasts.remove(i);
+        }
     }
 
     fn screenshot(&mut self, ctx: &egui::Context) {
@@ -1497,6 +1599,7 @@ impl eframe::App for App {
             self.start_agent_review(&ctx, &pr, agent);
         }
         self.apply_config_style(&ctx);
+        self.tick_terminals(&ctx);
         self.keys(&ctx);
         self.tick_github();
 
@@ -1552,6 +1655,16 @@ impl eframe::App for App {
                 self.finish_frame(&ctx);
                 return;
             }
+            Some(Tab::Terminal(ws)) => {
+                // Panes bring their own gaps; let them reach the edges.
+                let page = egui::Rect::from_min_max(
+                    rect.min + egui::vec2(2.0, 0.0),
+                    rect.max - egui::vec2(2.0, 2.0),
+                );
+                self.terminal_page(ui, page, ws, true);
+                self.finish_frame(&ctx);
+                return;
+            }
             _ => {}
         }
         ui.painter().rect_filled(
@@ -1601,6 +1714,7 @@ impl App {
         self.palette_ui(&ctx);
         self.spawn_ui(&ctx);
         self.close_confirm_ui(&ctx);
+        self.term_confirm_ui(&ctx);
         self.toasts_ui(&ctx);
         for cmd in std::mem::take(&mut self.queue) {
             self.run(&ctx, &cmd);
@@ -1615,5 +1729,20 @@ impl App {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
         self.screenshot(&ctx);
+    }
+}
+
+/// The icon and colour a toast's text earns: failures read as failures.
+fn toast_kind(text: &str, theme: &artalde_core::theme::Theme) -> (kit::Icon, egui::Color32) {
+    let lower = text.to_ascii_lowercase();
+    if ["fail", "error", "refused", "cannot", "could not", "denied"]
+        .iter()
+        .any(|w| lower.contains(w))
+    {
+        (kit::Icon::Warning, style::c(theme.danger))
+    } else if lower.starts_with("copied") {
+        (kit::Icon::ClipboardCheck, style::c(theme.done))
+    } else {
+        (kit::Icon::Info, style::c(theme.accent))
     }
 }

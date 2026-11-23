@@ -45,6 +45,8 @@ pub enum Kind {
     Button,
     Badge,
     Dot,
+    /// A Lucide icon named by `text`.
+    Icon,
     Sep,
     Space,
     Bar,
@@ -83,6 +85,8 @@ pub struct UiNode {
     pub size: Option<f32>,
     pub bold: bool,
     pub mono: bool,
+    /// A button's leading icon, by Lucide name.
+    pub icon: Option<String>,
     pub tip: Option<String>,
     pub action: Option<Action>,
 }
@@ -382,6 +386,7 @@ fn to_node(d: &Dynamic, depth: usize, budget: &mut usize) -> Result<UiNode, Stri
         Some("button") => Kind::Button,
         Some("badge") => Kind::Badge,
         Some("dot") => Kind::Dot,
+        Some("icon") => Kind::Icon,
         Some("sep") => Kind::Sep,
         Some("space") => Kind::Space,
         Some("bar") => Kind::Bar,
@@ -433,6 +438,7 @@ fn to_node(d: &Dynamic, depth: usize, budget: &mut usize) -> Result<UiNode, Stri
             .get("mono")
             .and_then(|v| v.as_bool().ok())
             .unwrap_or(false),
+        icon: s("icon"),
         tip: s("tip"),
         action,
     })

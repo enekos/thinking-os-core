@@ -12,7 +12,7 @@
 use serde::Deserialize;
 
 pub const BUILTIN_PANELS: &[&str] = &[
-    "agents", "spaces", "inbox", "prs", "detail", "status", "log",
+    "agents", "spaces", "inbox", "prs", "detail", "status", "log", "terminal",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]

@@ -7,6 +7,7 @@ pub(crate) enum PaletteKind {
     Action,
     Command,
     Agent,
+    Terminal,
     Repository,
     PullRequest,
     Layout,
@@ -19,6 +20,7 @@ impl PaletteKind {
             Self::Action => "Actions",
             Self::Command => "Commands",
             Self::Agent => "Agents",
+            Self::Terminal => "Terminals",
             Self::Repository => "Repositories",
             Self::PullRequest => "Pull requests",
             Self::Layout => "Layouts",
@@ -121,7 +123,7 @@ impl PaletteQuery {
                     | PaletteKind::Layout
                     | PaletteKind::Theme
             ),
-            PaletteScope::Agents => kind == PaletteKind::Agent,
+            PaletteScope::Agents => matches!(kind, PaletteKind::Agent | PaletteKind::Terminal),
             PaletteScope::PullRequests => kind == PaletteKind::PullRequest,
         }
     }
