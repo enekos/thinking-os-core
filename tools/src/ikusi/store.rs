@@ -21,6 +21,10 @@ pub struct NodeRec {
 }
 
 impl NodeRec {
+    pub(super) fn sort_title(&self) -> &str {
+        if self.title.is_empty() { &self.id_lc } else { &self.title_lc }
+    }
+
     pub fn new(id: &str, kind: &str, title: &str, summary: &str) -> NodeRec {
         NodeRec {
             id_lc: id.to_lowercase(),
@@ -60,15 +64,15 @@ pub struct Store {
     pub deprecated: HashSet<String>,
     pub loaded_at: String,
     pub dangling: usize,
-    stamp: (u64, u64),
+    stamp: (u128, u128),
 }
 
-fn mtime(path: &std::path::Path) -> u64 {
+fn mtime(path: &std::path::Path) -> u128 {
     std::fs::metadata(path)
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
+        .map(|d| d.as_nanos())
         .unwrap_or(0)
 }
 
@@ -95,6 +99,7 @@ pub fn weight_of(kind: &str) -> i32 {
 
 impl Store {
     pub fn load(paths: &Paths, ont: &Ontology) -> Store {
+        let stamp = (mtime(&paths.nodes_tsv()), mtime(&paths.edges_tsv()));
         let mut nodes: Vec<NodeRec> = Vec::new();
         let mut by_id: HashMap<String, usize> = HashMap::new();
         for row in kg::read_tsv(&paths.nodes_tsv()) {
@@ -151,7 +156,7 @@ impl Store {
         Store {
             dangling,
             deprecated,
-            stamp: (mtime(&paths.nodes_tsv()), mtime(&paths.edges_tsv())),
+            stamp,
             ..Store::from_rows(paths.root.clone(), nodes, edges)
         }
     }
@@ -180,6 +185,10 @@ impl Store {
             dangling: 0,
             stamp: (0, 0),
         }
+    }
+
+    pub(super) fn revision(&self) -> String {
+        format!("{:x}-{:x}", self.stamp.0, self.stamp.1)
     }
 
     /// The graph is rebuilt by a different process (`sare build`, zaindu).
@@ -404,28 +413,26 @@ impl Store {
         (reached, held)
     }
 
-    /// Lay out a set of nodes with the same force-directed pass `sare viz`
-    /// uses, so the served picture and the static one agree about shape.
     pub fn layout(&self, members: &[usize], iterations: usize) -> Vec<(f32, f32)> {
-        let local: HashMap<usize, usize> =
-            members.iter().enumerate().map(|(i, m)| (*m, i)).collect();
-        let mut links: Vec<(usize, usize)> = Vec::new();
-        for e in &self.edges {
-            if let (Some(&a), Some(&b)) = (local.get(&e.src), local.get(&e.dst)) {
-                links.push((a, b));
-            }
-        }
-        viz::layout(members.len(), &links, iterations)
+        let links: Vec<_> = self.induced(members).iter().map(|&(a, b, _)| (a, b)).collect();
+        super::layout::place(members.len(), &links, iterations).positions
     }
 
-    /// Edges with both endpoints inside `members`, as local indices.
+    /// Visit only outgoing edges of members. Iterating by source emits every
+    /// parallel edge and self-loop exactly once, including for small neighborhoods.
     pub fn induced(&self, members: &[usize]) -> Vec<(usize, usize, &EdgeRec)> {
         let local: HashMap<usize, usize> =
             members.iter().enumerate().map(|(i, m)| (*m, i)).collect();
-        self.edges
-            .iter()
-            .filter_map(|e| Some((*local.get(&e.src)?, *local.get(&e.dst)?, e)))
-            .collect()
+        let mut result = Vec::new();
+        for (a, &src) in members.iter().enumerate() {
+            for &index in &self.out[src] {
+                let e = &self.edges[index];
+                if let Some(&b) = local.get(&e.dst) {
+                    result.push((a, b, e));
+                }
+            }
+        }
+        result
     }
 }
 

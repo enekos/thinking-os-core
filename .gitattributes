@@ -1,0 +1,3 @@
+# Ikusi embeds reproducible Vite output. Its minified JS contains literal whitespace in strings.
+tools/src/ikusi/web/* linguist-generated=true
+tools/src/ikusi/web/app.js whitespace=-trailing-space

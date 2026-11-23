@@ -6,17 +6,16 @@ use sutegi::prelude::*;
 
 pub const DEFAULT_PORT: u16 = 4747;
 
-/// One consistent read of the graph. The whole-graph layout is expensive
-/// (~1.5s) and only changes when the TSVs do, so it is computed once per
-/// snapshot and thrown away with it.
+/// Cache serialized views for the lifetime of one graph revision.
 pub struct Snapshot {
     pub store: Store,
     scene: OnceLock<String>,
+    meta: OnceLock<String>,
 }
 
 impl Snapshot {
     fn new(store: Store) -> Snapshot {
-        Snapshot { store, scene: OnceLock::new() }
+        Snapshot { store, scene: OnceLock::new(), meta: OnceLock::new() }
     }
 
     fn scene(&self) -> &str {
@@ -37,7 +36,6 @@ impl Live {
     pub fn new(paths: Paths, ont: Ontology) -> Live {
         let store = Store::load(&paths, &ont);
         let snapshot = Arc::new(Snapshot::new(store));
-        warm(&snapshot);
         Live { paths, ont, snapshot: RwLock::new(snapshot) }
     }
 
@@ -51,20 +49,9 @@ impl Live {
         let mut held = self.snapshot.write().unwrap();
         if held.store.is_stale(&self.paths) {
             *held = Arc::new(Snapshot::new(Store::load(&self.paths, &self.ont)));
-            warm(&held);
         }
         held.clone()
     }
-}
-
-/// Lay the whole graph out on a background thread. It is the one expensive
-/// thing here and it is wanted the moment someone clicks "whole graph" — off
-/// the request path it costs nothing, on it it is a several-second stall.
-fn warm(snapshot: &Arc<Snapshot>) {
-    let snapshot = snapshot.clone();
-    std::thread::spawn(move || {
-        snapshot.scene();
-    });
 }
 
 fn ok(value: &Value) -> Response {
@@ -100,26 +87,31 @@ fn brief(store: &Store, i: usize) -> Value {
 }
 
 fn scene_json(store: &Store, members: &[usize], hops: &[usize], iterations: usize) -> Value {
-    let placed = store.layout(members, iterations);
+    let induced = store.induced(members);
+    let links: Vec<_> = induced.iter().map(|&(a, b, _)| (a, b)).collect();
+    let placed = super::layout::place(members.len(), &links, iterations);
     let nodes: Vec<Value> = members
         .iter()
         .enumerate()
         .map(|(local, &i)| {
             let n = &store.nodes[i];
-            json!({
+            let mut point = json!({
                 "id": n.id,
                 "t": n.kind,
                 "n": if n.title.is_empty() { n.id.clone() } else { n.title.clone() },
                 "s": n.summary,
-                "x": (placed[local].0 * 10.0).round() / 10.0,
-                "y": (placed[local].1 * 10.0).round() / 10.0,
+                "x": (placed.positions[local].0 * 10.0).round() / 10.0,
+                "y": (placed.positions[local].1 * 10.0).round() / 10.0,
                 "d": store.degree[i],
                 "h": hops.get(local).copied().unwrap_or(0),
-            })
+            });
+            if let Some(hub) = placed.hubs.get(local) {
+                point["g"] = json!(hub);
+            }
+            point
         })
         .collect();
-    let edges: Vec<Value> = store
-        .induced(members)
+    let edges: Vec<Value> = induced
         .into_iter()
         .map(|(a, b, e)| {
             json!({ "s": a, "t": b, "r": e.rel, "c": e.conf, "p": e.prov })
@@ -138,6 +130,15 @@ fn meta(store: &Store) -> Value {
             })
             .collect()
     };
+    let mut pairs = std::collections::BTreeMap::new();
+    for edge in &store.edges {
+        let source = store.nodes[edge.src].kind.as_str();
+        let target = store.nodes[edge.dst].kind.as_str();
+        *pairs.entry((source, target)).or_insert(0usize) += 1;
+    }
+    let type_links: Vec<_> = pairs.into_iter().map(|((source, target), count)| {
+        json!({ "source": source, "target": target, "count": count })
+    }).collect();
     let relations: Vec<Value> = {
         let mut rows: Vec<(&str, usize)> = store.counts_by_rel().into_iter().collect();
         rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
@@ -152,50 +153,68 @@ fn meta(store: &Store) -> Value {
         "edges": store.edges.len(),
         "dangling": store.dangling,
         "loaded_at": store.loaded_at,
+        "revision": store.revision(),
         "root": store.root.to_string_lossy(),
         "types": types,
         "relations": relations,
+        "type_links": type_links,
         "worlds": crate::sare::viz::WORLDS.iter().map(|(id, label)| json!({"id": id, "label": label})).collect::<Vec<_>>(),
     })
+}
+
+// Rank edge indexes before materializing node metadata or probing local files.
+// The edge index breaks ties consistently across pages of the same snapshot.
+fn neighbor_page(store: &Store, ids: &mut [usize], outbound: bool, offset: usize, limit: usize) -> Vec<Value> {
+    let other = |e: usize| if outbound { store.edges[e].dst } else { store.edges[e].src };
+    let rank = |e: usize| {
+        let i = other(e);
+        let node = &store.nodes[i];
+        (std::cmp::Reverse(weight_of(&node.kind)), std::cmp::Reverse(store.degree[i]), node.sort_title(), e)
+    };
+    let end = offset.saturating_add(limit).min(ids.len());
+    if offset >= end { return Vec::new(); }
+    if end < ids.len() {
+        ids.select_nth_unstable_by_key(end, |&e| rank(e));
+    }
+    let page = &mut ids[..end];
+    if offset > 0 {
+        page.select_nth_unstable_by_key(offset, |&e| rank(e));
+    }
+    let page = &mut page[offset..];
+    page.sort_unstable_by_key(|&e| rank(e));
+    page.iter().map(|&e| {
+        let edge = &store.edges[e];
+        let mut item = brief(store, other(e));
+        item["since"] = json!(edge.since);
+        item["prov"] = json!(edge.prov);
+        item["conf"] = json!(edge.conf);
+        item["evidence"] = json!(edge.evidence);
+        item
+    }).collect()
 }
 
 /// Everything that touches this node, grouped by relation and split by
 /// direction. Direction is part of an edge's meaning here — a decision
 /// DECIDES a project and the project never links back — so collapsing the
 /// two halves would lose what the ontology is for.
-fn detail(store: &Store, i: usize) -> Value {
+fn detail(store: &Store, i: usize, per_relation: usize) -> Value {
     let n = &store.nodes[i];
 
     let group = |edge_ids: &[usize], outbound: bool| -> Vec<Value> {
-        let mut by_rel: std::collections::BTreeMap<&str, Vec<Value>> = Default::default();
+        let mut by_rel: std::collections::BTreeMap<&str, Vec<usize>> = Default::default();
         for &e in edge_ids {
-            let edge = &store.edges[e];
-            let other = if outbound { edge.dst } else { edge.src };
-            let mut item = brief(store, other);
-            item["since"] = json!(edge.since);
-            item["prov"] = json!(edge.prov);
-            item["conf"] = json!(edge.conf);
-            item["evidence"] = json!(edge.evidence);
-            by_rel.entry(edge.rel.as_str()).or_default().push(item);
+            by_rel.entry(&store.edges[e].rel).or_default().push(e);
         }
         let mut groups: Vec<Value> = by_rel
             .into_iter()
-            .map(|(rel, mut items)| {
-                items.sort_by(|a, b| {
-                    let key = |v: &Value| {
-                        (
-                            -weight_of(v["type"].as_str().unwrap_or("")),
-                            -(v["degree"].as_i64().unwrap_or(0) as i32),
-                            v["title"].as_str().unwrap_or("").to_lowercase(),
-                        )
-                    };
-                    key(a).cmp(&key(b))
-                });
+            .map(|(rel, mut edges)| {
+                let count = edges.len();
+                let items = neighbor_page(store, &mut edges, outbound, 0, per_relation);
                 json!({
                     "rel": rel,
                     "dir": if outbound { "out" } else { "in" },
                     "deprecated": store.deprecated.contains(rel),
-                    "count": items.len(),
+                    "count": count,
                     "items": items,
                 })
             })
@@ -235,7 +254,12 @@ pub fn app(live: Live) -> App {
     App::new("ikusi")
         .state(live)
         .get("/api/meta", "Graph totals, node types and relation counts.", |c: &Ctx| {
-            ok(&meta(&c.state::<Live>().current().store))
+            let snap = c.state::<Live>().current();
+            let body = snap.meta.get_or_init(|| meta(&snap.store).to_string());
+            Response::new(200)
+                .with_header("content-type", "application/json; charset=utf-8")
+                .with_header("cache-control", "no-store")
+                .with_body(body.as_bytes().to_vec())
         })
         .get("/api/search", "Rank nodes against a query.", |c: &Ctx| {
             let snap = c.state::<Live>().current();
@@ -244,17 +268,21 @@ pub fn app(live: Live) -> App {
                 .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
                 .unwrap_or_default();
             let limit = number(c, "limit", 40, 300);
-            let hits: Vec<Value> = snap
-                .store
-                .search(&query, &kinds, limit)
+            let total_nodes = snap.store.nodes.len();
+            let offset = number(c, "offset", 0, total_nodes);
+            let ranked = snap.store.search(&query, &kinds, total_nodes);
+            let total = ranked.len();
+            let hits: Vec<Value> = ranked
                 .into_iter()
+                .skip(offset)
+                .take(limit)
                 .map(|(i, score)| {
                     let mut item = brief(&snap.store, i);
                     item["score"] = json!(score);
                     item
                 })
                 .collect();
-            ok(&json!({ "q": query, "count": hits.len(), "hits": hits }))
+            ok(&json!({ "q": query, "count": hits.len(), "total": total, "hits": hits }))
         })
         .get("/api/ids", "Every node id — lets the client tell a live [[link]] from a dead one.", |c: &Ctx| {
             let snap = c.state::<Live>().current();
@@ -267,9 +295,27 @@ pub fn app(live: Live) -> App {
                 return fail(400, "id is required");
             };
             match snap.store.idx(&id) {
-                Some(i) => ok(&detail(&snap.store, i)),
+                Some(i) => ok(&detail(&snap.store, i, number(c, "per_relation", usize::MAX, usize::MAX))),
                 None => fail(404, &format!("no node `{id}`")),
             }
+        })
+        .get("/api/connections", "One page of a node's incoming or outgoing relation.", |c: &Ctx| {
+            let snap = c.state::<Live>().current();
+            let Some(i) = param(c, "id").and_then(|id| snap.store.idx(&id)) else {
+                return fail(404, "node not found");
+            };
+            let outbound = match param(c, "dir").as_deref() {
+                Some("out") => true,
+                Some("in") => false,
+                _ => return fail(400, "dir must be in or out"),
+            };
+            let Some(rel) = param(c, "rel") else { return fail(400, "rel is required"); };
+            let adjacent = if outbound { &snap.store.out[i] } else { &snap.store.inb[i] };
+            let mut edges: Vec<_> = adjacent.iter().copied().filter(|&e| snap.store.edges[e].rel == rel).collect();
+            let count = edges.len();
+            let offset = number(c, "offset", 0, count);
+            let items = neighbor_page(&snap.store, &mut edges, outbound, offset, number(c, "limit", 25, 100));
+            ok(&json!({ "items": items, "count": count, "offset": offset }))
         })
         .get("/api/subgraph", "The neighbourhood of one node, laid out.", |c: &Ctx| {
             let snap = c.state::<Live>().current();
@@ -321,19 +367,24 @@ pub fn app(live: Live) -> App {
                 Err(e) => fail(500, &e),
             }
         })
+        .get("/licenses.txt", "Licenses for the bundled viewer assets.", |_: &Ctx| {
+            Response::new(200)
+                .with_header("content-type", "text/plain; charset=utf-8")
+                .with_body(include_bytes!("web/licenses.md").to_vec())
+        })
         .get("/app.css", "Stylesheet.", |_: &Ctx| {
             Response::new(200)
                 .with_header("content-type", "text/css; charset=utf-8")
-                .with_body(include_str!("app.css").as_bytes().to_vec())
+                .with_body(include_str!("web/app.css").as_bytes().to_vec())
         })
         .get("/app.js", "Client.", |_: &Ctx| {
             Response::new(200)
                 .with_header("content-type", "application/javascript; charset=utf-8")
-                .with_body(include_str!("app.js").as_bytes().to_vec())
+                .with_body(include_str!("web/app.js").as_bytes().to_vec())
         })
-        .get("/", "The viewer.", |_: &Ctx| html(200, include_str!("app.html")))
+        .get("/", "The viewer.", |_: &Ctx| html(200, include_str!("web/index.html")))
         .get("/*rest", "The viewer — client-side routes fall through to it.", |_: &Ctx| {
-            html(200, include_str!("app.html"))
+            html(200, include_str!("web/index.html"))
         })
 }
 
@@ -378,4 +429,30 @@ fn spawn_open(path: &std::path::Path, how: &str) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("cannot run {editor}: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ikusi::store::{EdgeRec, NodeRec};
+
+    #[test]
+    fn paged_neighbors_preserve_order_provenance_and_totals() {
+        let mut nodes = vec![NodeRec::new("hub", "repo", "Hub", "")];
+        let mut edges = Vec::new();
+        for i in 1..=52 {
+            nodes.push(NodeRec::new(&format!("n{i}"), "project", &format!("Project {}", i % 4), ""));
+            edges.push(EdgeRec { src: i, dst: 0, rel: "LIVES_IN".into(), since: String::new(),
+                prov: "page".into(), conf: 1.0, evidence: format!("evidence-{i}") });
+        }
+        let store = Store::from_rows(Default::default(), nodes, edges);
+        let summary = detail(&store, 0, 25);
+        assert_eq!(summary["in"][0]["count"], 52);
+        let mut combined = summary["in"][0]["items"].as_array().unwrap().clone();
+        for offset in [25, 50] {
+            combined.extend(neighbor_page(&store, &mut store.inb[0].clone(), false, offset, 25));
+        }
+        assert_eq!(detail(&store, 0, usize::MAX)["in"][0]["items"], json!(combined));
+        assert_eq!(meta(&store)["type_links"], json!([{"source":"project","target":"repo","count":52}]));
+    }
 }
