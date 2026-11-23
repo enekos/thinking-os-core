@@ -164,6 +164,19 @@ remote writes happen while polling. Set `github_issues: false` to opt out.
 See `skills/graph/references/integrations.md` for priority labels, identity,
 partial-read behavior and the additive ontology update for existing wikis.
 
+## Developing Ikusi
+
+The local viewer is a Svelte 5 app built with Osagai in `tools/ikusi-web`.
+From that directory, run `pnpm install --frozen-lockfile`, `pnpm check`,
+and `pnpm build`. Commit the resulting assets in `tools/src/ikusi/web` with
+their source. Cargo embeds them so an installed viewer works offline.
+
+Run `cargo run --manifest-path tools/Cargo.toml --bin ikusi -- serve` from the
+repository root to serve the compiled viewer. For live UI editing, keep that
+server on port 4747 and run `pnpm dev` from `tools/ikusi-web`. After building,
+run `pnpm exec playwright install chromium --only-shell` and `pnpm test` for
+the browser regression suite.
+
 ## Tests
 
 ```bash

@@ -9,6 +9,27 @@ permissions:
   contents: read
 
 jobs:
+  ikusi-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: tools/ikusi-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: tools/ikusi-web/package.json
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm build
+      - run: git diff --exit-code -- ../src/ikusi/web
+      - run: pnpm exec playwright install --with-deps --only-shell chromium
+      - run: pnpm test
+
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 20

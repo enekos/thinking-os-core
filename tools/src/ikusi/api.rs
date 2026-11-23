@@ -244,17 +244,21 @@ pub fn app(live: Live) -> App {
                 .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
                 .unwrap_or_default();
             let limit = number(c, "limit", 40, 300);
-            let hits: Vec<Value> = snap
-                .store
-                .search(&query, &kinds, limit)
+            let total_nodes = snap.store.nodes.len();
+            let offset = number(c, "offset", 0, total_nodes);
+            let ranked = snap.store.search(&query, &kinds, total_nodes);
+            let total = ranked.len();
+            let hits: Vec<Value> = ranked
                 .into_iter()
+                .skip(offset)
+                .take(limit)
                 .map(|(i, score)| {
                     let mut item = brief(&snap.store, i);
                     item["score"] = json!(score);
                     item
                 })
                 .collect();
-            ok(&json!({ "q": query, "count": hits.len(), "hits": hits }))
+            ok(&json!({ "q": query, "count": hits.len(), "total": total, "hits": hits }))
         })
         .get("/api/ids", "Every node id — lets the client tell a live [[link]] from a dead one.", |c: &Ctx| {
             let snap = c.state::<Live>().current();
@@ -321,19 +325,24 @@ pub fn app(live: Live) -> App {
                 Err(e) => fail(500, &e),
             }
         })
+        .get("/licenses.txt", "Licenses for the bundled viewer assets.", |_: &Ctx| {
+            Response::new(200)
+                .with_header("content-type", "text/plain; charset=utf-8")
+                .with_body(include_bytes!("web/licenses.md").to_vec())
+        })
         .get("/app.css", "Stylesheet.", |_: &Ctx| {
             Response::new(200)
                 .with_header("content-type", "text/css; charset=utf-8")
-                .with_body(include_str!("app.css").as_bytes().to_vec())
+                .with_body(include_str!("web/app.css").as_bytes().to_vec())
         })
         .get("/app.js", "Client.", |_: &Ctx| {
             Response::new(200)
                 .with_header("content-type", "application/javascript; charset=utf-8")
-                .with_body(include_str!("app.js").as_bytes().to_vec())
+                .with_body(include_str!("web/app.js").as_bytes().to_vec())
         })
-        .get("/", "The viewer.", |_: &Ctx| html(200, include_str!("app.html")))
+        .get("/", "The viewer.", |_: &Ctx| html(200, include_str!("web/index.html")))
         .get("/*rest", "The viewer — client-side routes fall through to it.", |_: &Ctx| {
-            html(200, include_str!("app.html"))
+            html(200, include_str!("web/index.html"))
         })
 }
 
