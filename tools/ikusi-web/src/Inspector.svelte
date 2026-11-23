@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { Badge, Button, Empty, Icon, Prose, Segmented, copy, task } from '@enekos/osagai';
+  import { Badge, Button, Empty, Prose, Segmented, copy, task } from '@enekos/osagai';
   import { api, type Detail } from './api';
-  import { external, nodeHref, date } from './navigation';
+  import { external, date } from './navigation';
   import { inline, markdown } from './markdown';
   import Kind from './Kind.svelte';
+  import NeighborGroup from './NeighborGroup.svelte';
   let { detail, ids }: { detail: Detail; ids: Set<string> | undefined } = $props();
   let active = $state('connections');
   const n = $derived(detail.node);
@@ -64,38 +65,8 @@
             {dir === 'out' ? 'Outgoing' : 'Incoming'}
             <span>{dir === 'out' ? detail.counts.out : detail.counts.in}</span>
           </h3>
-          {#each groups as group}
-            <details open={group === groups[0]}>
-              <summary>
-                <span>{group.rel.toLowerCase().replaceAll('_', ' ')}</span><small>{group.count}</small>
-              </summary>
-              {#each group.items as item}
-                <div class="neighbor">
-                  <a href={nodeHref(item.id)}>
-                    <Kind type={item.type} small /><span>
-                      <strong>{item.title}</strong>
-                      <small>
-                        {[item.type, item.state, item.status !== item.state ? item.status : '', item.updated]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </small>
-                      {#if item.prov}<small title={item.evidence}>
-                          {item.prov}{item.conf < 1 ? ' · ' + item.conf.toFixed(2) : ''}
-                        </small>{/if}
-                    </span>
-                  </a>
-                  {#if external(item.link)}<a
-                      class="neighbor-source"
-                      href={external(item.link)}
-                      target="_blank"
-                      rel="noopener"
-                      aria-label={'Open source for ' + item.title}
-                    >
-                      <Icon name="external" size={15} />
-                    </a>{/if}
-                </div>
-              {/each}
-            </details>
+          {#each groups as group (group.rel)}
+            <NeighborGroup id={n.id} {group} expanded={group === groups[0]} />
           {/each}
         </section>{/if}
     {/each}

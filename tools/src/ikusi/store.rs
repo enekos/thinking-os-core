@@ -21,6 +21,10 @@ pub struct NodeRec {
 }
 
 impl NodeRec {
+    pub(super) fn sort_title(&self) -> &str {
+        if self.title.is_empty() { &self.id_lc } else { &self.title_lc }
+    }
+
     pub fn new(id: &str, kind: &str, title: &str, summary: &str) -> NodeRec {
         NodeRec {
             id_lc: id.to_lowercase(),
@@ -404,28 +408,26 @@ impl Store {
         (reached, held)
     }
 
-    /// Lay out a set of nodes with the same force-directed pass `sare viz`
-    /// uses, so the served picture and the static one agree about shape.
     pub fn layout(&self, members: &[usize], iterations: usize) -> Vec<(f32, f32)> {
-        let local: HashMap<usize, usize> =
-            members.iter().enumerate().map(|(i, m)| (*m, i)).collect();
-        let mut links: Vec<(usize, usize)> = Vec::new();
-        for e in &self.edges {
-            if let (Some(&a), Some(&b)) = (local.get(&e.src), local.get(&e.dst)) {
-                links.push((a, b));
-            }
-        }
-        viz::layout(members.len(), &links, iterations)
+        let links: Vec<_> = self.induced(members).iter().map(|&(a, b, _)| (a, b)).collect();
+        super::layout::place(members.len(), &links, iterations).positions
     }
 
-    /// Edges with both endpoints inside `members`, as local indices.
+    /// Visit only outgoing edges of members. Iterating by source emits every
+    /// parallel edge and self-loop exactly once, including for small neighborhoods.
     pub fn induced(&self, members: &[usize]) -> Vec<(usize, usize, &EdgeRec)> {
         let local: HashMap<usize, usize> =
             members.iter().enumerate().map(|(i, m)| (*m, i)).collect();
-        self.edges
-            .iter()
-            .filter_map(|e| Some((*local.get(&e.src)?, *local.get(&e.dst)?, e)))
-            .collect()
+        let mut result = Vec::new();
+        for (a, &src) in members.iter().enumerate() {
+            for &index in &self.out[src] {
+                let e = &self.edges[index];
+                if let Some(&b) = local.get(&e.dst) {
+                    result.push((a, b, e));
+                }
+            }
+        }
+        result
     }
 }
 

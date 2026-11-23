@@ -1,22 +1,23 @@
 <script lang="ts">
   import { Button, Icon, QueryError, query } from '@enekos/osagai';
-  import { api, type Detail, type GraphNode } from './api';
+  import { api, type Scene, type GraphNode } from './api';
   import { colorOf, nodeHref } from './navigation';
   let { node, version }: { node: GraphNode; version: string } = $props();
   const detail = query(() => {
     void version;
-    return api.node(node.id);
+    return api.spotlight(node.id);
   });
-  function neighbors(data: Detail) {
-    const groups = [...data.out, ...data.in];
-    const candidates = groups.flatMap((group) => group.items.map((item) => ({ item, rel: group.rel })));
+  function neighbors(data: Scene) {
+    const center = data.nodes.findIndex((p) => p.id === node.id);
+    const candidates = data.edges
+      .filter((e) => e.s === center || e.t === center)
+      .map((e) => ({ item: data.nodes[e.s === center ? e.t : e.s], rel: e.r }));
     const picks: typeof candidates = [];
-    const seen = new Set([data.node.id]);
+    const seen = new Set([node.id]);
     // Show a mix of types before filling the remaining places with other neighbors.
     for (const distinct of [true, false]) {
       for (const entry of candidates) {
-        if (seen.has(entry.item.id) || (distinct && picks.some((p) => p.item.type === entry.item.type)))
-          continue;
+        if (seen.has(entry.item.id) || (distinct && picks.some((p) => p.item.t === entry.item.t))) continue;
         seen.add(entry.item.id);
         picks.push(entry);
         if (picks.length === 5) return picks;
@@ -66,13 +67,13 @@
     </a>
     {#each picks as pick, i (pick.item.id)}
       <a
-        class={'orbit-node sat ' + colorOf(pick.item.type)}
+        class={'orbit-node sat ' + colorOf(pick.item.t)}
         style:left={positions[i][0] + '%'}
         style:top={positions[i][1] + '%'}
-        title={pick.rel + ' · ' + pick.item.title}
+        title={pick.rel + ' · ' + pick.item.n}
         href={nodeHref(pick.item.id)}
       >
-        <i></i><span>{pick.item.title}</span>
+        <i></i><span>{pick.item.n}</span>
       </a>
     {/each}
   </div>

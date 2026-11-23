@@ -32,7 +32,12 @@ and accepts title, ID and summary searches. Collection links narrow it by type.
 4. **It reloads itself.** TSV mtimes are checked per request, so a `sare build`
    in another terminal lands in the open tab.
 
-Use the map controls to zoom, fit the visible nodes, or filter by type.
+Large graphs open on a collection map. Line width reflects the number of
+connections between types. Hover or focus a collection to highlight its links,
+or select it to browse its nodes. **Individual nodes** opens the detailed map.
+At a distance, numbered circles group nearby nodes. Select a circle to zoom in,
+then select an individual node to open its neighborhood. The map controls zoom,
+fit the visible nodes, and filter by type.
 
 Keys: `⌘K`/`Ctrl-K` search, `↩` focus, `⌘↩` open the source, `⌘E` open the page
 locally, `[` / `]` walk history, `1` / `2` / `3` depth, `g` whole graph, `?` help.
@@ -53,4 +58,5 @@ sare viz --dot            # graphviz instead
 
 Colour is the **world** a node belongs to — this wiki, or code & runtime — and
 **shape** is its type within that world, so type never rides on colour alone.
-Node size is degree. Disconnected nodes are packed in a grid to the side.
+Individual node size reflects degree. In the static snapshot, disconnected
+nodes are packed in a grid to the side.

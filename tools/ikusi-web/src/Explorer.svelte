@@ -2,6 +2,7 @@
   import { Button, Checkbox, Empty, Modal, QueryError, Segmented, query } from '@enekos/osagai';
   import { api, type Meta } from './api';
   import { collection, nodeHref, number } from './navigation';
+  import CollectionMap from './CollectionMap.svelte';
   import GraphCanvas from './GraphCanvas.svelte';
   import Inspector from './Inspector.svelte';
   let {
@@ -27,10 +28,17 @@
   $effect(() => {
     if (id) lastFocus = id;
   });
-  const scene = query(() => {
-    void meta.loaded_at;
-    return api.scene(id, id ? depth : 0);
-  });
+  let preferredView = $state<'collections' | 'nodes'>();
+  const mapView = $derived(
+    preferredView ?? (meta.nodes > 256 || meta.edges > 1000 ? 'collections' : 'nodes'),
+  );
+  const grouped = $derived(!id && mapView === 'collections');
+  const scene = query(
+    () => {
+      return api.scene(id, id ? depth : 0, meta.loaded_at);
+    },
+    { enabled: () => !grouped },
+  );
   const detail = query(
     () => {
       void meta.loaded_at;
@@ -38,8 +46,17 @@
     },
     { enabled: () => !!id },
   );
-  const shown = $derived(scene.data?.nodes.filter((n) => !hidden.has(n.t)).length ?? 0);
+  const shown = $derived(
+    grouped
+      ? meta.types.reduce((sum, t) => sum + (hidden.has(t.t) ? 0 : t.c), 0)
+      : (scene.data?.nodes.filter((n) => !hidden.has(n.t)).length ?? 0),
+  );
   const shownEdges = $derived.by(() => {
+    if (grouped)
+      return meta.type_links.reduce(
+        (sum, e) => sum + (hidden.has(e.source) || hidden.has(e.target) ? 0 : e.count),
+        0,
+      );
     const data = scene.data;
     return (
       data?.edges.filter((e) => !hidden.has(data.nodes[e.s].t) && !hidden.has(data.nodes[e.t].t)).length ?? 0
@@ -63,7 +80,7 @@
   <p>
     {id
       ? 'Follow the connections around a selected node.'
-      : 'Explore the entire workspace. Select a node to see its neighborhood.'}
+      : 'Explore connections across the workspace or open an individual node.'}
   </p>
 </header>
 <div class="explore-grid" class:focused={!!id}>
@@ -93,9 +110,28 @@
         >
           Node details
         </Button>
-      {:else}<Button size="sm" icon="search" variant="ghost" onclick={search}>Find a node</Button>{/if}
+      {:else}<Segmented
+          label="Whole graph view"
+          size="sm"
+          value={mapView}
+          options={[
+            { value: 'collections', label: 'Collections' },
+            { value: 'nodes', label: 'Individual nodes' },
+          ]}
+          onchange={(value: 'collections' | 'nodes') => (preferredView = value)}
+        />
+        <Button size="sm" icon="search" variant="ghost" onclick={search}>Find a node</Button>{/if}
     </div>
-    {#if scene.error}<QueryError query={scene} title="Could not open this graph" />
+    {#if grouped && shown}<CollectionMap {meta} {hidden} />
+    {:else if grouped && !meta.nodes}<Empty
+        icon="network"
+        title="The graph is empty"
+        text="Build the wiki with sare build pages to begin."
+      />
+    {:else if grouped}<Empty icon="filter" title="All visible types are hidden">
+        <Button onclick={() => (hidden = new Set())}>Show all types</Button>
+      </Empty>
+    {:else if scene.error}<QueryError query={scene} title="Could not open this graph" />
     {:else if !scene.data || scene.pending}<div class="surface-loading">Drawing the graph…</div>
     {:else if !scene.data.nodes.length}<Empty
         icon="network"
@@ -107,11 +143,15 @@
       </Empty>
     {:else}<GraphCanvas bind:this={plot} scene={scene.data} {meta} focus={id} {hidden} {theme} />{/if}
     <div class="graph-caption">
-      <span><i class="wiki-dot"></i>Wiki</span><span><i class="code-dot"></i>Code &amp; runtime</span>{#if scene.data && !scene.pending && !scene.error}<small>
-        {number(shown)} nodes · {number(shownEdges)} connections
-      </small>{/if}
+      <span><i class="wiki-dot"></i>Wiki</span><span>
+        <i class="code-dot"></i>Code &amp; runtime
+      </span>{#if grouped || (scene.data && !scene.pending && !scene.error)}<small>
+          {number(shown)} nodes · {number(shownEdges)} connections
+        </small>{/if}
     </div>
-    {#if !scene.pending && !scene.error && (scene.data?.held || scene.data?.truncated)}<small class="graph-note">
+    {#if !grouped && !scene.pending && !scene.error && (scene.data?.held || scene.data?.truncated)}<small
+        class="graph-note"
+      >
         {scene.data.held ? scene.data.held + ' high-degree hubs left unexpanded. ' : ''}{scene.data.truncated
           ? 'Neighborhood size limit reached.'
           : ''}

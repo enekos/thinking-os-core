@@ -27,6 +27,7 @@ async function workspace(page: Page) {
           loaded_at: String(state.version),
           nodes: nodes.length,
           edges: 0,
+          type_links: [],
           types: [{ t: 'project', c: nodes.length, s: 0, w: 'wiki' }],
         });
       case '/api/ids':

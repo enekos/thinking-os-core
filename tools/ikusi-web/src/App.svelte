@@ -14,14 +14,14 @@
     const next = metadata.data;
     if (next && next.loaded_at !== meta?.loaded_at) meta = next;
   });
+  let route = $state(currentRoute());
   const ids = query(
     () => {
       void meta?.loaded_at;
       return api.ids();
     },
-    { enabled: () => !!meta },
+    { enabled: () => !!meta && (!!route.id || route.page === 'status') },
   );
-  let route = $state(currentRoute());
   let search = $state(false),
     help = $state(false),
     menu = $state(false);
@@ -199,17 +199,17 @@
     <main id="workspace" tabindex="-1">
       {#if metadata.error}<QueryError query={metadata} title="Could not refresh the workspace" />{/if}
       {#if meta}
-        {#if route.page === 'overview'}<Overview meta={meta} />
+        {#if route.page === 'overview'}<Overview {meta} />
         {:else if route.page === 'nodes'}{#key route}<Directory
               type={route.type}
               initialTerm={route.term}
               initialPage={route.index}
-              meta={meta}
+              {meta}
             />{/key}
         {:else if route.page === 'graph'}<Explorer
             bind:this={explorer}
             id={route.id}
-            meta={meta}
+            {meta}
             ids={ids.data}
             {theme}
             bind:depth
@@ -220,7 +220,7 @@
     </main>
   </div>
 </div>
-{#if search && meta}<Search bind:open={search} meta={meta} />{/if}
+{#if search && meta}<Search bind:open={search} {meta} />{/if}
 <Modal bind:open={menu} title="Navigation" size="sm">
   {@render nav()}<button
     class="nav-item"

@@ -10,6 +10,7 @@ export interface Meta {
   loaded_at: string;
   root: string;
   types: NodeType[];
+  type_links: { source: string; target: string; count: number }[];
 }
 export interface GraphNode {
   id: string;
@@ -30,6 +31,7 @@ export interface Neighbor extends GraphNode {
   since: string;
 }
 export interface Group {
+  dir: 'in' | 'out';
   rel: string;
   count: number;
   deprecated: boolean;
@@ -47,6 +49,7 @@ export interface Search {
   total: number;
 }
 export interface Point {
+  g?: number;
   id: string;
   n: string;
   t: string;
@@ -105,14 +108,37 @@ async function request<T>(path: string, params: Record<string, string> = {}, met
   return response.json();
 }
 
+let whole: { revision: string; result: Promise<Readonly<Scene>> } | undefined;
+
+function scene(id: string, depth: number, revision: string) {
+  if (id) return request<Scene>('subgraph', { id, depth: String(depth) }).then((data) => Object.freeze(data));
+  if (whole?.revision === revision) return whole.result;
+  const result = request<Scene>('scene')
+    .then((data) => Object.freeze(data))
+    .catch((error) => {
+      if (whole?.result === result) whole = undefined;
+      throw error;
+    });
+  whole = { revision, result };
+  return result;
+}
+
 export const api = {
   meta: () => request<Meta>('meta'),
   ids: async () => new Set((await request<{ ids: string[] }>('ids')).ids),
   search: (q = '', type = '', limit = 20, offset = 0) =>
     request<Search>('search', { q, type, limit: String(limit), offset: String(offset) }),
-  node: (id: string) => request<Detail>('node', { id }),
-  scene: (id = '', depth = 2) =>
-    id ? request<Scene>('subgraph', { id, depth: String(depth) }) : request<Scene>('scene'),
+  node: (id: string) => request<Detail>('node', { id, per_relation: '25' }),
+  connections: (id: string, group: Group, offset: number) =>
+    request<{ items: Neighbor[]; count: number; offset: number }>('connections', {
+      id,
+      dir: group.dir,
+      rel: group.rel,
+      offset: String(offset),
+      limit: '25',
+    }),
+  scene,
+  spotlight: (id: string) => request<Scene>('subgraph', { id, depth: '1', limit: '16' }),
   status: () => request<Board>('status'),
   open: (id: string, how: 'edit' | 'reveal') => request('open', { id, how }, 'POST'),
 };
