@@ -25,5 +25,16 @@ md.renderer.rules.link_open = (tokens, idx, options, _env, self) => {
   }
   return self.renderToken(tokens, idx, options);
 };
-export const markdown = (text: string, ids: Set<string> | undefined) => md.render(text, { ids });
+export function markdown(text: string, ids: Set<string> | undefined, title: string) {
+  const env = { ids };
+  const tokens = md.parse(text, env);
+  if (
+    tokens[0]?.type === 'heading_open' &&
+    tokens[0].tag === 'h1' &&
+    tokens[1]?.content.trim() === title.trim()
+  ) {
+    tokens.splice(0, 3);
+  }
+  return md.renderer.render(tokens, md.options, env);
+}
 export const inline = (text: string, ids: Set<string> | undefined) => md.renderInline(text, { ids });

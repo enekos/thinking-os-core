@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button, Checkbox, Empty, Modal, QueryError, Segmented, query } from '@enekos/osagai';
-  import { api, type Meta } from './api';
+  import { api, type Meta, type NodeView } from './api';
   import { collection, nodeHref, number } from './navigation';
   import CollectionMap from './CollectionMap.svelte';
   import GraphCanvas from './GraphCanvas.svelte';
@@ -25,26 +25,40 @@
   let hidden = $state(new Set<string>());
   let plot: GraphCanvas | undefined = $state();
   let inspector: Inspector | undefined = $state();
+  let selection = $state<{ id: string; view: NodeView }>();
   $effect(() => {
     if (id) lastFocus = id;
+    selection = undefined;
   });
   let preferredView = $state<'collections' | 'nodes'>();
   const mapView = $derived(
     preferredView ?? (meta.nodes > 256 || meta.edges > 1000 ? 'collections' : 'nodes'),
   );
   const grouped = $derived(!id && mapView === 'collections');
-  const scene = query(
-    () => {
-      return api.scene(id, id ? depth : 0, meta.revision);
-    },
-    { enabled: () => !grouped },
-  );
   const detail = query(
     () => {
       void meta.revision;
       return api.node(id);
     },
     { enabled: () => !!id },
+  );
+  const nodeView = $derived(
+    selection?.id === id
+      ? selection.view
+      : detail.data?.node.type === 'pr'
+        ? 'pr'
+        : detail.data?.body
+          ? 'page'
+          : 'connections',
+  );
+  function selectNodeView(view: NodeView) {
+    selection = { id, view };
+  }
+  const scene = query(
+    () => {
+      return api.scene(id, id ? depth : 0, meta.revision);
+    },
+    { enabled: () => !grouped && (!id || nodeView === 'map') },
   );
   const shown = $derived(
     grouped
@@ -71,19 +85,14 @@
       else if (lastFocus) location.hash = nodeHref(lastFocus);
       else search();
     }
-    if (id && ['1', '2', '3'].includes(key)) depth = Number(key);
+    if (id && ['1', '2', '3'].includes(key)) {
+      selectNodeView('map');
+      depth = Number(key);
+    }
   }
 </script>
 
-<header class="page-intro">
-  <h1>Graph explorer</h1>
-  <p>
-    {id
-      ? 'Follow the connections around a selected node.'
-      : 'Explore connections across the workspace or open an individual node.'}
-  </p>
-</header>
-<div class="explore-grid" class:focused={!!id}>
+{#snippet graph()}
   <section class="panel graph-card">
     <div class="panel-heading">
       <h2>{title}</h2>
@@ -103,13 +112,6 @@
           ]}
         />
         <Button size="sm" variant="ghost" href="#/graph">Whole graph</Button>
-        <Button
-          size="sm"
-          class="jump-details"
-          onclick={() => document.getElementById('node-details')?.focus()}
-        >
-          Node details
-        </Button>
       {:else}<Segmented
           label="Whole graph view"
           size="sm"
@@ -157,16 +159,27 @@
           : ''}
       </small>{/if}
   </section>
-  {#if id}
-    {#if detail.error}<QueryError query={detail} title="Could not open this node" />
-    {:else if detail.data?.node.id === id}{#key id}<Inspector
-          bind:this={inspector}
-          detail={detail.data}
-          {ids}
-        />{/key}
-    {:else}<div class="panel message">Loading node details…</div>{/if}
-  {/if}
-</div>
+{/snippet}
+
+{#if id}
+  {#if detail.error}<QueryError query={detail} title="Could not open this node" />
+  {:else if detail.data?.node.id === id}
+    {#key id}<Inspector
+        bind:this={inspector}
+        detail={detail.data}
+        {ids}
+        view={nodeView}
+        onview={selectNodeView}
+        {graph}
+      />{/key}
+  {:else}<div class="panel message">Loading node details…</div>{/if}
+{:else}
+  <header class="page-intro">
+    <h1>Graph explorer</h1>
+    <p>Explore connections across the workspace or open an individual node.</p>
+  </header>
+  {@render graph()}
+{/if}
 <Modal bind:open={filters} title="Visible node types">
   {#each ['wiki', 'code'] as world}
     <div class="filter-group">
