@@ -34,11 +34,17 @@ fn run(cmd: &mut Command) -> Result<Vec<u8>, String> {
     }
 }
 
+pub(crate) fn root(dir: &Path) -> Result<std::path::PathBuf, String> {
+    let top = run(git(dir).args(["rev-parse", "--show-toplevel"]))?;
+    Path::new(String::from_utf8_lossy(&top).trim())
+        .canonicalize()
+        .map_err(|e| e.to_string())
+}
+
 /// The worktree at `dir` against `HEAD`, sorted by path.
 pub fn local(dir: &Path) -> Result<Vec<DiffFile>, String> {
-    let top = run(git(dir).args(["rev-parse", "--show-toplevel"]))?;
-    let top = String::from_utf8_lossy(&top).trim().to_owned();
-    let top = Path::new(&top);
+    let top = root(dir)?;
+    let top = top.as_path();
     // A repository without commits has no HEAD to compare with.
     let has_head = run(git(top).args(["rev-parse", "--verify", "--quiet", "HEAD"])).is_ok();
     let mut diff = git(top);

@@ -391,15 +391,37 @@ impl Renderer<'_> {
             alt.push_str(t);
             return;
         }
-        let run = Run {
-            text: t.to_owned(),
-            style: self.inline,
-            link: self.links.last().cloned(),
+        let runs = match &mut self.table {
+            Some(table) => &mut table.cell.runs,
+            None => &mut self.block.runs,
         };
-        match &mut self.table {
-            Some(table) => table.cell.runs.push(run),
-            None => self.block.runs.push(run),
+        let mut push = |text: &str, link: Option<&str>| {
+            if !text.is_empty() {
+                runs.push(Run {
+                    text: text.to_owned(),
+                    style: self.inline,
+                    link: link.map(str::to_owned),
+                });
+            }
+        };
+        if self.inline.code || !self.links.is_empty() || !t.contains("://") {
+            push(t, self.links.last().map(String::as_str));
+            return;
         }
+        let mut rest = t;
+        for word in t.split_whitespace() {
+            let url = word
+                .trim_start_matches(['(', '[', '<'])
+                .trim_end_matches(['.', ',', ';', ':', '!', ')', ']', '>']);
+            if artalde_core::github::PrRef::link(url).is_some()
+                && let Some((before, after)) = rest.split_once(url)
+            {
+                push(before, None);
+                push(url, Some(url));
+                rest = after;
+            }
+        }
+        push(rest, None);
     }
 
     fn format(&self, s: Inline, link: bool) -> TextFormat {

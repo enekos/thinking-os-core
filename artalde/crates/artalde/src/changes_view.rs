@@ -39,6 +39,10 @@ impl Default for Changes {
 }
 
 impl Changes {
+    pub(crate) fn view_mut(&mut self, dir: &Path) -> Option<&mut PrView> {
+        self.views.get_mut(dir)
+    }
+
     fn load(&self, ctx: &egui::Context, dir: &Path) -> std::io::Result<()> {
         let (tx, ctx, dir) = (self.tx.clone(), ctx.clone(), dir.to_path_buf());
         std::thread::Builder::new()

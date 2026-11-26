@@ -13,9 +13,15 @@ const QUEUE: usize = 64;
 pub enum Req {
     Inbox {
         since: String,
+        review_owners: Option<Vec<String>>,
     },
     Detail(PrRef),
     Diff(PrRef),
+    Context {
+        pr: PrRef,
+        file: DiffFile,
+        revision: String,
+    },
     Repo(String),
     RepoActivity(String),
     Log {
@@ -39,6 +45,12 @@ pub enum Res {
     },
     Detail(PrRef, Result<Box<PrDetail>, String>),
     Diff(PrRef, Result<Vec<DiffFile>, String>),
+    Context {
+        pr: PrRef,
+        path: String,
+        revision: String,
+        lines: Result<Vec<github::DiffLine>, String>,
+    },
     Repo(
         String,
         Result<Box<artalde_core::github::RepoDetail>, String>,
@@ -51,6 +63,7 @@ pub enum Res {
     Acted {
         pr: PrRef,
         what: String,
+        marked_ready: bool,
         result: Result<(), String>,
     },
 }
@@ -131,13 +144,25 @@ impl Drop for Gh {
 /// Run one request, handing each result to `emit`; false once the UI is gone.
 fn handle(req: Req, emit: &mut dyn FnMut(Res) -> bool) -> bool {
     let res = match req {
-        Req::Inbox { since } => {
-            for (i, bucket) in Bucket::ALL.into_iter().enumerate() {
-                let (login, rows) = match github::fetch_bucket(bucket, &since) {
+        Req::Inbox {
+            since,
+            review_owners,
+        } => {
+            let buckets: &[Bucket] = if review_owners.is_some() {
+                &Bucket::REVIEW_QUEUE
+            } else {
+                &Bucket::INBOX
+            };
+            for (i, &bucket) in buckets.iter().enumerate() {
+                let fetched = match (&review_owners, bucket) {
+                    (Some(owners), Bucket::Ready) => github::fetch_ready(owners),
+                    _ => github::fetch_bucket(bucket, &since),
+                };
+                let (login, rows) = match fetched {
                     Ok((login, rows)) => (login, Ok(rows)),
                     Err(e) => (String::new(), Err(e)),
                 };
-                let last = i + 1 == Bucket::ALL.len();
+                let last = i + 1 == buckets.len();
                 if !emit(Res::InboxBucket {
                     login,
                     bucket,
@@ -157,6 +182,15 @@ fn handle(req: Req, emit: &mut dyn FnMut(Res) -> bool) -> bool {
             let r = github::fetch_diff(&pr);
             Res::Diff(pr, r)
         }
+        Req::Context { pr, file, revision } => {
+            let lines = artalde_core::diff_context::load(&pr, &file, &revision);
+            Res::Context {
+                pr,
+                path: file.path,
+                revision,
+                lines,
+            }
+        }
         Req::Repo(repo) => {
             let r = github::fetch_repo(&repo).map(Box::new);
             Res::Repo(repo, r)
@@ -171,13 +205,22 @@ fn handle(req: Req, emit: &mut dyn FnMut(Res) -> bool) -> bool {
         },
         Req::Act { pr, action, detail } => {
             let what = action.describe();
+            let mut marked_ready = false;
             let result = action.invocations(&pr, detail.as_deref()).and_then(|invs| {
                 for inv in invs {
-                    github::exec(&inv)?;
+                    github::exec(&inv).map_err(|e| if marked_ready {
+                        format!("PR is ready, but adding the label failed: {e}. Retry from the PR’s More menu.")
+                    } else { e })?;
+                    marked_ready = matches!(action, Action::Ready | Action::ReadyAndLabel);
                 }
                 Ok(())
             });
-            Res::Acted { pr, what, result }
+            Res::Acted {
+                pr,
+                what,
+                marked_ready,
+                result,
+            }
         }
     };
     emit(res)

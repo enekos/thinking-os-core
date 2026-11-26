@@ -143,6 +143,8 @@ pub struct Settings {
     pub inbox_days: usize,
     /// Poll `gh` for open PRs.
     pub gh: bool,
+    /// GitHub users and organizations whose labeled PRs appear in the review queue.
+    pub review_owners: Vec<String>,
     /// Shell line that starts an agent in a new worktree. `{repo}`,
     /// `{branch}`, `{agent}`, `{dir}` and `{prompt}` are filled in quoted.
     pub spawn_worktree: String,
@@ -200,6 +202,7 @@ impl Default for Settings {
             legacy_notify: None,
             inbox_days: 2,
             gh: true,
+            review_owners: vec!["@me".into()],
             spawn_worktree: "zz -c {repo}@{branch} {agent} {prompt}".into(),
             spawn_here: "cd {dir} && {agent} {prompt}".into(),
             agents: vec!["claude".into(), "codex".into()],

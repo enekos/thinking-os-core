@@ -4,6 +4,7 @@
 mod actions;
 mod app;
 mod changes_view;
+mod deep_links;
 mod diff_view;
 #[cfg(feature = "headless")]
 mod drive;
@@ -49,6 +50,7 @@ artalde — a live control plane for your coding agents
 
 usage:
   artalde                    open the window
+  artalde open <PR URL>      open a GitHub PR in the running window, or start Artalde
   artalde hook               Claude Code hook: read one event on stdin (wire with `artalde hooks`)
   artalde report --id ID --state STATE [--agent A] [--message M] [--cwd DIR] [--end]
                              report state from any other agent (working|blocked|done|idle)
@@ -56,6 +58,8 @@ usage:
   artalde snapshot           print one probe pass as JSON
   artalde drive <script>     (--features headless) run the UI offscreen from a script, side effects logged
   artalde inbox              list your PR inbox (review requested, mine, involved, merged)
+  artalde inbox --review     list your newest drafts and the labeled review queue
+  artalde review-queue       open the review queue in the window
     artalde pr <owner/repo#N|url>  summarise one PR: state, checks, reviews, threads
     artalde repo <owner/repo>  open PRs, what is deployed where, recent releases
   artalde review <owner/repo#N> [--agent NAME]  run a read-only agent review; its comments
@@ -89,7 +93,34 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let store = Store::new(&store::state_dir());
     let result = match args.first().map(String::as_str) {
-        None | Some("ui") => gui(store),
+        None | Some("ui") => gui(store, None, None),
+        Some("open") => match args.get(1) {
+            #[cfg(target_os = "macos")]
+            Some(url)
+                if artalde_core::github::PrRef::link(url).is_none()
+                    && (url.starts_with("https://") || url.starts_with("http://"))
+                    && args.get(2).is_some_and(|s| s == "--fallback-browser")
+                    && args
+                        .get(3)
+                        .is_some_and(|s| s != "org.thinking-os.artalde.links") =>
+            {
+                let status = std::process::Command::new("/usr/bin/open")
+                    .args(["-b", &args[3], url])
+                    .status();
+                status
+                    .map(|s| {
+                        if s.success() {
+                            ExitCode::SUCCESS
+                        } else {
+                            ExitCode::FAILURE
+                        }
+                    })
+                    .map_err(Into::into)
+            }
+            Some(url) => gui(store, None, Some(url)),
+            None => Err(anyhow::anyhow!("usage: artalde open <GitHub PR URL>")),
+        },
+        Some("review-queue") => gui(store, Some(views::Tab::ReviewQueue), None),
         Some("hook") => {
             // A hook must never fail the agent: report and exit 0.
             if let Err(e) = run_hook(&store) {
@@ -122,7 +153,7 @@ fn main() -> ExitCode {
         }
         Some("host") => host_cli::host(args.get(1..).unwrap_or_default()),
         Some("term") => host_cli::term(args.get(1..).unwrap_or_default()),
-        Some("inbox") => inbox_cli(),
+        Some("inbox") => inbox_cli(args.get(1).is_some_and(|v| v == "--review")),
         Some("pr") => pr_cli(args.get(1).map(String::as_str).unwrap_or_default()),
         Some("review") => review_cli(args.get(1..).unwrap_or_default()),
         Some("repo") => repo_cli(args.get(1).map(String::as_str).unwrap_or_default()),
@@ -160,7 +191,15 @@ fn main() -> ExitCode {
     })
 }
 
-fn gui(store: Store) -> anyhow::Result<ExitCode> {
+fn gui(store: Store, tab: Option<views::Tab>, link: Option<&str>) -> anyhow::Result<ExitCode> {
+    let links = if std::env::var_os("ARTALDE_SCREENSHOT").is_none() {
+        deep_links::Links::connect(link)?
+    } else {
+        None
+    };
+    if link.is_some() && links.is_none() {
+        return Ok(ExitCode::SUCCESS);
+    }
     let dir = config::config_dir();
     if !dir.exists() {
         let wrote = config::install_defaults(&dir)?;
@@ -184,7 +223,14 @@ fn gui(store: Store) -> anyhow::Result<ExitCode> {
     eframe::run_native(
         "artalde",
         options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc, store, dir)?))),
+        Box::new(move |cc| {
+            let mut app = app::App::new(cc, store, dir)?;
+            app.links = links;
+            if let Some(tab) = tab {
+                app.open_tab(tab);
+            }
+            Ok(Box::new(app))
+        }),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(ExitCode::SUCCESS)
@@ -390,15 +436,30 @@ fn hooks(install: bool) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn inbox_cli() -> anyhow::Result<ExitCode> {
+fn inbox_cli(review: bool) -> anyhow::Result<ExitCode> {
     use artalde_core::github::{self, Bucket};
     let since = since_days(14);
-    for b in Bucket::ALL {
-        let (_, rows) = github::fetch_bucket(b, &since).map_err(|e| anyhow::anyhow!(e))?;
+    let buckets: &[Bucket] = if review {
+        &Bucket::REVIEW_QUEUE
+    } else {
+        &Bucket::INBOX
+    };
+    for &b in buckets {
+        let result = if b == Bucket::Ready {
+            let cfg = config::Config::load(&config::config_dir(), None);
+            github::fetch_ready(&cfg.settings.review_owners)
+        } else {
+            github::fetch_bucket(b, &since)
+        };
+        let (_, rows) = result.map_err(|e| anyhow::anyhow!(e))?;
         println!("## {} ({})", b.label(), rows.len());
         for r in rows {
             let pr = r.pr.map(|p| p.to_string()).unwrap_or_default();
-            println!("{pr:32} {:8} {:17} {}", r.checks, r.review, r.title);
+            if review {
+                println!("{pr:32} {:20} @{}  {}", r.created, r.author, r.title);
+            } else {
+                println!("{pr:32} {:8} {:17} {}", r.checks, r.review, r.title);
+            }
         }
     }
     Ok(ExitCode::SUCCESS)

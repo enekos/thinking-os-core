@@ -364,7 +364,7 @@ fn template_state(lines: &[DiffLine], path: &str) -> Vec<bool> {
                     new = template_after(text, new);
                     start
                 }
-                LineKind::Context => {
+                LineKind::Context | LineKind::Expanded => {
                     let start = new;
                     old = template_after(text, old);
                     new = template_after(text, new);
@@ -680,6 +680,21 @@ impl App {
         total: usize,
     ) {
         let theme = self.theme.clone();
+        let revision = if f.postimage.is_empty() {
+            view.detail
+                .as_ref()
+                .map(|d| format!("{}:{}", d.head_oid, f.path))
+                .unwrap_or_default()
+        } else {
+            f.postimage.clone()
+        };
+        if view
+            .context
+            .as_ref()
+            .is_some_and(|c| c.path != f.path || c.revision != revision)
+        {
+            view.context = None;
+        }
         // Header.
         let header = egui::Frame::new()
             .fill(style::c(theme.raised))
@@ -745,17 +760,32 @@ impl App {
                             Some(&full.display().to_string()),
                         ));
                     }
-                } else {
-                    let github = if narrow {
-                        kit::icon_button(&mut right, &theme, kit::Icon::External, "Open on GitHub")
+                }
+                if matches!(f.status, FileStatus::Modified | FileStatus::Renamed) && !f.truncated {
+                    let expanded = view.context.is_some();
+                    let label = if expanded {
+                        "Changes only"
                     } else {
-                        kit::button_icon(&mut right, &theme, kit::Icon::External, "GitHub", None)
+                        "Expand file"
                     };
-                    if github.clicked() {
-                        self.queue.push(artalde_core::command::Command::new(
-                            "url.open",
-                            Some(&format!("{}/files", pr.url())),
-                        ));
+                    if kit::button(&mut right, &theme, label, None)
+                        .on_hover_text("Toggle unchanged lines before, between and after changes")
+                        .clicked()
+                    {
+                        if expanded {
+                            view.context = None;
+                        } else {
+                            let queued = self.gh.send(Req::Context {
+                                pr: pr.clone(),
+                                file: f.clone(),
+                                revision: revision.clone(),
+                            });
+                            view.context = Some(crate::views::FileContext {
+                                path: f.path.clone(),
+                                revision: revision.clone(),
+                                lines: queued.err().map(Err),
+                            });
+                        }
                     }
                 }
                 let used = right.min_rect().width();
@@ -827,6 +857,22 @@ impl App {
         let _ = header;
         // Body.
         let code_bg = style::c(theme.background);
+        let expanded = match view.context.as_ref().map(|c| &c.lines) {
+            Some(Some(Ok(lines))) => Some(std::sync::Arc::clone(lines)),
+            Some(Some(Err(message))) => {
+                ui.colored_label(style::c(theme.danger), message);
+                None
+            }
+            Some(None) => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.weak("Loading unchanged lines…");
+                });
+                None
+            }
+            None => None,
+        };
+        let lines = expanded.as_deref().unwrap_or(&f.lines);
         let body_rect = ui.available_rect_before_wrap();
         ui.painter().rect_filled(
             body_rect,
@@ -849,7 +895,7 @@ impl App {
             Stroke::new(1.0, style::c(theme.border)),
             egui::StrokeKind::Inside,
         );
-        if f.lines.is_empty() {
+        if lines.is_empty() {
             kit::empty(
                 ui,
                 &theme,
@@ -860,8 +906,7 @@ impl App {
         }
         let font = FontId::monospace(CODE_SIZE);
         let char_w = ui.fonts_mut(|fo| fo.glyph_width(&font, 'm')).max(1.0);
-        let digits = f
-            .lines
+        let digits = lines
             .iter()
             .filter_map(|l| l.new.max(l.old))
             .max()
@@ -872,14 +917,13 @@ impl App {
         let num_w = digits as f32 * char_w + 12.0;
         let gutter_w = num_w * 2.0;
         let sign_w = char_w + 10.0;
-        let max_chars = f
-            .lines
+        let max_chars = lines
             .iter()
             .map(|l| l.text.chars().count() + TAB_WIDTH)
             .max()
             .unwrap_or(80);
-        let pairs = pair_changes(&f.lines);
-        let templates = template_state(&f.lines, &f.path);
+        let pairs = pair_changes(lines);
+        let templates = template_state(lines, &f.path);
         let wrap = view.wrap;
         let mut area = egui::ScrollArea::both()
             .id_salt(("diff", pr.to_string(), view.file))
@@ -1089,8 +1133,7 @@ impl App {
             .is_some_and(|(p, _, _)| *p == f.path);
         let rich = wrap || composing || !drafts.is_empty() || !threads.is_empty();
         if let Some(line) = view.jump_line.take()
-            && let Some(idx) = f
-                .lines
+            && let Some(idx) = lines
                 .iter()
                 .position(|l| l.new == Some(line) || l.old == Some(line))
         {
@@ -1100,7 +1143,7 @@ impl App {
         if rich {
             area.show(&mut inner, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
-                for (i, l) in f.lines.iter().enumerate() {
+                for (i, l) in lines.iter().enumerate() {
                     if let Some(t) = row(ui, i, l) {
                         clicked = Some(t);
                     }
@@ -1149,10 +1192,10 @@ impl App {
                 }
             });
         } else {
-            area.show_rows(&mut inner, ROW_H, f.lines.len(), |ui, range| {
+            area.show_rows(&mut inner, ROW_H, lines.len(), |ui, range| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 for i in range {
-                    if let Some(l) = f.lines.get(i)
+                    if let Some(l) = lines.get(i)
                         && let Some(t) = row(ui, i, l)
                     {
                         clicked = Some(t);

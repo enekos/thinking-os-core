@@ -33,6 +33,18 @@ good version and the reason lands next to it in `<file>.error`.
 - Built-in panels: `agents`, `spaces`, `inbox` (zaindu), `prs` (the pull-request inbox, compact), `detail` (selected session + reply box), `status`, `log`, `terminal` (the terminal panes; give it `"padding": 0, "border": false`). Mods: `mod:<name>`.
 - Layouts fill the first tab. Pull requests (`inbox.open`, Cmd+I), single PRs (`pr.open:<owner/repo#N>`, or paste a PR URL into the palette) and agent sessions (`session.open`, double-click a card) open as tabs; Cmd+W closes, Ctrl+Tab cycles.
 
+## PR links and diffs
+
+A GitHub PR link opens its Artalde tab. Links ending in `/files` or `/changes` select **Files**, and `/checks` selects **Checks**. Use **Copy → Copy Artalde link** for a link that opens the window from another app. From a terminal, run `artalde open <GitHub-PR-URL>`.
+
+In **Files** or a worktree’s **Changes** panel, choose **Expand file** to include unchanged lines and **Changes only** to collapse them. Full context supports text files up to 1 MiB and 20,000 lines.
+
+## Review queue
+
+Open **Review queue** from the PR inbox (Cmd+I), press Cmd+Shift+I, or run `artalde review-queue`. The queue refreshes every two minutes while visible. **Ready for review** includes every open PR with the `ready-for-review` label in the GitHub accounts listed in `settings.json` under `review_owners`. Use a user or organization login, or `@me` for the signed-in account.
+
+**My latest drafts** lists your eight newest open drafts across repositories, ordered by creation time. **Mark ready** publishes the selected draft for review. **Ready + label** also applies `ready-for-review` when the repository has that label. You can add the label later from the PR’s **More** menu. Run `artalde inbox --review` for the same lists in the terminal.
+
 ## Palette and repositories
 
 - Ctrl+K and Cmd+K open the palette. Search every destination, or prefix with
