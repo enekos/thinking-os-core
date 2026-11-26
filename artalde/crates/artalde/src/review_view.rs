@@ -339,7 +339,7 @@ impl App {
                     ui.horizontal(|ui| {
                         let n = accepted;
                         let label = format!("Submit review · {} · {n} comment{}", view.verdict.label().to_lowercase(), if n == 1 { "" } else { "s" });
-                        let ok = d.open() && view.busy.is_none() && (n > 0 || !summary.trim().is_empty());
+                        let ok = d.open() && !self.pending_actions.contains_key(pr) && (n > 0 || !summary.trim().is_empty());
                         ui.add_enabled_ui(ok, |ui| {
                             if kit::primary(ui, &theme, &label, style::c(theme.accent)).clicked() {
                                 let review = Box::new(self.pending(pr, view).clone());

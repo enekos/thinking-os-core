@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
 use artalde_core::github::{
@@ -35,6 +36,7 @@ const TAB_MAX_W: f32 = 240.0;
 pub enum Tab {
     Home,
     Inbox,
+    ReviewQueue,
     Pr(PrRef),
     Session(String),
     Settings,
@@ -48,6 +50,7 @@ impl Tab {
         match self {
             Tab::Home => "home".into(),
             Tab::Inbox => "inbox".into(),
+            Tab::ReviewQueue => "review-queue".into(),
             Tab::Pr(p) => format!("pr:{p}"),
             Tab::Session(id) => format!("session:{id}"),
             Tab::Settings => "settings".into(),
@@ -60,6 +63,7 @@ impl Tab {
         match s.split_once(':') {
             None if s == "home" => Some(Tab::Home),
             None if s == "inbox" => Some(Tab::Inbox),
+            None if s == "review-queue" => Some(Tab::ReviewQueue),
             None if s == "settings" => Some(Tab::Settings),
             Some(("pr", r)) => PrRef::parse(r).map(Tab::Pr),
             Some(("session", id)) if !id.is_empty() => Some(Tab::Session(id.to_owned())),
@@ -95,7 +99,6 @@ pub struct PrView {
     pub file: usize,
     pub method: Option<MergeMethod>,
     pub delete_branch: bool,
-    pub busy: Option<String>,
     pub show_resolved: bool,
     pub hide_bots: bool,
     pub wrap: bool,
@@ -122,12 +125,20 @@ pub struct PrView {
 #[derive(Default)]
 pub struct InboxState {
     pub login: String,
-    pub buckets: Vec<(Bucket, Vec<PrRow>)>,
+    pub buckets: Vec<(Bucket, Arc<Vec<PrRow>>)>,
     pub error: Option<String>,
     pub loading: bool,
+    refresh_again: bool,
     pub at: Option<Instant>,
     pub filter: String,
     pub collapsed: Vec<Bucket>,
+}
+
+impl InboxState {
+    pub(crate) fn invalidate(&mut self) {
+        self.at = None;
+        self.refresh_again = self.loading;
+    }
 }
 
 /// Failed-job logs by job id; `None` while loading.
@@ -173,7 +184,14 @@ impl App {
             && due(self.inbox.at, INBOX_EVERY_SECS)
             && self.inbox.error.is_none()
         {
-            self.refresh_inbox();
+            self.refresh_inbox(false);
+        }
+        if self.tabs.get(self.active) == Some(&Tab::ReviewQueue)
+            && self.config.is_some()
+            && !self.review_queue.loading
+            && due(self.review_queue.at, INBOX_EVERY_SECS)
+        {
+            self.refresh_inbox(true);
         }
         if let Some(Tab::Repo(repo)) = self.tabs.get(self.active).cloned() {
             let v = self.repos.entry(repo.clone()).or_default();
@@ -192,12 +210,28 @@ impl App {
         }
     }
 
-    pub(crate) fn refresh_inbox(&mut self) {
+    fn inbox_state(&mut self, review: bool) -> &mut InboxState {
+        if review {
+            &mut self.review_queue
+        } else {
+            &mut self.inbox
+        }
+    }
+
+    pub(crate) fn refresh_inbox(&mut self, review: bool) {
+        if self.inbox_state(review).loading {
+            return;
+        }
         let since = self.since();
-        match self.gh.send(Req::Inbox { since }) {
+        let review_owners = review.then(|| self.settings().review_owners);
+        match self.gh.send(Req::Inbox {
+            since,
+            review_owners,
+        }) {
             Ok(()) => {
-                self.inbox.loading = true;
-                self.inbox.error = None;
+                let state = self.inbox_state(review);
+                state.loading = true;
+                state.error = None;
             }
             Err(e) => self.push_log(format!("inbox: {e}")),
         }
@@ -222,27 +256,36 @@ impl App {
                     rows,
                     last,
                 } => {
+                    let state = self.inbox_state(Bucket::REVIEW_QUEUE.contains(&bucket));
                     if last {
-                        self.inbox.loading = false;
-                        self.inbox.at = Some(Instant::now());
+                        state.loading = false;
+                        state.at = Some(Instant::now());
+                    }
+                    if state.refresh_again {
+                        if last {
+                            state.refresh_again = false;
+                            state.at = None;
+                        }
+                        continue;
                     }
                     match rows {
                         Ok(rows) => {
                             if !login.is_empty() {
-                                self.inbox.login = login;
+                                state.login = login;
                             }
-                            match self.inbox.buckets.iter_mut().find(|(b, _)| *b == bucket) {
+                            let rows = Arc::new(rows);
+                            match state.buckets.iter_mut().find(|(b, _)| *b == bucket) {
                                 Some((_, r)) => *r = rows,
                                 None => {
-                                    self.inbox.buckets.push((bucket, rows));
-                                    self.inbox.buckets.sort_by_key(|(b, _)| *b);
+                                    state.buckets.push((bucket, rows));
+                                    state.buckets.sort_by_key(|(b, _)| *b);
                                 }
                             }
                         }
                         Err(e) => {
                             let e = format!("{}: {e}", bucket.label());
+                            state.error = Some(e.clone());
                             self.push_log(format!("inbox: {e}"));
-                            self.inbox.error = Some(e);
                         }
                     }
                 }
@@ -299,9 +342,23 @@ impl App {
                 Res::Log { job, log } => {
                     self.logs.insert(job, Some(log));
                 }
-                Res::Acted { pr, what, result } => {
+                Res::Acted {
+                    pr,
+                    what,
+                    marked_ready,
+                    result,
+                } => {
+                    self.pending_actions.remove(&pr);
+                    if marked_ready
+                        && let Some((_, drafts)) = self
+                            .review_queue
+                            .buckets
+                            .iter_mut()
+                            .find(|(b, _)| *b == Bucket::Drafts)
+                    {
+                        Arc::make_mut(drafts).retain(|r| r.pr.as_ref() != Some(&pr));
+                    }
                     if let Some(mut v) = self.prs.remove(&pr) {
-                        v.busy = None;
                         if v.submitting {
                             v.submitting = false;
                             if result.is_ok()
@@ -327,7 +384,9 @@ impl App {
                     self.push_log(line.clone());
                     self.toast_line(ctx, line);
                     self.load_pr(&pr);
-                    self.inbox.at = None;
+                    for state in [&mut self.inbox, &mut self.review_queue] {
+                        state.invalidate();
+                    }
                 }
             }
         }
@@ -342,6 +401,9 @@ impl App {
     }
 
     pub(crate) fn act_now(&mut self, pr: &PrRef, action: Action) {
+        if self.pending_actions.contains_key(pr) {
+            return;
+        }
         if self.dry_run {
             self.push_log(format!("dry run: {pr} {}", action.describe()));
             return;
@@ -354,9 +416,7 @@ impl App {
             detail,
         }) {
             Ok(()) => {
-                if let Some(v) = self.prs.get_mut(pr) {
-                    v.busy = Some(what);
-                }
+                self.pending_actions.insert(pr.clone(), what);
             }
             Err(e) => self.push_log(format!("{pr}: {e}")),
         }
@@ -419,6 +479,7 @@ impl App {
     fn tab_label(&self, tab: &Tab) -> (String, String) {
         match tab {
             Tab::Home => ("".into(), "Agents".into()),
+            Tab::ReviewQueue => ("".into(), "Review queue".into()),
             Tab::Inbox => {
                 let n = self
                     .inbox
@@ -580,6 +641,9 @@ impl App {
                     kit::paint_icon(&painter, icon_rect, kit::Icon::LayoutDashboard, icon_fg)
                 }
                 Tab::Inbox => kit::paint_icon(&painter, icon_rect, kit::Icon::Inbox, icon_fg),
+                Tab::ReviewQueue => {
+                    kit::paint_icon(&painter, icon_rect, kit::Icon::PullRequest, icon_fg)
+                }
                 Tab::Settings => kit::paint_icon(&painter, icon_rect, kit::Icon::Gear, icon_fg),
                 Tab::Repo(_) => kit::paint_icon(&painter, icon_rect, kit::Icon::Repo, icon_fg),
                 Tab::Terminal(ws) => {
@@ -822,26 +886,32 @@ impl App {
     // --------------------------------------------------------------- inbox
 
     /// The PR inbox; `compact` for the dashboard panel.
-    pub(crate) fn inbox_view(&mut self, ui: &mut egui::Ui, compact: bool) {
+    pub(crate) fn inbox_view(&mut self, ui: &mut egui::Ui, compact: bool, review: bool) {
         let theme = self.theme.clone();
         let now = artalde_core::now();
+        let state = self.inbox_state(review);
+        let mut refresh = false;
         ui.horizontal(|ui| {
             let w = ui.available_width() - if compact { 32.0 } else { 120.0 };
             kit::search(
                 ui,
                 &theme,
-                &mut self.inbox.filter,
-                "repo:data ci:red review:changes @alice -is:bot \"words\"",
+                &mut state.filter,
+                if review {
+                    "Filter by title, repo:name or @author"
+                } else {
+                    "repo:data ci:red review:changes @alice -is:bot \"words\""
+                },
                 w,
             );
-            if self.inbox.loading {
+            if state.loading {
                 ui.spinner();
             } else if kit::icon_button(ui, &theme, kit::Icon::Refresh, "Refresh").clicked() {
-                self.refresh_inbox();
+                refresh = true;
             }
             if !compact {
                 ui.label(
-                    RichText::new(self.inbox.at.map_or(String::new(), |a| {
+                    RichText::new(state.at.map_or(String::new(), |a| {
                         format!("{} ago", ago(a.elapsed().as_secs()))
                     }))
                     .small()
@@ -849,7 +919,11 @@ impl App {
                 );
             }
         });
-        let filter = Filter::parse(&self.inbox.filter);
+        let filter = if review {
+            Filter::review_queue(&state.filter)
+        } else {
+            Filter::parse(&state.filter)
+        };
         if !filter.errors.is_empty() {
             ui.label(
                 RichText::new(filter.errors.join(" · "))
@@ -859,18 +933,22 @@ impl App {
         }
         if !compact {
             ui.horizontal_wrapped(|ui| {
-                for chip in [
-                    "ci:red",
-                    "review:changes",
-                    "review:approved",
-                    "is:draft",
-                    "-is:bot",
-                    "size:<100",
-                ] {
-                    let on = self.inbox.filter.split_whitespace().any(|t| t == chip);
+                let chips: &[&str] = if review {
+                    &["is:mine", "is:draft", "-is:bot"]
+                } else {
+                    &[
+                        "ci:red",
+                        "review:changes",
+                        "review:approved",
+                        "is:draft",
+                        "-is:bot",
+                        "size:<100",
+                    ]
+                };
+                for &chip in chips {
+                    let on = state.filter.split_whitespace().any(|t| t == chip);
                     if kit::chip(ui, &theme, chip, on).clicked() {
-                        let mut parts: Vec<&str> = self
-                            .inbox
+                        let mut parts: Vec<&str> = state
                             .filter
                             .split_whitespace()
                             .filter(|t| *t != chip)
@@ -878,22 +956,26 @@ impl App {
                         if !on {
                             parts.push(chip);
                         }
-                        self.inbox.filter = parts.join(" ");
+                        state.filter = parts.join(" ");
                     }
                 }
             });
         }
-        if let Some(e) = &self.inbox.error {
+        if let Some(e) = &state.error {
             ui.label(RichText::new(e).color(style::c(theme.danger)));
             if kit::button_icon(ui, &theme, Icon::Refresh, "Retry", None).clicked() {
-                self.refresh_inbox();
+                refresh = true;
             }
         }
-        if self.inbox.buckets.is_empty() && self.inbox.loading {
+        if state.buckets.is_empty() && state.loading {
             ui.label(RichText::new("Loading pull requests…").color(style::c(theme.dim)));
         }
-        let login = self.inbox.login.clone();
-        for (bucket, rows) in self.inbox.buckets.clone() {
+        let login = state.login.clone();
+        let buckets = state.buckets.clone();
+        if refresh {
+            self.refresh_inbox(review);
+        }
+        for (bucket, rows) in buckets {
             if compact && bucket == Bucket::Merged {
                 continue;
             }
@@ -901,7 +983,8 @@ impl App {
                 .iter()
                 .filter(|r| filter.matches(r, bucket, &login))
                 .collect();
-            let collapsed = self.inbox.collapsed.contains(&bucket);
+            let state = self.inbox_state(review);
+            let collapsed = state.collapsed.contains(&bucket);
             if kit::fold(
                 ui,
                 &theme,
@@ -911,27 +994,61 @@ impl App {
                 !collapsed,
             ) {
                 if collapsed {
-                    self.inbox.collapsed.retain(|b| *b != bucket);
+                    state.collapsed.retain(|b| *b != bucket);
                 } else {
-                    self.inbox.collapsed.push(bucket);
+                    state.collapsed.push(bucket);
                 }
             }
             if collapsed {
                 continue;
             }
+            if review && shown.is_empty() {
+                let empty = if !state.filter.trim().is_empty() {
+                    "No matching pull requests."
+                } else if bucket == Bucket::Drafts {
+                    "You have no open drafts."
+                } else {
+                    "No open pull requests labeled ready-for-review."
+                };
+                ui.weak(empty);
+            }
             for row in shown {
-                self.inbox_row(ui, row, now, compact);
+                self.inbox_row(ui, row, now, compact, bucket);
             }
             ui.add_space(6.0);
         }
     }
 
-    fn inbox_row(&mut self, ui: &mut egui::Ui, row: &PrRow, now: u64, compact: bool) {
+    fn inbox_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        row: &PrRow,
+        now: u64,
+        compact: bool,
+        bucket: Bucket,
+    ) {
         let theme = self.theme.clone();
         let Some(pr) = row.pr.clone() else { return };
         let open = self.tabs.contains(&Tab::Pr(pr.clone()));
         let cols: &[Col] = if compact {
             &[Col::Px(12.0), Col::Px(112.0), Col::Flex, Col::Px(34.0)]
+        } else if bucket == Bucket::Drafts {
+            &[
+                Col::Px(12.0),
+                Col::Px(180.0),
+                Col::Flex,
+                Col::Px(50.0),
+                Col::Px(88.0),
+                Col::Px(108.0),
+            ]
+        } else if bucket == Bucket::Ready {
+            &[
+                Col::Px(12.0),
+                Col::Px(180.0),
+                Col::Flex,
+                Col::Px(130.0),
+                Col::Px(50.0),
+            ]
         } else {
             &[
                 Col::Px(12.0),
@@ -948,11 +1065,19 @@ impl App {
         let resp = kit::row(
             ui,
             &theme,
-            ("inbox-row", pr.to_string(), compact),
+            ("inbox-row", bucket.key(), pr.to_string(), compact),
             kit::ROW,
             open,
             cols,
             |c, ui| match (c, compact) {
+                (0, _) if Bucket::REVIEW_QUEUE.contains(&bucket) => {
+                    let icon = if row.draft {
+                        Icon::PullRequestDraft
+                    } else {
+                        Icon::PullRequest
+                    };
+                    kit::icon(ui, icon, 12.0, style::c(theme.dim));
+                }
                 (0, _) => kit::dot(ui, check_color(&theme, &row.checks), 4.0),
                 (1, _) => {
                     kit::mono(ui, &repo_label, 11.5, style::c(theme.dim));
@@ -966,6 +1091,45 @@ impl App {
                         );
                     }
                     kit::text(ui, &row.title, 13.0, style::c(theme.text));
+                }
+                (3, false) if bucket == Bucket::Ready => {
+                    kit::text(ui, &format!("@{}", row.author), 11.5, style::c(theme.dim));
+                }
+                (4, false) if bucket == Bucket::Ready => {
+                    kit::right(
+                        ui,
+                        &github::age(&row.created, now),
+                        11.0,
+                        style::c(theme.dim),
+                    );
+                }
+                (3, false) if bucket == Bucket::Drafts => {
+                    kit::right(
+                        ui,
+                        &github::age(&row.created, now),
+                        11.0,
+                        style::c(theme.dim),
+                    );
+                }
+                (4 | 5, false) if bucket == Bucket::Drafts => {
+                    let with_label = c == 5;
+                    if !row.draft || row.state != "OPEN" || (with_label && !row.has_ready_label) {
+                        return;
+                    }
+                    let busy = self.pending_actions.contains_key(&pr);
+                    ui.add_enabled_ui(!busy, |ui| {
+                        let (label, action) = if with_label {
+                            ("Ready + label", Action::ReadyAndLabel)
+                        } else {
+                            ("Mark ready", Action::Ready)
+                        };
+                        if kit::button(ui, &theme, label, None)
+                            .on_hover_text(format!("{pr}: {}", action.describe()))
+                            .clicked()
+                        {
+                            self.act(&pr, action);
+                        }
+                    });
                 }
                 (3, false) => {
                     if !rl.is_empty() {
@@ -1116,7 +1280,7 @@ impl App {
             if view.loading {
                 ui.spinner();
             }
-            if let Some(b) = &view.busy {
+            if let Some(b) = self.pending_actions.get(pr) {
                 ui.label(
                     RichText::new(format!("{b}…"))
                         .small()
@@ -1386,7 +1550,7 @@ impl App {
 
     fn pr_actions(&mut self, ui: &mut egui::Ui, pr: &PrRef, view: &mut PrView, d: &PrDetail) {
         let theme = self.theme.clone();
-        let busy = view.busy.is_some();
+        let busy = self.pending_actions.contains_key(pr);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             // A merged PR has no state actions: an empty scope would still
@@ -1514,6 +1678,24 @@ impl App {
                             let r = kit::menu_button(ui, &theme, Some(Icon::More), "More");
                             egui::Popup::menu(&r).show(|ui| {
                                 let mut pick = None;
+                                if d.can_write
+                                    && d.has_ready_label
+                                    && !d.draft
+                                    && !d
+                                        .labels
+                                        .iter()
+                                        .any(|label| label.eq_ignore_ascii_case("ready-for-review"))
+                                    && kit::menu_action(
+                                        ui,
+                                        &theme,
+                                        Icon::Plus,
+                                        "Add ready-for-review label",
+                                        None,
+                                    )
+                                    .clicked()
+                                {
+                                    pick = Some(Action::AddReadyLabel);
+                                }
                                 if d.draft {
                                     if kit::menu_action(
                                         ui,
@@ -1869,7 +2051,7 @@ TimelineItem::Comment(c) => card(ui, &theme, None, |ui| {
                         let has = !view.composer.trim().is_empty();
                         ui.spacing_mut().item_spacing.x = kit::S2;
                         let send = ui
-                            .add_enabled_ui(has && view.busy.is_none(), |ui| {
+                            .add_enabled_ui(has && !self.pending_actions.contains_key(pr), |ui| {
                                 kit::primary_with(
                                     ui,
                                     &theme,

@@ -70,7 +70,7 @@ impl App {
             "agents" => self.agents(ui),
             "spaces" => self.spaces(ui),
             "inbox" => self.inbox(ui),
-            "prs" => self.inbox_view(ui, true),
+            "prs" => self.inbox_view(ui, true, false),
             "detail" => self.detail(ui),
             "status" => self.status(ui),
             "log" => self.log_panel(ui),

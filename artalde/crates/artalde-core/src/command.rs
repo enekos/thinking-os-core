@@ -110,6 +110,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("appearance.set", "Set the appearance: <system|light|dark>"),
     ("inbox.open", "Open the pull-request inbox tab"),
     (
+        "inbox.review",
+        "Open the review queue and mark recent drafts ready for review",
+    ),
+    (
         "pr.open",
         "Open a pull request as a tab: <owner/repo#N or URL>",
     ),

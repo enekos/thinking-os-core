@@ -72,15 +72,19 @@ pub enum Bucket {
     Mine,
     Involved,
     Merged,
+    Drafts,
+    Ready,
 }
 
 impl Bucket {
-    pub const ALL: [Bucket; 4] = [
+    pub const INBOX: [Bucket; 4] = [
         Bucket::Review,
         Bucket::Mine,
         Bucket::Involved,
         Bucket::Merged,
     ];
+
+    pub const REVIEW_QUEUE: [Bucket; 2] = [Bucket::Drafts, Bucket::Ready];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -88,6 +92,8 @@ impl Bucket {
             Bucket::Mine => "Mine",
             Bucket::Involved => "Involved",
             Bucket::Merged => "Recently merged",
+            Bucket::Drafts => "My latest drafts",
+            Bucket::Ready => "Ready for review",
         }
     }
 
@@ -97,6 +103,8 @@ impl Bucket {
             Bucket::Mine => "mine",
             Bucket::Involved => "involved",
             Bucket::Merged => "merged",
+            Bucket::Drafts => "drafts",
+            Bucket::Ready => "ready",
         }
     }
 
@@ -109,24 +117,35 @@ impl Bucket {
                 "is:pr is:open archived:false involves:@me -author:@me -review-requested:@me sort:updated-desc".into()
             }
             Bucket::Merged => format!("is:pr is:merged archived:false involves:@me merged:>={since} sort:updated-desc"),
+            Bucket::Drafts => "is:pr is:open archived:false author:@me draft:true sort:created-desc".into(),
+            Bucket::Ready => "is:pr is:open label:\"ready-for-review\" sort:created-desc".into(),
         }
     }
 }
 
-const SUMMARY_FIELDS: &str = "
-  id number title url isDraft state createdAt updatedAt
-  headRefName baseRefName additions deletions reviewDecision
-  repository { nameWithOwner }
-  author { __typename login }
-  labels(first: 6) { nodes { name color } }
-  comments { totalCount }
+const ROW_FIELDS: &str = "
+  number title url isDraft state createdAt updatedAt headRefName baseRefName
+  repository { nameWithOwner } author { __typename login }
+  labels(first: 6) { nodes { name } }";
+
+const HEALTH_FIELDS: &str = "
+  additions deletions reviewDecision comments { totalCount }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }";
 
 /// The GraphQL request body (for `gh api graphql --input -`) for a bucket.
 pub fn search_request(bucket: Bucket, since: &str, limit: u32) -> Value {
+    search_page(bucket, &bucket.query(since), limit, None)
+}
+
+fn search_page(bucket: Bucket, query: &str, limit: u32, after: Option<&str>) -> Value {
+    let extra = match bucket {
+        Bucket::Drafts => "repository { label(name: \"ready-for-review\") { id } }",
+        Bucket::Ready => "",
+        _ => HEALTH_FIELDS,
+    };
     json!({
-        "query": format!("query($q: String!, $limit: Int!) {{ viewer {{ login }} search(type: ISSUE, first: $limit, query: $q) {{ nodes {{ ... on PullRequest {{ {SUMMARY_FIELDS} }} }} }} }}"),
-        "variables": { "q": bucket.query(since), "limit": limit },
+        "query": format!("query($q: String!, $limit: Int!, $after: String) {{ viewer {{ login }} search(type: ISSUE, first: $limit, after: $after, query: $q) {{ issueCount pageInfo {{ hasNextPage endCursor }} nodes {{ ... on PullRequest {{ {ROW_FIELDS} {extra} }} }} }} }}"),
+        "variables": { "q": query, "limit": limit, "after": after },
     })
 }
 
@@ -152,6 +171,7 @@ pub struct PrRow {
     /// `SUCCESS`, `FAILURE`, `PENDING`, `ERROR`, or empty.
     pub checks: String,
     pub labels: Vec<String>,
+    pub has_ready_label: bool,
     pub comments: u64,
     pub merged_at: String,
 }
@@ -223,6 +243,9 @@ fn parse_row(v: &Value) -> PrRow {
             .map(|c| s(c, "/commit/statusCheckRollup/state"))
             .unwrap_or_default(),
         labels: nodes(v, "/labels/nodes").map(|l| s(l, "/name")).collect(),
+        has_ready_label: v
+            .pointer("/repository/label/id")
+            .is_some_and(Value::is_string),
         comments: n(v, "/comments/totalCount"),
         merged_at: s(v, "/mergedAt"),
     }
@@ -232,6 +255,7 @@ const DETAIL_QUERY: &str = "query($owner: String!, $name: String!, $number: Int!
   viewer { login }
   repository(owner: $owner, name: $name) {
     viewerPermission squashMergeAllowed mergeCommitAllowed rebaseMergeAllowed
+    label(name: \"ready-for-review\") { id }
     pullRequest(number: $number) {
       id number title url body state isDraft createdAt updatedAt
       headRefName baseRefName additions deletions changedFiles
@@ -425,6 +449,7 @@ pub struct PrDetail {
     pub viewer_is_author: bool,
     pub can_update_branch: bool,
     pub can_write: bool,
+    pub has_ready_label: bool,
     pub auto_merge: Option<String>,
     pub merge_methods: Vec<MergeMethod>,
     pub labels: Vec<String>,
@@ -602,6 +627,7 @@ pub fn parse_detail(v: &Value) -> Option<PrDetail> {
             "WRITE" | "MAINTAIN" | "ADMIN"
         ),
         auto_merge: Some(s(p, "/autoMergeRequest/mergeMethod")).filter(|m| !m.is_empty()),
+        has_ready_label: repo_v.pointer("/label/id").is_some_and(Value::is_string),
         merge_methods,
         labels: nodes(p, "/labels/nodes").map(|l| s(l, "/name")).collect(),
         requested: nodes(p, "/reviewRequests/nodes")
@@ -648,6 +674,8 @@ pub enum Action {
         rebase: bool,
     },
     Ready,
+    ReadyAndLabel,
+    AddReadyLabel,
     ToDraft,
     Close,
     Reopen,
@@ -724,6 +752,8 @@ impl Action {
                 if *rebase { "rebase" } else { "merge" }
             ),
             Action::Ready => "Mark ready for review".into(),
+            Action::ReadyAndLabel => "Mark ready and add ready-for-review".into(),
+            Action::AddReadyLabel => "Add ready-for-review label".into(),
             Action::ToDraft => "Convert to draft".into(),
             Action::Close => "Close pull request".into(),
             Action::Reopen => "Reopen pull request".into(),
@@ -769,6 +799,7 @@ impl Action {
                 .filter(|id| !id.is_empty())
                 .ok_or("still loading — try again in a moment")
         };
+        let add_ready_label = || gh(&["pr", "edit", &num, "--add-label", "ready-for-review"]);
         let review = |event: &str, body: &str| -> Result<Invocation, String> {
             let mut input = json!({ "pullRequestId": node()?, "event": event, "body": body });
             if let Some(oid) = detail.map(|d| d.head_oid.clone()).filter(|o| !o.is_empty()) {
@@ -821,6 +852,8 @@ impl Action {
                 vec![gh(&a)]
             }
             Action::Ready => vec![gh(&["pr", "ready", &num])],
+            Action::ReadyAndLabel => vec![gh(&["pr", "ready", &num]), add_ready_label()],
+            Action::AddReadyLabel => vec![add_ready_label()],
             Action::ToDraft => vec![gh(&["pr", "ready", &num, "--undo"])],
             Action::Close => vec![gh(&["pr", "close", &num])],
             Action::Reopen => vec![gh(&["pr", "reopen", &num])],
@@ -947,7 +980,7 @@ const REPO_ACTIVITY_QUERY: &str = "query($owner: String!, $name: String!) {
 
 pub fn repo_request(repo: &str) -> Value {
     let (owner, name) = repo.split_once('/').unwrap_or((repo, ""));
-    json!({ "query": REPO_QUERY.replace("SUMMARY", SUMMARY_FIELDS), "variables": { "owner": owner, "name": name } })
+    json!({ "query": REPO_QUERY.replace("SUMMARY", &format!("{ROW_FIELDS} {HEALTH_FIELDS}")), "variables": { "owner": owner, "name": name } })
 }
 
 pub fn repo_activity_request(repo: &str) -> Value {
@@ -1092,7 +1125,96 @@ pub fn graphql_exec(body: &Value) -> Result<Value, String> {
 }
 
 pub fn fetch_bucket(bucket: Bucket, since: &str) -> Result<(String, Vec<PrRow>), String> {
-    graphql_exec(&search_request(bucket, since, 40)).map(|v| parse_search(&v))
+    let limit = if bucket == Bucket::Drafts { 8 } else { 40 };
+    let page = graphql_exec(&search_request(bucket, since, limit))?;
+    if let Some(e) = errors(&page) {
+        return Err(e);
+    }
+    let (login, mut rows) = parse_search(&page);
+    if bucket == Bucket::Drafts {
+        rows.retain(|r| r.draft && r.state == "OPEN" && r.author.eq_ignore_ascii_case(&login));
+    }
+    Ok((login, rows))
+}
+
+/// Search by label across the workspace, including PRs unrelated to the viewer.
+pub fn fetch_ready(owners: &[String]) -> Result<(String, Vec<PrRow>), String> {
+    collect_ready(owners, graphql_exec)
+}
+
+fn collect_ready(
+    owners: &[String],
+    mut fetch: impl FnMut(&Value) -> Result<Value, String>,
+) -> Result<(String, Vec<PrRow>), String> {
+    let mut base = Bucket::Ready.query("");
+    if owners.is_empty() {
+        return Err("Set review_owners in settings.json to a GitHub user or organization".into());
+    }
+    for owner in owners {
+        if owner != "@me"
+            && (owner.is_empty()
+                || !owner
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_')))
+        {
+            return Err(format!("Invalid GitHub review owner: {owner}"));
+        }
+        base.push_str(&format!(" user:{owner}"));
+    }
+    let mut query = base.clone();
+    let mut seen = std::collections::HashSet::new();
+    let mut rows = Vec::new();
+    let mut cursor = None;
+    let mut page_count = 0;
+    loop {
+        let page = fetch(&search_page(Bucket::Ready, &query, 100, cursor.as_deref()))?;
+        if let Some(e) = errors(&page) {
+            return Err(e);
+        }
+        let search = page
+            .pointer("/data/search")
+            .ok_or("Missing search results")?;
+        let more = search
+            .pointer("/pageInfo/hasNextPage")
+            .and_then(Value::as_bool)
+            .ok_or("Missing pagination information")?;
+        let (login, batch) = parse_search(&page);
+        let oldest = batch.last().map(|r| r.created.clone());
+        rows.extend(
+            batch
+                .into_iter()
+                .filter(|r| r.pr.as_ref().is_some_and(|p| seen.insert(p.clone()))),
+        );
+        page_count += 1;
+        // GitHub search caps a single query at 1,000. Start a new window
+        // at the oldest creation time, retaining ties and deduplicating PRs.
+        if page_count == 10 && n(search, "/issueCount") > 1000 {
+            let stamp = oldest
+                .filter(|s| parse_iso(s).is_some())
+                .ok_or("Missing PR creation date")?;
+            let next = format!("{base} created:<={stamp}");
+            if next == query {
+                return Err(
+                    "Too many labeled PRs opened in the same second to paginate GitHub search"
+                        .into(),
+                );
+            }
+            query = next;
+            cursor = None;
+            page_count = 0;
+        } else if more {
+            let next = search
+                .pointer("/pageInfo/endCursor")
+                .and_then(Value::as_str)
+                .ok_or("Missing next search cursor")?;
+            if cursor.as_deref() == Some(next) {
+                return Err("GitHub repeated a search cursor".into());
+            }
+            cursor = Some(next.to_owned());
+        } else {
+            return Ok((login, rows));
+        }
+    }
 }
 
 pub fn fetch_detail(pr: &PrRef) -> Result<PrDetail, String> {
@@ -1345,7 +1467,13 @@ impl Filter {
                         Some(Term::Is(v))
                     }
                     "label" => Some(Term::Label(v.split(',').map(str::to_owned).collect())),
-                    "in" if Bucket::ALL.iter().any(|b| b.key() == v) => Some(Term::In(v)),
+                    "in" if Bucket::INBOX
+                        .iter()
+                        .chain(&Bucket::REVIEW_QUEUE)
+                        .any(|b| b.key() == v) =>
+                    {
+                        Some(Term::In(v))
+                    }
                     "size" => {
                         let (op, num) = match v.chars().next() {
                             Some(c @ ('<' | '>')) => (c, v.get(1..).unwrap_or_default()),
@@ -1367,6 +1495,23 @@ impl Filter {
             }
         }
         f
+    }
+
+    pub fn review_queue(q: &str) -> Filter {
+        let mut filter = Self::parse(q);
+        if filter
+            .terms
+            .iter()
+            .any(|(_, t)| matches!(t, Term::Ci(_) | Term::Size(_, _) | Term::Review(_)))
+        {
+            filter
+                .errors
+                .push("CI, review decisions and size filters are available in the PR inbox".into());
+            filter
+                .terms
+                .retain(|(_, t)| !matches!(t, Term::Ci(_) | Term::Size(_, _) | Term::Review(_)));
+        }
+        filter
     }
 
     pub fn is_empty(&self) -> bool {
@@ -1576,6 +1721,58 @@ mod tests {
     }
 
     #[test]
+    fn review_queue_pages_past_github_search_cap_without_losing_timestamp_ties() {
+        let owners = ["sample-org".into(), "@me".into()];
+        let mut page = 0;
+        let (login, rows) = collect_ready(&owners, |request| {
+            let q = request["variables"]["q"].as_str().unwrap();
+            assert!(q.contains("label:\"ready-for-review\""));
+            assert!(q.contains("user:sample-org user:@me"));
+            assert!(!q.contains("author:"));
+            let (first, last) = if page < 10 {
+                assert!(!q.contains("created:<="));
+                if page == 0 {
+                    assert!(request["variables"]["after"].is_null());
+                } else {
+                    assert_eq!(request["variables"]["after"], format!("page-{page}"));
+                }
+                (page * 100 + 1, (page + 1) * 100)
+            } else {
+                assert_eq!(page, 10);
+                assert!(q.ends_with("created:<=2026-10-01T00:00:00Z"));
+                assert!(request["variables"]["after"].is_null());
+                (1000, 1001)
+            };
+            let nodes: Vec<_> = (first..=last).map(|number| json!({
+                "number":number, "repository":{"nameWithOwner":"sample-org/r"},
+                "createdAt": if number < 1000 { "2026-10-02T00:00:00Z" } else { "2026-10-01T00:00:00Z" }
+            })).collect();
+            page += 1;
+            Ok(json!({"data":{"viewer":{"login":"viewer"},"search":{
+                "issueCount": if page <= 10 { 1001 } else { 2 },
+                "pageInfo":{"hasNextPage":page < 10,"endCursor":format!("page-{page}")},"nodes":nodes
+            }}}))
+        }).unwrap();
+        assert_eq!(login, "viewer");
+        assert_eq!(rows.len(), 1001);
+        assert_eq!(rows.last().unwrap().pr.as_ref().unwrap().number, 1001);
+    }
+
+    #[test]
+    fn latest_drafts_search_uses_creation_order_and_only_my_open_drafts() {
+        let query = Bucket::Drafts.query("");
+        for term in [
+            "is:pr",
+            "is:open",
+            "draft:true",
+            "author:@me",
+            "sort:created-desc",
+        ] {
+            assert!(query.split_whitespace().any(|part| part == term));
+        }
+    }
+
+    #[test]
     fn detail_parses() {
         let v: Value = serde_json::from_str(r#"{"data":{"viewer":{"login":"me"},"repository":{
           "viewerPermission":"WRITE","squashMergeAllowed":true,"mergeCommitAllowed":false,"rebaseMergeAllowed":true,
@@ -1619,6 +1816,25 @@ mod tests {
             repo: "o/r".into(),
             number: 5,
         };
+        let ready = Action::Ready.invocations(&pr, None).unwrap();
+        assert_eq!(ready[0].args, ["pr", "ready", "5", "--repo", "o/r"]);
+        let label = Action::AddReadyLabel.invocations(&pr, None).unwrap();
+        assert_eq!(
+            label[0].args,
+            [
+                "pr",
+                "edit",
+                "5",
+                "--add-label",
+                "ready-for-review",
+                "--repo",
+                "o/r"
+            ]
+        );
+        assert_eq!(
+            Action::ReadyAndLabel.invocations(&pr, None).unwrap(),
+            [ready, label].concat()
+        );
         let inv = Action::Merge {
             method: MergeMethod::Squash,
             delete_branch: true,

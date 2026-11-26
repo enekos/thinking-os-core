@@ -99,6 +99,8 @@ pub struct App {
     pub(crate) prs: HashMap<PrRef, PrView>,
     pub(crate) repos: HashMap<String, crate::repo_view::RepoView>,
     pub(crate) inbox: InboxState,
+    pub(crate) review_queue: InboxState,
+    pub(crate) pending_actions: HashMap<PrRef, String>,
     pub(crate) logs: Logs,
     pub(crate) confirm: Option<(PrRef, github::Action)>,
     pub(crate) conversations: Conversations,
@@ -198,6 +200,8 @@ impl App {
             prs: HashMap::new(),
             repos: HashMap::new(),
             inbox: InboxState::default(),
+            review_queue: InboxState::default(),
+            pending_actions: HashMap::new(),
             logs: Logs::new(),
             confirm: None,
             conversations: Conversations::new(),
@@ -319,6 +323,14 @@ impl App {
                         self.toast(ctx, format!("config: {e}"));
                     }
                     self.mods.sync(&cfg.mods);
+                    if self.config.as_ref().is_some_and(|prev| {
+                        prev.settings.review_owners != cfg.settings.review_owners
+                    }) {
+                        self.review_queue
+                            .buckets
+                            .retain(|(b, _)| *b != artalde_core::github::Bucket::Ready);
+                        self.review_queue.invalidate();
+                    }
                     self.config = Some(*cfg);
                     self.mod_ctx = None;
                 }
@@ -680,7 +692,7 @@ impl App {
             }
             "refresh" => {
                 self.feed.refresh();
-                self.refresh_inbox();
+                self.refresh_inbox(self.tabs.get(self.active) == Some(&Tab::ReviewQueue));
                 if let Some(Tab::Pr(pr)) = self.tabs.get(self.active).cloned() {
                     self.load_pr(&pr);
                 }
@@ -706,6 +718,7 @@ impl App {
                 }
             }
             "inbox.open" => self.open_tab(Tab::Inbox),
+            "inbox.review" => self.open_tab(Tab::ReviewQueue),
             "repo.open" => match arg.and_then(crate::repo_view::parse_repo) {
                 Some(r) => self.open_tab(Tab::Repo(r)),
                 None => self.push_log("repo.open: owner/repo or a GitHub URL"),
@@ -1027,6 +1040,7 @@ impl App {
             .inbox
             .buckets
             .iter()
+            .chain(&self.review_queue.buckets)
             .flat_map(|(_, rows)| {
                 rows.iter()
                     .filter_map(|r| r.pr.as_ref().map(|p| p.repo.clone()))
@@ -1087,8 +1101,8 @@ impl App {
                 .keywords("spawn start agent worktree"),
             );
         }
-        for (_, rows) in &self.inbox.buckets {
-            for row in rows {
+        for (_, rows) in self.inbox.buckets.iter().chain(&self.review_queue.buckets) {
+            for row in rows.iter() {
                 let Some(pr) = row.pr.clone().filter(|pr| seen_prs.insert(pr.clone())) else {
                     continue;
                 };
@@ -1621,13 +1635,32 @@ impl eframe::App for App {
             rect.max - egui::vec2(16.0, 12.0),
         );
         match self.tabs.get(self.active).cloned() {
-            Some(Tab::Inbox) => {
+            Some(tab @ (Tab::Inbox | Tab::ReviewQueue)) => {
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(page));
-                child.label(egui::RichText::new("Pull requests").font(fonts::display(22.0)));
+                let review = tab == Tab::ReviewQueue;
+                child.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(if review {
+                            "Review queue"
+                        } else {
+                            "Pull requests"
+                        })
+                        .font(fonts::display(22.0)),
+                    );
+                    if !review && kit::button(ui, &self.theme, "Review queue", None).clicked() {
+                        self.open_tab(Tab::ReviewQueue);
+                    }
+                    if review && let Some(cfg) = &self.config {
+                        ui.weak(format!(
+                            "label:ready-for-review · {}",
+                            cfg.settings.review_owners.join(", ")
+                        ));
+                    }
+                });
                 egui::ScrollArea::vertical()
-                    .id_salt("inbox-page")
+                    .id_salt(tab.key())
                     .auto_shrink([false, false])
-                    .show(&mut child, |ui| self.inbox_view(ui, false));
+                    .show(&mut child, |ui| self.inbox_view(ui, false, review));
                 self.finish_frame(&ctx);
                 return;
             }

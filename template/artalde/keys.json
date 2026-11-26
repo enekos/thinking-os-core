@@ -33,6 +33,7 @@
   "cmd+shift+]": "tab.next",
   "cmd+shift+[": "tab.prev",
   "cmd+i": "inbox.open",
+  "cmd+shift+i": "inbox.review",
   "cmd+o": "session.open",
   "cmd+alt+d": "appearance.toggle",
   "cmd+shift+r": "pr.review",
