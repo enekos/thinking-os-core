@@ -15,7 +15,20 @@ final class LinkReceiver: NSObject, NSApplicationDelegate {
             let paths = Bundle.main.object(forInfoDictionaryKey: "ArtaldeToolPaths") as? [String] ?? []
             env["PATH"] = (paths + [env["PATH"] ?? "/usr/bin:/bin"]).joined(separator: ":")
             process.environment = env
-            do { try process.run() }
+            do {
+                try process.run()
+                if url.scheme?.lowercased() == "artalde" ||
+                    (["github.com", "www.github.com"].contains(url.host?.lowercased() ?? "") &&
+                     url.pathComponents.dropFirst(3).first == "pull") {
+                    let binary = URL(fileURLWithPath: executable).resolvingSymlinksInPath()
+                    if let window = NSWorkspace.shared.runningApplications.first(where: {
+                        $0.executableURL?.resolvingSymlinksInPath() == binary
+                    }) {
+                        window.unhide()
+                        window.activate(options: [.activateAllWindows])
+                    }
+                }
+            }
             catch { NSLog("Artalde could not open the link: %@", error.localizedDescription) }
         }
     }

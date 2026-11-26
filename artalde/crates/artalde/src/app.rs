@@ -1611,8 +1611,7 @@ fn modifiers(c: &Chord) -> Modifiers {
 }
 
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if let Some(receiver) = &mut self.links {
             let urls = receiver.take();
             if !urls.is_empty() {
@@ -1624,6 +1623,10 @@ impl eframe::App for App {
             }
             ctx.request_repaint_after(crate::deep_links::POLL);
         }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         self.drain(&ctx);
         self.drain_github(&ctx);
         self.drain_reviews(&ctx);
