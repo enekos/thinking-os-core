@@ -12,6 +12,7 @@ pub mod changes;
 pub mod claude;
 pub mod command;
 pub mod config;
+pub mod diff_context;
 pub mod github;
 pub mod hook;
 pub mod inbox;

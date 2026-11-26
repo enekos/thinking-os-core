@@ -20,18 +20,11 @@ impl PrRef {
     /// `owner/repo#12`, `https://github.com/owner/repo/pull/12[/...]`.
     pub fn parse(s: &str) -> Option<PrRef> {
         let s = s.trim();
-        let (repo, num) = if let Some(rest) = s.split("github.com/").nth(1) {
-            let mut parts = rest.split('/');
-            let (owner, name, kind, num) =
-                (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
-            if kind != "pull" && kind != "issues" {
-                return None;
-            }
-            (format!("{owner}/{name}"), num.split(['#', '?']).next()?)
-        } else {
-            let (repo, num) = s.split_once('#')?;
-            (repo.to_owned(), num)
-        };
+        if s.contains("://") {
+            return Self::link(s).map(|(pr, _)| pr);
+        }
+        let (repo, num) = s.split_once('#')?;
+        let repo = repo.to_owned();
         let ok = repo.split('/').count() == 2
             && repo.split('/').all(|p| {
                 !p.is_empty()
@@ -40,6 +33,43 @@ impl PrRef {
             });
         let number = num.parse().ok().filter(|n| *n > 0)?;
         ok.then_some(PrRef { repo, number })
+    }
+
+    /// A GitHub PR URL and the path following its number (such as `files`).
+    pub fn link(url: &str) -> Option<(PrRef, &str)> {
+        let (scheme, rest) = url.trim().split_once("://")?;
+        if !["https", "http", "artalde"]
+            .iter()
+            .any(|s| scheme.eq_ignore_ascii_case(s))
+        {
+            return None;
+        }
+        let (authority, path) = rest.split_once('/')?;
+        let host = authority
+            .strip_suffix(if scheme.eq_ignore_ascii_case("http") {
+                ":80"
+            } else {
+                ":443"
+            })
+            .unwrap_or(authority);
+        if !["github.com", "www.github.com"]
+            .iter()
+            .any(|h| host.eq_ignore_ascii_case(h))
+        {
+            return None;
+        }
+        let mut parts = path.split(['?', '#']).next()?.splitn(5, '/');
+        let owner = parts.next()?;
+        let repo = parts.next()?;
+        if parts.next()? != "pull" {
+            return None;
+        }
+        let number = parts.next()?;
+        if number.is_empty() || !number.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let pr = Self::parse(&format!("{owner}/{repo}#{number}"))?;
+        Some((pr, parts.next().unwrap_or_default()))
     }
 
     pub fn owner_name(&self) -> (&str, &str) {
@@ -1264,6 +1294,9 @@ pub struct DiffFile {
     /// The path before a rename.
     pub old_path: Option<String>,
     pub lines: Vec<DiffLine>,
+    /// Post-image blob from the patch index, often abbreviated.
+    pub postimage: String,
+    pub truncated: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1292,6 +1325,8 @@ pub enum LineKind {
     Add,
     Remove,
     Context,
+    /// Unchanged text outside the original patch; GitHub cannot anchor a review here.
+    Expanded,
     Meta,
 }
 
@@ -1310,8 +1345,10 @@ const MAX_FILE_LINES: usize = 4000;
 pub fn parse_diff(text: &str) -> Vec<DiffFile> {
     let mut files: Vec<DiffFile> = Vec::new();
     let (mut old, mut new) = (0u32, 0u32);
+    let mut in_hunk = false;
     for line in text.lines() {
         if let Some(rest) = line.strip_prefix("diff --git ") {
+            in_hunk = false;
             let path = rest.split(" b/").nth(1).unwrap_or(rest).to_owned();
             files.push(DiffFile {
                 path,
@@ -1322,7 +1359,17 @@ pub fn parse_diff(text: &str) -> Vec<DiffFile> {
         let Some(file) = files.last_mut() else {
             continue;
         };
-        if let Some(p) = line.strip_prefix("+++ b/") {
+        if !in_hunk && let Some(index) = line.strip_prefix("index ") {
+            if let Some((_, new_blob)) = index
+                .split_whitespace()
+                .next()
+                .and_then(|ids| ids.split_once(".."))
+            {
+                new_blob.clone_into(&mut file.postimage);
+            }
+            continue;
+        }
+        if !in_hunk && let Some(p) = line.strip_prefix("+++ b/") {
             p.clone_into(&mut file.path);
             continue;
         }
@@ -1339,15 +1386,17 @@ pub fn parse_diff(text: &str) -> Vec<DiffFile> {
             file.old_path = Some(from.to_owned());
             continue;
         }
-        if line.starts_with("+++ ")
-            || line.starts_with("--- ")
-            || line.starts_with("index ")
-            || line.starts_with("rename to ")
-            || line.starts_with("similarity index")
+        if !in_hunk
+            && (line.starts_with("+++ ")
+                || line.starts_with("--- ")
+                || line.starts_with("index ")
+                || line.starts_with("rename to ")
+                || line.starts_with("similarity index"))
         {
             continue;
         }
         let (kind, o, nn) = if line.starts_with("@@") {
+            in_hunk = true;
             let mut it = line.split_whitespace().skip(1);
             let start = |t: Option<&str>| {
                 t.and_then(|t| t.get(1..))
@@ -1380,6 +1429,8 @@ pub fn parse_diff(text: &str) -> Vec<DiffFile> {
                 old: o,
                 new: nn,
             });
+        } else {
+            file.truncated = true;
         }
     }
     files
@@ -1690,6 +1741,35 @@ mod tests {
         assert!(PrRef::parse("zin#10").is_none());
         assert!(PrRef::parse("a/b#x").is_none());
         assert!(PrRef::parse("https://github.com/a/b/tree/main").is_none());
+    }
+
+    #[test]
+    fn pr_links_route_by_authority_and_path() {
+        for (url, section) in [
+            ("https://GitHub.com/org/repo/pull/12", ""),
+            (
+                "https://github.com/org/repo/pull/12/files?show=1#diff-abc",
+                "files",
+            ),
+            ("http://github.com:80/org/repo/pull/12/checks", "checks"),
+            ("artalde://github.com/org/repo/pull/12/changes", "changes"),
+        ] {
+            let (pr, sub) = PrRef::link(url).unwrap();
+            assert_eq!(pr.to_string(), "org/repo#12");
+            assert_eq!(sub, section);
+        }
+        for external in [
+            "https://github.com/org/repo/issues/12",
+            "https://other.example/github.com/org/repo/pull/12",
+            "https://github.com.other.example/org/repo/pull/12",
+            "https://other.example/?next=https://github.com/org/repo/pull/12",
+            "https://github.com@other.example/org/repo/pull/12",
+            "https://github.com/org/repo/pull/0",
+            "https://github.com/org/repo/pull/12x",
+            "https://github.com/org/repo/actions/runs/12",
+        ] {
+            assert!(PrRef::parse(external).is_none(), "{external}");
+        }
     }
 
     #[test]

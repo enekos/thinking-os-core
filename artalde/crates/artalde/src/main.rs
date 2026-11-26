@@ -4,6 +4,7 @@
 mod actions;
 mod app;
 mod changes_view;
+mod deep_links;
 mod diff_view;
 #[cfg(feature = "headless")]
 mod drive;
@@ -49,6 +50,7 @@ artalde — a live control plane for your coding agents
 
 usage:
   artalde                    open the window
+  artalde open <PR URL>      open a GitHub PR in the running window, or start Artalde
   artalde hook               Claude Code hook: read one event on stdin (wire with `artalde hooks`)
   artalde report --id ID --state STATE [--agent A] [--message M] [--cwd DIR] [--end]
                              report state from any other agent (working|blocked|done|idle)
@@ -91,8 +93,34 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let store = Store::new(&store::state_dir());
     let result = match args.first().map(String::as_str) {
-        None | Some("ui") => gui(store, None),
-        Some("review-queue") => gui(store, Some(views::Tab::ReviewQueue)),
+        None | Some("ui") => gui(store, None, None),
+        Some("open") => match args.get(1) {
+            #[cfg(target_os = "macos")]
+            Some(url)
+                if artalde_core::github::PrRef::link(url).is_none()
+                    && (url.starts_with("https://") || url.starts_with("http://"))
+                    && args.get(2).is_some_and(|s| s == "--fallback-browser")
+                    && args
+                        .get(3)
+                        .is_some_and(|s| s != "org.thinking-os.artalde.links") =>
+            {
+                let status = std::process::Command::new("/usr/bin/open")
+                    .args(["-b", &args[3], url])
+                    .status();
+                status
+                    .map(|s| {
+                        if s.success() {
+                            ExitCode::SUCCESS
+                        } else {
+                            ExitCode::FAILURE
+                        }
+                    })
+                    .map_err(Into::into)
+            }
+            Some(url) => gui(store, None, Some(url)),
+            None => Err(anyhow::anyhow!("usage: artalde open <GitHub PR URL>")),
+        },
+        Some("review-queue") => gui(store, Some(views::Tab::ReviewQueue), None),
         Some("hook") => {
             // A hook must never fail the agent: report and exit 0.
             if let Err(e) = run_hook(&store) {
@@ -163,7 +191,15 @@ fn main() -> ExitCode {
     })
 }
 
-fn gui(store: Store, tab: Option<views::Tab>) -> anyhow::Result<ExitCode> {
+fn gui(store: Store, tab: Option<views::Tab>, link: Option<&str>) -> anyhow::Result<ExitCode> {
+    let links = if std::env::var_os("ARTALDE_SCREENSHOT").is_none() {
+        deep_links::Links::connect(link)?
+    } else {
+        None
+    };
+    if link.is_some() && links.is_none() {
+        return Ok(ExitCode::SUCCESS);
+    }
     let dir = config::config_dir();
     if !dir.exists() {
         let wrote = config::install_defaults(&dir)?;
@@ -189,6 +225,7 @@ fn gui(store: Store, tab: Option<views::Tab>) -> anyhow::Result<ExitCode> {
         options,
         Box::new(move |cc| {
             let mut app = app::App::new(cc, store, dir)?;
+            app.links = links;
             if let Some(tab) = tab {
                 app.open_tab(tab);
             }

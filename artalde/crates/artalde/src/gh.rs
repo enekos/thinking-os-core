@@ -17,6 +17,11 @@ pub enum Req {
     },
     Detail(PrRef),
     Diff(PrRef),
+    Context {
+        pr: PrRef,
+        file: DiffFile,
+        revision: String,
+    },
     Repo(String),
     RepoActivity(String),
     Log {
@@ -40,6 +45,12 @@ pub enum Res {
     },
     Detail(PrRef, Result<Box<PrDetail>, String>),
     Diff(PrRef, Result<Vec<DiffFile>, String>),
+    Context {
+        pr: PrRef,
+        path: String,
+        revision: String,
+        lines: Result<Vec<github::DiffLine>, String>,
+    },
     Repo(
         String,
         Result<Box<artalde_core::github::RepoDetail>, String>,
@@ -170,6 +181,15 @@ fn handle(req: Req, emit: &mut dyn FnMut(Res) -> bool) -> bool {
         Req::Diff(pr) => {
             let r = github::fetch_diff(&pr);
             Res::Diff(pr, r)
+        }
+        Req::Context { pr, file, revision } => {
+            let lines = artalde_core::diff_context::load(&pr, &file, &revision);
+            Res::Context {
+                pr,
+                path: file.path,
+                revision,
+                lines,
+            }
         }
         Req::Repo(repo) => {
             let r = github::fetch_repo(&repo).map(Box::new);

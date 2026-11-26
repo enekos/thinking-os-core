@@ -38,6 +38,7 @@ const PALETTE_ROWS: usize = 9;
 const PALETTE_RECENTS: usize = 8;
 
 pub struct App {
+    pub(crate) links: Option<crate::deep_links::Links>,
     pub(crate) feed: Feed,
     pub(crate) actions: Actions,
     pub(crate) config: Option<Config>,
@@ -150,6 +151,7 @@ impl App {
         let theme = Theme::graphite();
         style::apply(&cc.egui_ctx, &theme, 13.5);
         Ok(App {
+            links: None,
             feed,
             actions,
             config: None,
@@ -662,14 +664,11 @@ impl App {
                     }
                 }
             }
-            "url.open" => match arg {
-                Some(u) if u.starts_with("https://") || u.starts_with("http://") => {
-                    self.submit(Job::Open {
-                        target: u.to_owned(),
-                    });
+            "url.open" => {
+                if let Some(url) = arg {
+                    self.open_link(url);
                 }
-                _ => self.push_log("url.open: only http(s) URLs"),
-            },
+            }
             "path.edit" => match arg.map(PathBuf::from) {
                 Some(p) if p.is_absolute() && p.exists() => {
                     let app = self.settings().editor;
@@ -772,6 +771,9 @@ impl App {
                         c.settings = s;
                     }
                 }
+            }
+            "pr.open" if arg.is_some_and(|url| PrRef::link(url).is_some()) => {
+                self.open_link(arg.unwrap_or_default())
             }
             "pr.open" => match arg.and_then(PrRef::parse) {
                 Some(pr) => self.open_tab(Tab::Pr(pr)),
@@ -1213,13 +1215,18 @@ impl App {
             .flatten()
         });
         if let Some(pr) = direct_pr {
+            let target = if PrRef::link(&query.text).is_some() {
+                query.text.clone()
+            } else {
+                pr.to_string()
+            };
             entries.insert(
                 0,
                 PaletteEntry::new(
                     PaletteKind::PullRequest,
                     format!("Open pull request #{}", pr.number),
                     &pr.repo,
-                    Command::new("pr.open", Some(&pr.to_string())),
+                    Command::new("pr.open", Some(&target)),
                 )
                 .keywords(format!("{pr} direct github"))
                 .boost(70_000),
@@ -1606,6 +1613,17 @@ fn modifiers(c: &Chord) -> Modifiers {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if let Some(receiver) = &mut self.links {
+            let urls = receiver.take();
+            if !urls.is_empty() {
+                for url in urls {
+                    self.open_link(&url);
+                }
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+            ctx.request_repaint_after(crate::deep_links::POLL);
+        }
         self.drain(&ctx);
         self.drain_github(&ctx);
         self.drain_reviews(&ctx);

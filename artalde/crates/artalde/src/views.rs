@@ -83,6 +83,13 @@ pub enum PrSub {
     Review,
 }
 
+/// Only the selected expansion is retained. A late reply cannot reopen a collapsed file.
+pub struct FileContext {
+    pub path: String,
+    pub revision: String,
+    pub lines: Option<Result<Arc<Vec<github::DiffLine>>, String>>,
+}
+
 /// One PR tab's state.
 #[derive(Default)]
 pub struct PrView {
@@ -92,6 +99,7 @@ pub struct PrView {
     pub loaded_at: Option<Instant>,
     pub diff: Option<Result<Vec<DiffFile>, String>>,
     pub diff_loading: bool,
+    pub context: Option<FileContext>,
     pub sub: PrSub,
     pub composer: String,
     pub replies: HashMap<String, String>,
@@ -298,6 +306,13 @@ impl App {
                             if v.method.is_none_or(|m| !d.merge_methods.contains(&m)) {
                                 v.method = d.merge_methods.first().copied();
                             }
+                            if v.detail
+                                .as_ref()
+                                .is_some_and(|old| old.head_oid != d.head_oid || old.base != d.base)
+                            {
+                                v.diff = None;
+                                v.context = None;
+                            }
                             v.detail = Some(d);
                             v.error = None;
                         }
@@ -338,6 +353,24 @@ impl App {
                     let v = self.prs.entry(pr).or_default();
                     v.diff_loading = false;
                     v.diff = Some(r);
+                }
+                Res::Context {
+                    pr,
+                    path,
+                    revision,
+                    lines,
+                } => {
+                    let view = if pr.number == 0 {
+                        self.changes.view_mut(std::path::Path::new(&pr.repo))
+                    } else {
+                        self.prs.get_mut(&pr)
+                    };
+                    if let Some(context) = view.and_then(|v| v.context.as_mut())
+                        && context.path == path
+                        && context.revision == revision
+                    {
+                        context.lines = Some(lines.map(Arc::new));
+                    }
                 }
                 Res::Log { job, log } => {
                     self.logs.insert(job, Some(log));
@@ -861,13 +894,23 @@ impl App {
 
     /// Route a link from rendered markdown: PRs open as tabs.
     pub(crate) fn open_link(&mut self, url: &str) {
-        match PrRef::parse(url) {
-            Some(pr) if url.contains("/pull/") || !url.contains("://") => {
-                self.open_tab(Tab::Pr(pr))
-            }
-            _ => self
-                .queue
-                .push(artalde_core::command::Command::new("url.open", Some(url))),
+        if let Some((pr, path)) = PrRef::link(url) {
+            let sub = match path.split('/').next() {
+                Some("files" | "changes") => PrSub::Files,
+                Some("checks") => PrSub::Checks,
+                _ if url.contains("#diff-") => PrSub::Files,
+                _ => PrSub::Conversation,
+            };
+            self.prs.entry(pr.clone()).or_default().sub = sub;
+            self.open_tab(Tab::Pr(pr));
+        } else if url.starts_with("https://") || url.starts_with("http://") {
+            self.submit_job(crate::actions::Job::Open {
+                target: url.to_owned(),
+            });
+        } else if let Some(pr) = PrRef::parse(url) {
+            self.open_tab(Tab::Pr(pr));
+        } else {
+            self.push_log("Unsupported link");
         }
     }
 
@@ -879,7 +922,8 @@ impl App {
             })
             .inner;
         for url in out.clicked_links {
-            self.open_link(&url);
+            self.queue
+                .push(artalde_core::command::Command::new("url.open", Some(&url)));
         }
     }
 
@@ -1184,6 +1228,10 @@ impl App {
         let repo_name = pr.repo.rsplit('/').next().unwrap_or(&pr.repo).to_owned();
         let items = [
             ("Copy URL", url.to_owned()),
+            (
+                "Copy Artalde link",
+                pr.url().replacen("https://", "artalde://", 1),
+            ),
             ("Copy owner/repo#N", pr.to_string()),
             ("Copy branch", head.to_owned()),
             (
@@ -1207,7 +1255,7 @@ impl App {
             }
         }
         kit::menu_rule(ui, &theme);
-        if kit::menu_action(ui, &theme, kit::Icon::External, "Open on GitHub", None).clicked() {
+        if kit::menu_action(ui, &theme, kit::Icon::PullRequest, "Open PR tab", None).clicked() {
             self.queue
                 .push(artalde_core::command::Command::new("url.open", Some(url)));
             ui.close();
@@ -1785,12 +1833,6 @@ impl App {
             }
             let r = kit::menu_button(ui, &theme, Some(Icon::Copy), "Copy");
             egui::Popup::menu(&r).show(|ui| self.pr_copy_menu(ui, pr, &d.head, &d.url));
-            if kit::button_icon(ui, &theme, Icon::External, "GitHub", None).clicked() {
-                self.queue.push(artalde_core::command::Command::new(
-                    "url.open",
-                    Some(&d.url),
-                ));
-            }
             if kit::button_icon(ui, &theme, Icon::Refresh, "Reload", Some("⌘R")).clicked() {
                 self.load_pr(pr);
             }
