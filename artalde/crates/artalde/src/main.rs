@@ -50,6 +50,7 @@ artalde — a live control plane for your coding agents
 
 usage:
   artalde                    open the window
+  artalde .                  open the window using wiki discovery from the current directory
   artalde open <PR URL>      open a GitHub PR in the running window, or start Artalde
   artalde hook               Claude Code hook: read one event on stdin (wire with `artalde hooks`)
   artalde report --id ID --state STATE [--agent A] [--message M] [--cwd DIR] [--end]
@@ -93,7 +94,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let store = Store::new(&store::state_dir());
     let result = match args.first().map(String::as_str) {
-        None | Some("ui") => gui(store, None, None),
+        None | Some("ui" | ".") => gui(store, None, None),
         Some("open") => match args.get(1) {
             #[cfg(target_os = "macos")]
             Some(url)

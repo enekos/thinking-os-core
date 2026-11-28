@@ -1,11 +1,26 @@
 .DEFAULT_GOAL := help
+ARTALDE ?= cargo run --quiet --manifest-path artalde/Cargo.toml --bin artalde --
 .PHONY: help build build-tools build-artalde test test-tools test-artalde lint lint-tools lint-artalde fmt check check-tools check-artalde e2e install
+.PHONY: artalde artalde-check artalde-snapshot artalde-inbox artalde-commands
 help:
 	@echo 'build, test, lint, check: both Rust workspaces'
 	@echo 'build-tools, test-tools, lint-tools, check-tools: graph/watcher/viewer'
 	@echo 'build-artalde, test-artalde, lint-artalde, check-artalde: agent UI'
 	@echo 'fmt: format both workspaces; e2e: watcher chains + live GitHub reads'
 	@echo 'install: build and install (INSTALL_ARGS="--wiki DIR --no-timer")'
+	@echo 'artalde opens the dashboard from this checkout'
+	@echo 'artalde-check validates the UI config, artalde-snapshot prints session JSON'
+	@echo 'artalde-inbox lists your PR inbox, artalde-commands lists UI commands'
+artalde:
+	@$(ARTALDE) .
+artalde-check:
+	@$(ARTALDE) check
+artalde-snapshot:
+	@$(ARTALDE) snapshot
+artalde-inbox:
+	@$(ARTALDE) inbox
+artalde-commands:
+	@$(ARTALDE) commands
 build: build-tools build-artalde
 build-tools:
 	cargo build --manifest-path tools/Cargo.toml --release

@@ -24,8 +24,10 @@ files, links and rebuilds.
 | `/synthesis` | compact the log and project pages |
 | `/fan <work>` | split work across agents — only where it splits |
 
-`make help` lists local graph, watcher and briefing shortcuts. `make today`
-collects briefing inputs offline; `make today-refresh` rebuilds first.
+`make artalde` opens this wiki's dashboard. After editing a layout or mod, run
+`make artalde-check` to validate it. `make status` shows the watcher's state
+and `make events` lists its 20 most recent events. `make today` collects briefing
+inputs offline. `make today-refresh` rebuilds first. See `make help` for all shortcuts.
 
 GitHub Issues use the existing `gh` login and `me.github` in `os.yaml`.
 Optional Linear remains independent. Both feed the work view and event inbox.
