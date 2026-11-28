@@ -156,7 +156,10 @@ there (mode 600) if the CLI is not logged in on its own. The details are in
 
 `AGENTS.md` / `CLAUDE.md` route coding agents to the relevant workspace and
 references. `make help` lists build, lint, test and check targets for both Rust
-workspaces. New and upgraded wikis get a Makefile (an existing one is preserved).
+workspaces. Run `make artalde` to build and open the dashboard from this
+checkout. From a wiki, the same target launches the installed binary with that
+wiki's configuration. The CLI also accepts `artalde .` from a wiki or one of
+its subdirectories. New and upgraded wikis get a Makefile (an existing one is preserved).
 
 `sare today` collects bounded JSON briefing inputs offline: generated view
 excerpts, active project metadata, deduplicated git probes, pending proposals,
